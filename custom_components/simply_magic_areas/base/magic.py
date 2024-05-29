@@ -123,22 +123,6 @@ class MagicArea(object):  # noqa: UP004
         area_type = "Meta-Area" if self.is_meta() else "Area"
         _LOGGER.debug("%s: %s initialized", self.slug, area_type)
 
-    def is_occupied(self) -> bool:
-        """If the area is occupied."""
-        return self.state != AreaState.AREA_STATE_CLEAR
-
-    def is_bright(self) -> bool:
-        """If the area is in the bright state."""
-        return self.state == AreaState.AREA_STATE_BRIGHT
-
-    def is_sleep(self) -> bool:
-        """If the area is in the sleep state."""
-        return self.state == AreaState.AREA_STATE_SLEEP
-
-    def is_extended(self) -> bool:
-        """IF the area is in the extended state."""
-        return self.state == AreaState.AREA_STATE_EXTENDED
-
     def state_config(self, state: AreaState) -> StateConfigData | None:
         """Return the light entity config for the current state."""
         return self._state_config[state]

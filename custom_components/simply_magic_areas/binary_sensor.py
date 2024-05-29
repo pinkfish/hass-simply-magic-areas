@@ -1,5 +1,6 @@
 """Binary sensor control for magic areas."""
 
+from collections import deque
 from datetime import UTC, datetime
 import logging
 import math
@@ -26,7 +27,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .add_entities_when_ready import add_entities_when_ready
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .const import (
@@ -34,8 +34,8 @@ from .const import (
     CONF_AGGREGATES_MIN_ENTITIES,
     CONF_FEATURE_AGGREGATION,
     CONF_FEATURE_HEALTH,
-    DISTRESS_SENSOR_CLASSES,
     DATA_AREA_OBJECT,
+    DISTRESS_SENSOR_CLASSES,
     DOMAIN,
     MODULE_DATA,
 )
@@ -276,12 +276,13 @@ class HumdityTrendSensor(MagicEntity, BinarySensorEntity):
             self._sample_duration = 300
             self._max_samples = 2
             self._min_gradient = -0.016666
+        self.samples: deque = deque(maxlen=int(self._max_samples))
         self._invert = False
         self._min_samples = 2
         self._to_monitor = area.entity_unique_id(SENSOR_DOMAIN, "humidity")
         self._gradient = 0.0
-        self.samples: list[tuple[datetime, float]] = []
         self._attr_is_on = False
+        self._attr_extra_state_attributes = {}
 
     async def async_added_to_hass(self) -> None:
         """Call when entity about to be added to hass."""
@@ -338,9 +339,18 @@ class HumdityTrendSensor(MagicEntity, BinarySensorEntity):
             abs(self._gradient) > abs(self._min_gradient)
             and math.copysign(self._gradient, self._min_gradient) == self._gradient
         )
+        _LOGGER.warning(
+            "%s: Waffles %s %s %s [%s]",
+            self.entity_id,
+            self._gradient,
+            self._min_gradient,
+            self.samples,
+            self._attr_is_on,
+        )
 
         if self._invert:
             self._attr_is_on = not self._attr_is_on
+        self._update_extra_attributes()
 
     def _calculate_gradient(self) -> None:
         """Compute the linear trend gradient of the current samples.
@@ -352,7 +362,7 @@ class HumdityTrendSensor(MagicEntity, BinarySensorEntity):
         coeffs = np.polyfit(timestamps, values, 1)
         self._gradient = coeffs[0]
 
-    def _update_state(self) -> None:
+    def _update_extra_attributes(self) -> None:
         self._attr_extra_state_attributes["gradient"] = self._gradient
-        self._attr_extra_state_attributes["min_gradient"] = self.min_gradient
+        self._attr_extra_state_attributes["min_gradient"] = self._min_gradient
         self._attr_extra_state_attributes["entity_to_monitor"] = self._to_monitor

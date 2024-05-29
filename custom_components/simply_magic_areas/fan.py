@@ -267,7 +267,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self.turn_on()
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
-        if not self.area.is_occupied():
+        if self.area.state == AreaState.AREA_STATE_CLEAR:
             self._reset_control(datetime.now(UTC))
         else:
             origin_event = event.context.origin_event

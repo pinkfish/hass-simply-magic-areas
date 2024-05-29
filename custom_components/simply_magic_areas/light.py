@@ -38,6 +38,7 @@ from .const import (
     DEFAULT_MAX_BRIGHTNESS_LEVEL,
     DEFAULT_MIN_BRIGHTNESS_LEVEL,
     DOMAIN,
+    AreaState,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -216,7 +217,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self.turn_on(conf)
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
-        if not self.area.is_occupied():
+        if self.area.state != AreaState.AREA_STATE_CLEAR:
             self._reset_control()
         else:
             old_state = event.data["old_state"]

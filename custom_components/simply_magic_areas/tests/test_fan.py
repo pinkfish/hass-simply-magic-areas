@@ -223,8 +223,8 @@ async def test_fan_on_off_humidity(
     area_humidity_empty = hass.states.get(
         f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
     )
-    assert area_humidity_occupied.state == STATE_OFF
     assert area_humidity_empty.state == STATE_ON
+    assert area_humidity_occupied.state == STATE_OFF
     area_binary_sensor = hass.states.get(
         f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
     )

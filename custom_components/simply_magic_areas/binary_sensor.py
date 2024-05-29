@@ -280,6 +280,8 @@ class HumdityTrendSensor(MagicEntity, BinarySensorEntity):
         self._min_samples = 2
         self._to_monitor = area.entity_unique_id(SENSOR_DOMAIN, "humidity")
         self._gradient = 0.0
+        self.samples: list[tuple[datetime, float]] = []
+        self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
         """Call when entity about to be added to hass."""
@@ -309,10 +311,7 @@ class HumdityTrendSensor(MagicEntity, BinarySensorEntity):
         if (new_state := event.data["new_state"]) is None:
             return
         try:
-            if self._attribute:
-                state = new_state.attributes.get(self._attribute)
-            else:
-                state = new_state.state
+            state = new_state.state
             if state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
                 sample = (new_state.last_updated.timestamp(), float(state))  # type: ignore[arg-type]
                 self.samples.append(sample)

@@ -73,7 +73,9 @@ async def test_light_on_off(
     await hass.async_block_till_done()
 
     # Reload the sensors and they should have changed.
-    area_binary_sensor = hass.states.get(f"{SELECT_DOMAIN}.simply_magic_areas_kitchen")
+    area_binary_sensor = hass.states.get(
+        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
     assert area_binary_sensor.state == "occupied"
     if automated:
         assert len(calls) == 1

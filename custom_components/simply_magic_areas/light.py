@@ -180,7 +180,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             async_track_state_change_event(
                 self.hass,
                 [
-                    f"{SELECT_DOMAIN}.simply_magic_areas_{self.area.slug}",
+                    f"{SELECT_DOMAIN}.simply_magic_areas_state_{self.area.slug}",
                     f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_{self.area.slug}",
                 ],
                 self._area_state_change,

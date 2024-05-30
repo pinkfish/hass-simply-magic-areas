@@ -87,8 +87,6 @@ class AreaLightControlSwitch(SwitchBase):
         """Initialize the area light control switch."""
 
         super().__init__(area, translation_key="light_control")
-        self._attr_name = None
-        # self.entity_id = area.simply_magic_entity_id(SWITCH_DOMAIN, "light_control")
         self._attr_state = STATE_OFF
         self._attr_is_on = False
 
@@ -105,8 +103,6 @@ class AreaLightsManualOverrideActiveSwitch(SwitchBase):
         """Initialize the area manual override switch."""
 
         super().__init__(area, translation_key="manual_override")
-        self._attr_name = None
-        # self.entity_id = area.simply_magic_entity_id(SWITCH_DOMAIN, "manual_override")
         self._attr_state = STATE_OFF
         self._attr_is_on = False
 
@@ -123,9 +119,6 @@ class AreaPresenceHoldSwitch(SwitchBase):
         """Initialize the area presence hold switch."""
 
         super().__init__(area, translation_key="presence_hold")
-        self._attr_name = None
-        # self.entity_id = area.simply_magic_entity_id(SWITCH_DOMAIN, "presence_hold")
-
         self.timeout_callback = None
         self._attr_state = STATE_OFF
         self._attr_is_on = False

@@ -354,7 +354,8 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
     def _set_controlled_by_this_entity(self, enabled: bool) -> None:
         _controled_by_entity = enabled
-        self._manual_timeout_cb = call_later(self.hass, 60, self._reset_control)
+        if not enabled:
+            self._manual_timeout_cb = call_later(self.hass, 60, self._reset_control)
 
     def _reset_control(self, time: datetime) -> None:
         self._set_controlled_by_this_entity(True)

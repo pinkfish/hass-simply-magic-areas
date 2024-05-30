@@ -17,7 +17,6 @@ class MagicEntity(RestoreEntity):
 
     area: MagicArea = None
     _attr_has_entity_name = True
-    _attr_name = None
 
     def __init__(self, area: MagicArea, domain: str, translation_key: str) -> None:
         """Initialize the magic area."""

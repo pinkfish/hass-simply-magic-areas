@@ -152,15 +152,14 @@ class AreaSensorGroupSensor(MagicEntity, SensorGroup):
             device_class=device_class,
             entity_ids=entity_ids,
             ignore_non_numeric=True,
+            name=None,
+            unique_id=None,
             sensor_type=ATTR_SUM if device_class in AGGREGATE_MODE_SUM else ATTR_MEAN,
             state_class=SensorStateClass.TOTAL
             if device_class in AGGREGATE_MODE_SUM
             else SensorStateClass.MEASUREMENT,
-            name=f"Simply Magic Areas {" ".join(device_class.split("_")).title()} ({self.area.name})",
-            unique_id=slugify(
-                f"Simply Magic Areas {" ".join(device_class.split("_")).title()} ({self.area.name})"
-            ),
             unit_of_measurement=UNIT_CONVERTERS[device_class].NORMALALIZED_UNIT
             if device_class in UNIT_CONVERTERS
             else list(DEVICE_CLASS_UNITS[device_class])[0],
         )
+        delattr(self, "_attr_name")

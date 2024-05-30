@@ -5,9 +5,18 @@ from datetime import UTC, datetime, timedelta
 import logging
 
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
-from homeassistant.components.select import DOMAIN as SELECT_DOMAIN, SelectEntity
+from homeassistant.components.select import (
+    DOMAIN as SELECT_DOMAIN,
+    SelectEntity,
+    SelectEntityDescription,
+)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_DEVICE_CLASS, ATTR_ENTITY_ID, STATE_ON
+from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
+    ATTR_ENTITY_ID,
+    STATE_ON,
+    EntityCategory,
+)
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import (
@@ -75,28 +84,24 @@ class AreaStateSelect(MagicEntity, SelectEntity):
             self, area=area, domain=SELECT_DOMAIN, translation_key="state"
         )
 
-        # self._attr_name: str = f"Simply Magic Areas ({self.area.name})"
-        # self._attr_unique_id = f"simply_magic_areas_state_{area.slug}"
-        self._attr_name = None
+        self.entity_description = SelectEntityDescription(
+            key="state",
+            name=f"{self.area.name} Area State (Simply Magic Areas)",
+            icon="mdi:home-search",
+            options=list(AreaState),
+            device_class=SELECT_DOMAIN,
+        )
+
         self._attr_options = list(AreaState)
         self._attr_current_option = AreaState.AREA_STATE_CLEAR
         self._state = AreaState.AREA_STATE_CLEAR
         self._attr_extra_state_attributes = {}
-        self._attr_icon = "mdi:home-search"
-        # self._attr_has_entity_name = True
 
         self._last_off_time: datetime = datetime.now(UTC) - timedelta(days=2)
         self._clear_timeout_callback: Callable[[], None] | None = None
         self._extended_timeout_callback: Callable[[], None] | None = None
         self._sensors: list[str] = []
         self._mode: str = "one"
-        _LOGGER.debug(
-            "%s: Select initialized - 1 %s %s %s",
-            self.unique_id,
-            self.entity_id,
-            self.name,
-            self.translation_key,
-        )
 
     async def async_added_to_hass(self) -> None:
         """Call to add the system to hass."""

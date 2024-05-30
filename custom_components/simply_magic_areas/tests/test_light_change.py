@@ -45,7 +45,7 @@ async def test_light_on_off(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
     manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_active_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
         f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
@@ -200,7 +200,7 @@ async def test_light_on_off_with_light_sensor(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
     manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_active_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
         f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"

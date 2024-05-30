@@ -86,9 +86,9 @@ class AreaLightControlSwitch(SwitchBase):
     def __init__(self, area: MagicArea) -> None:
         """Initialize the area light control switch."""
 
-        super().__init__(area, "light_control")
-        self._attr_name = area.entity_name("Light Control")
-        self.entity_id = area.entity_unique_id(SWITCH_DOMAIN, "Light Control")
+        super().__init__(area, translation_key="light_control")
+        self._attr_name = None
+        # self.entity_id = area.simply_magic_entity_id(SWITCH_DOMAIN, "light_control")
         self._attr_state = STATE_OFF
         self._attr_is_on = False
 
@@ -104,11 +104,9 @@ class AreaLightsManualOverrideActiveSwitch(SwitchBase):
     def __init__(self, area: MagicArea) -> None:
         """Initialize the area manual override switch."""
 
-        super().__init__(area, "manual_override")
-        self._attr_name = (
-            f"Simply Magic Areas Manual Override Active ({self.area.name})"
-        )
-        self.entity_id = f"{SWITCH_DOMAIN}.{slugify(self._attr_name)}"
+        super().__init__(area, translation_key="manual_override")
+        self._attr_name = None
+        # self.entity_id = area.simply_magic_entity_id(SWITCH_DOMAIN, "manual_override")
         self._attr_state = STATE_OFF
         self._attr_is_on = False
 
@@ -124,9 +122,9 @@ class AreaPresenceHoldSwitch(SwitchBase):
     def __init__(self, area: MagicArea) -> None:
         """Initialize the area presence hold switch."""
 
-        super().__init__(area, "presence_hold")
-        self._attr_name = f"Simply Magic Areas Presence Hold ({self.area.name})"
-        self.entity_id = f"{SWITCH_DOMAIN}.{slugify(self._attr_name)}"
+        super().__init__(area, translation_key="presence_hold")
+        self._attr_name = None
+        # self.entity_id = area.simply_magic_entity_id(SWITCH_DOMAIN, "presence_hold")
 
         self.timeout_callback = None
         self._attr_state = STATE_OFF

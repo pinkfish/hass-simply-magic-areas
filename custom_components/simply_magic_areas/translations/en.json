@@ -127,7 +127,7 @@
         }
       }
     },
-    "sensor": {
+    "select": {
       "state": {
         "name": "{area_name} State (Simply Magic Areas)",
         "state": {
@@ -145,6 +145,9 @@
       },
       "manual_override": {
         "name": "{area_name} Manual Overried (Simply Magic Areas)"
+      },
+      "presence_hold": {
+        "name": "{area_name} Presence Hold (Simply Magic Areas)"
       }
     }
   }

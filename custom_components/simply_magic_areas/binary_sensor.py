@@ -279,7 +279,7 @@ class HumdityTrendSensor(MagicEntity, BinarySensorEntity):
         self.samples: deque = deque(maxlen=int(self._max_samples))
         self._invert = False
         self._min_samples = 2
-        self._to_monitor = area.entity_unique_id(SENSOR_DOMAIN, "humidity")
+        self._to_monitor = area.simply_magic_entity_id(SENSOR_DOMAIN, "humidity")
         self._gradient = 0.0
         self._attr_is_on = False
         self._attr_extra_state_attributes = {}

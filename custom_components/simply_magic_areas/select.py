@@ -76,14 +76,14 @@ class AreaStateSelect(MagicEntity, SelectEntity):
         )
 
         # self._attr_name: str = f"Simply Magic Areas ({self.area.name})"
-        self._attr_unique_id = f"simply_magic_areas_state_{area.slug}"
+        # self._attr_unique_id = f"simply_magic_areas_state_{area.slug}"
         self._attr_name = None
         self._attr_options = list(AreaState)
         self._attr_current_option = AreaState.AREA_STATE_CLEAR
         self._state = AreaState.AREA_STATE_CLEAR
         self._attr_extra_state_attributes = {}
         self._attr_icon = "mdi:home-search"
-        self._attr_has_entity_name = True
+        # self._attr_has_entity_name = True
 
         self._last_off_time: datetime = datetime.now(UTC) - timedelta(days=2)
         self._clear_timeout_callback: Callable[[], None] | None = None
@@ -150,9 +150,11 @@ class AreaStateSelect(MagicEntity, SelectEntity):
         )
 
         # Track humidity sensors
-        trend_up = f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_{self.area.slug}"
-        trend_down = (
-            f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_{self.area.slug}"
+        trend_up = self.area.simply_magic_entity_id(
+            BINARY_SENSOR_DOMAIN, "humidity_occupancy"
+        )
+        trend_down = self.area.simply_magic_entity_id(
+            BINARY_SENSOR_DOMAIN, "humidity_empty"
         )
         if (
             self.hass.states.get(trend_up) is not None
@@ -602,16 +604,16 @@ class AreaStateSelect(MagicEntity, SelectEntity):
         # Track the up/down trend if not already occupied.
         if len(active_sensors) == 0:
             trend_up = self.hass.states.get(
-                f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_{self.area.slug}"
+                self.area.simply_magic_entity_id(
+                    BINARY_SENSOR_DOMAIN, "humidity_occupancy"
+                )
             )
             trend_down = self.hass.states.get(
-                f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_{self.area.slug}"
+                self.area.simply_magic_entity_id(BINARY_SENSOR_DOMAIN, "humidity_empty")
             )
             if trend_up is not None and trend_down is not None:
                 if trend_up.state == STATE_ON and trend_down.state != STATE_ON:
-                    active_sensors.append(
-                        "{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_{self.area.slug}"
-                    )
+                    active_sensors.append(trend_up)
                 # Make the last off time stay until this is not on any more.
                 if trend_down.state == STATE_ON:
                     self._last_off_time = datetime.now(UTC)

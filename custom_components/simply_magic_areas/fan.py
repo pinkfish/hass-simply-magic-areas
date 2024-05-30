@@ -172,16 +172,18 @@ class AreaFanGroup(MagicEntity, FanGroup):
             async_track_state_change_event(
                 self.hass,
                 [
-                    f"{SELECT_DOMAIN}.simply_magic_areas_state_{self.area.slug}",
-                    f"{SWITCH_DOMAIN}.simply_areas_light_control_{self.area.slug}",
+                    self.area.simply_magic_entity_id(SELECT_DOMAIN, "state"),
+                    self.area.simply_magic_entity_id(SWITCH_DOMAIN, "light_control"),
                 ],
                 self._area_state_change,
             )
         )
         # If the trend entities exist, listen to them
-        trend_up = f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_{self.area.slug}"
-        trend_down = (
-            f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_{self.area.slug}"
+        trend_up = self.area.simply_magic_entity_id(
+            BINARY_SENSOR_DOMAIN, "humidity_occupancy"
+        )
+        trend_down = self.area.simply_magic_entity_id(
+            BINARY_SENSOR_DOMAIN, "humidity_empty"
         )
         if (
             self.hass.states.get(trend_up) is not None

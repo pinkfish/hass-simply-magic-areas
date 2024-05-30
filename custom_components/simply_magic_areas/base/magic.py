@@ -40,7 +40,7 @@ from ..const import (
     MODULE_DATA,
     AreaState,
 )
-from ..util import areas_loaded, flatten_entity_list, is_entity_list
+from ..util import areas_loaded, is_entity_list
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -357,20 +357,16 @@ class MagicArea(object):  # noqa: UP004
 
     def is_control_enabled(self) -> bool:
         """If the area has controled turned on for simply magic areas."""
-        entity_id = f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_{self.slug}"
+        entity_id = self.simply_magic_entity_id(SWITCH_DOMAIN, "light_control")
 
         switch_entity = self.hass.states.get(entity_id)
         if switch_entity:
             return switch_entity.state.lower() == STATE_ON
         return True
 
-    def entity_name(self, name: str):
+    def simply_magic_entity_id(self, domain: str, name: str):
         """Return the name for the entity."""
-        return f"Simply Magic Areas {name} ({self.name})"
-
-    def entity_unique_id(self, domain: str, name: str):
-        """Return the name for the entity."""
-        return f"{domain}.simply_magic_areas_{slugify(name)}_{slugify(self.name)}"
+        return f"{domain}.{MAGIC_DEVICE_ID_PREFIX}{slugify(name)}_{slugify(self.name)}"
 
 
 class MagicMetaArea(MagicArea):

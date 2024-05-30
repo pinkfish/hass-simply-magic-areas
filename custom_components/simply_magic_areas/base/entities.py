@@ -26,8 +26,8 @@ class MagicEntity(RestoreEntity):
 
         self.area = area
         self._attr_translation_key = slugify(translation_key)
-        self._attr_unique_id = f"simply_magic_areas_{translation_key}_{area.slug}"
-        self.entity_id = f"{domain}.simply_magic_areas_{translation_key}_{area.slug}"
+        self._attr_unique_id = f"{MAGIC_DEVICE_ID_PREFIX}{translation_key}_{area.slug}"
+        self.entity_id = area.simply_magic_entity_id(domain, translation_key)
         self._attr_translation_placeholders = {"area_name": area.name}
 
     @property

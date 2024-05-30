@@ -127,6 +127,11 @@
         }
       }
     },
+    "fan": {
+      "fan": {
+        "name": "{area_name} Fans (Simply Magic Areas)"
+      }
+    },
     "select": {
       "state": {
         "name": "{area_name} State (Simply Magic Areas)",

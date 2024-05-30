@@ -5,6 +5,7 @@ import logging
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
+from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN, ColorMode
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorStateClass
@@ -264,6 +265,37 @@ async def test_light(
         "icon": "mdi:ceiling-light",
         "rgb_color": None,
         "supported_features": 0,
+        "last_update_from_entity": False,
+    }
+
+    await hass.async_block_till_done()
+    await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert not hass.data.get(DOMAIN)
+    assert config_entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_fan(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    _setup_integration: None,
+) -> None:
+    """Test loading the integration."""
+    assert config_entry.state is ConfigEntryState.LOADED
+
+    # Validate the right enties were created.
+    area_binary_sensor = hass.states.get(f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen")
+
+    assert area_binary_sensor is not None
+    assert area_binary_sensor.state == STATE_OFF
+    assert area_binary_sensor.attributes == {
+        "friendly_name": "kitchen kitchen Fans (Simply Magic Areas)",
+        "fans": ["fan.test_5678"],
+        "entity_id": ["fan.test_5678"],
+        "supported_features": 0,
+        "icon": "mdi:fan",
         "last_update_from_entity": False,
     }
 

@@ -107,7 +107,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             unique_id=f"light_{slugify(area.name)}",
         )
 
-        self._attr_name = None
+        delattr(self, "_attr_name")
         self._icon: str = "mdi:fan"
         self._manual_timeout_cb: CALLBACK_TYPE | None = None
 
@@ -117,13 +117,6 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self.last_update_from_entity: bool = False
         self._attr_extra_state_attributes["fans"] = self._entity_ids
         self._attr_extra_state_attributes["last_update_from_entity"] = False
-
-        _LOGGER.debug(
-            "%s: Fan group %s created with entities: %s",
-            self.name,
-            self._icon,
-            self._entity_ids,
-        )
 
     @property
     def icon(self) -> str:

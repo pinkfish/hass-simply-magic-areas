@@ -5,6 +5,7 @@ import logging
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
+from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN, ColorMode
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorStateClass
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
@@ -224,6 +225,46 @@ async def test_sensor_illuminance_sensor(
         "unit_of_measurement": "lx",
         "entity_id": ["sensor.light_sensor"],
         "state_class": SensorStateClass.MEASUREMENT,
+    }
+
+    await hass.async_block_till_done()
+    await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert not hass.data.get(DOMAIN)
+    assert config_entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_light(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    one_light: list[MockSensor],
+    _setup_integration: None,
+) -> None:
+    """Test loading the integration."""
+    assert config_entry.state is ConfigEntryState.LOADED
+
+    # Validate the right enties were created.
+    area_binary_sensor = hass.states.get(
+        f"{LIGHT_DOMAIN}.simply_magic_areas_light_kitchen"
+    )
+
+    assert area_binary_sensor is not None
+    assert area_binary_sensor.state == STATE_OFF
+    assert area_binary_sensor.attributes == {
+        "friendly_name": "kitchen Lights (Simply Magic Areas)",
+        "lights": ["light.test_5678"],
+        "entity_id": ["light.test_5678"],
+        "color_mode": None,
+        "hs_color": None,
+        "brightness": None,
+        "xy_color": None,
+        "device_class": "light",
+        "supported_color_modes": [ColorMode.HS],
+        "icon": "mdi:ceiling-light",
+        "rgb_color": None,
+        "supported_features": 0,
+        "last_update_from_entity": False,
     }
 
     await hass.async_block_till_done()

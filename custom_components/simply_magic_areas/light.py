@@ -4,7 +4,11 @@ from datetime import datetime
 import logging
 
 from homeassistant.components.group.light import LightGroup
-from homeassistant.components.light import ATTR_BRIGHTNESS, DOMAIN as LIGHT_DOMAIN
+from homeassistant.components.light import (
+    ATTR_BRIGHTNESS,
+    DOMAIN as LIGHT_DOMAIN,
+    LightEntityDescription,
+)
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
@@ -110,29 +114,27 @@ class AreaLightGroup(MagicEntity, LightGroup):
         MagicEntity.__init__(self, area, domain=LIGHT_DOMAIN, translation_key="light")
         LightGroup.__init__(
             self,
-            name="",
+            name=None,
             entity_ids=entities,
-            unique_id=f"light_{slugify(area.name)}",
+            unique_id=None,
             mode=False,
         )
 
-        self._attr_name = None
+        self.entity_description = LightEntityDescription(
+            key="light",
+            name=f"{self.area.name} Lights (Simply Magic Areas)",
+            icon="mdi:ceiling-light",
+            device_class=LIGHT_DOMAIN,
+        )
+
+        delattr(self, "_attr_name")
         self._manual_timeout_cb: CALLBACK_TYPE | None = None
         self._icon: str = "mdi:ceiling-light"
-
-        self._set_controlled_by_this_entity(True)
 
         # Add static attributes
         self.last_update_from_entity: bool = False
         self._attr_extra_state_attributes["lights"] = self._entity_ids
         self._attr_extra_state_attributes["last_update_from_entity"] = False
-
-        _LOGGER.debug(
-            "Light group %s %s created with entities: %s",
-            self.name,
-            self._icon,
-            self._entity_ids,
-        )
 
     @property
     def icon(self) -> str:
@@ -397,4 +399,3 @@ class AreaLightGroup(MagicEntity, LightGroup):
     def _reset_control(self) -> None:
         self._set_controlled_by_this_entity(True)
         self.schedule_update_ha_state()
-        _LOGGER.debug("{self.name}: Control Reset.")

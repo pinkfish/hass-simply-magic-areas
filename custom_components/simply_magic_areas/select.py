@@ -11,12 +11,7 @@ from homeassistant.components.select import (
     SelectEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    ATTR_DEVICE_CLASS,
-    ATTR_ENTITY_ID,
-    STATE_ON,
-    EntityCategory,
-)
+from homeassistant.const import ATTR_DEVICE_CLASS, ATTR_ENTITY_ID, STATE_ON
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import (
@@ -24,8 +19,11 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
     call_later,
 )
+from homeassistant.helpers.entity_registry import (
+    RegistryEntry,
+    async_get as async_get_er,
+)
 
-from .add_entities_when_ready import add_entities_when_ready
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .const import (
@@ -67,8 +65,11 @@ async def async_setup_entry(
     """Set up the Area config entry."""
     _LOGGER.debug("Doing area select")
     area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
+
+    select = AreaStateSelect(area)
+
     # Create basic presence sensor
-    async_add_entities([AreaStateSelect(area)])
+    async_add_entities([select])
 
 
 class AreaStateSelect(MagicEntity, SelectEntity):

@@ -108,7 +108,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         )
 
         delattr(self, "_attr_name")
-        self._icon: str = "mdi:fan"
+        self._icon: str = "mdi:fan-auto"
         self._manual_timeout_cb: CALLBACK_TYPE | None = None
 
         self._controled_by_entity = True

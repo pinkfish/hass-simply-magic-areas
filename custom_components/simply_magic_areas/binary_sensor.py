@@ -17,6 +17,8 @@ from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorDevic
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
+    ATTR_ENTITY_ID,
+    ATTR_UNIT_OF_MEASUREMENT,
     STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
@@ -56,7 +58,7 @@ async def async_setup_entry(
     existing_trend_entities = []
     if DOMAIN + BINARY_SENSOR_DOMAIN in area.entities:
         existing_trend_entities = [
-            e["entity_id"] for e in area.entities[DOMAIN + BINARY_SENSOR_DOMAIN]
+            e[ATTR_ENTITY_ID] for e in area.entities[DOMAIN + BINARY_SENSOR_DOMAIN]
         ]
     # Create extra sensors
     if area.has_feature(CONF_FEATURE_AGGREGATION):
@@ -122,9 +124,11 @@ def create_aggregate_sensors(
             continue
 
         if entity[ATTR_DEVICE_CLASS] not in device_class_entities:
-            device_class_entities[entity[ATTR_DEVICE_CLASS]] = [entity["entity_id"]]
+            device_class_entities[entity[ATTR_DEVICE_CLASS]] = [entity[ATTR_ENTITY_ID]]
         else:
-            device_class_entities[entity[ATTR_DEVICE_CLASS]].append(entity["entity_id"])
+            device_class_entities[entity[ATTR_DEVICE_CLASS]].append(
+                entity[ATTR_ENTITY_ID]
+            )
 
     for device_class, entity_count in device_class_entities.items():
         if entity_count < area.feature_config(CONF_FEATURE_AGGREGATION).get(
@@ -161,22 +165,22 @@ def create_trend_sensors(area: MagicArea, async_add_entities: AddEntitiesCallbac
 
     found = False
     for entity in area.entities[SENSOR_DOMAIN]:
-        if "device_class" not in entity:
+        if ATTR_DEVICE_CLASS not in entity:
             _LOGGER.debug(
                 "Entity %s does not have device_class defined",
-                entity["entity_id"],
+                entity[ATTR_ENTITY_ID],
             )
             continue
 
-        if "unit_of_measurement" not in entity:
+        if ATTR_UNIT_OF_MEASUREMENT not in entity:
             _LOGGER.debug(
                 "Entity %s does not have unit_of_measurement defined",
-                entity["entity_id"],
+                entity[ATTR_ENTITY_ID],
             )
             continue
 
         # Dictionary of sensors by device class.
-        device_class = entity["device_class"]
+        device_class = entity[ATTR_DEVICE_CLASS]
         if device_class != SensorDeviceClass.HUMIDITY:
             continue
         found = True
@@ -200,6 +204,11 @@ def create_trend_sensors(area: MagicArea, async_add_entities: AddEntitiesCallbac
     async_add_entities(aggregates)
 
     return aggregates
+
+
+ATTR_GRADIENT: str = "gradient"
+ATTR_MIN_GRADIENT: str = "min_gradient"
+ATTR_ENTITY_TO_MONITOR: str = "entity_to_monitor"
 
 
 def _cleanup_binary_sensor_entities(
@@ -269,17 +278,21 @@ class HumdityTrendSensor(MagicEntity, BinarySensorEntity):
         self._attr_device_class = BinarySensorDeviceClass.MOISTURE
         self.area = area
         if increasing:
+            self._attr_icon = "mdi:trending-up"
             self._sample_duration = 600
             self._max_samples = 3
             self._min_gradient = 0.01666
         else:
+            self._attr_icon = "mdi:trending-down"
             self._sample_duration = 300
             self._max_samples = 2
             self._min_gradient = -0.016666
         self.samples: deque = deque(maxlen=int(self._max_samples))
         self._invert = False
         self._min_samples = 2
-        self._to_monitor = area.simply_magic_entity_id(SENSOR_DOMAIN, "humidity")
+        self._to_monitor = area.simply_magic_entity_id(
+            SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
+        )
         self._gradient = 0.0
         self._attr_is_on = False
         self._attr_extra_state_attributes = {}
@@ -363,6 +376,6 @@ class HumdityTrendSensor(MagicEntity, BinarySensorEntity):
         self._gradient = coeffs[0]
 
     def _update_extra_attributes(self) -> None:
-        self._attr_extra_state_attributes["gradient"] = self._gradient
-        self._attr_extra_state_attributes["min_gradient"] = self._min_gradient
-        self._attr_extra_state_attributes["entity_to_monitor"] = self._to_monitor
+        self._attr_extra_state_attributes[ATTR_GRADIENT] = self._gradient
+        self._attr_extra_state_attributes[ATTR_MIN_GRADIENT] = self._min_gradient
+        self._attr_extra_state_attributes[ATTR_ENTITY_TO_MONITOR] = self._to_monitor

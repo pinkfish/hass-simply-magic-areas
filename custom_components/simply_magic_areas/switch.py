@@ -21,6 +21,7 @@ from .const import (
     DATA_AREA_OBJECT,
     DEFAULT_PRESENCE_HOLD_TIMEOUT,
     ICON_LIGHT_CONTROL,
+    ICON_MANUAL_OVERRIDE,
     ICON_PRESENCE_HOLD,
     MODULE_DATA,
 )
@@ -105,7 +106,7 @@ class AreaLightsManualOverrideActiveSwitch(SwitchBase):
     @property
     def icon(self):
         """Return the icon to be used for this entity."""
-        return ICON_LIGHT_CONTROL
+        return ICON_MANUAL_OVERRIDE
 
 
 class AreaPresenceHoldSwitch(SwitchBase):

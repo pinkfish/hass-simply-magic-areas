@@ -67,7 +67,8 @@ ATTR_PRESENCE_SENSORS = "presence_sensors"
 
 # Icons
 ICON_PRESENCE_HOLD = "mdi:car-brake-hold"
-ICON_LIGHT_CONTROL = "mdi:lightbulb-auto-outline"
+ICON_LIGHT_CONTROL = "mdi:head-cog"
+ICON_MANUAL_OVERRIDE = "mdi:lightbulb-auto-outline"
 
 
 # Area States

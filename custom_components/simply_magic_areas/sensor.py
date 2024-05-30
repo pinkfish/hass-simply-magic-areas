@@ -15,6 +15,11 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
+    ATTR_ENTITY_ID,
+    ATTR_UNIT_OF_MEASUREMENT,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
@@ -46,13 +51,8 @@ async def async_setup_entry(
     existing_sensor_entities: list[str] = []
     if DOMAIN + SENSOR_DOMAIN in area.entities:
         existing_sensor_entities = [
-            e["entity_id"] for e in area.entities[DOMAIN + SENSOR_DOMAIN]
+            e[ATTR_ENTITY_ID] for e in area.entities[DOMAIN + SENSOR_DOMAIN]
         ]
-
-    # Create the illuminance sensor if there are any illuminance sensors in the area.
-    if not area.has_entities(SENSOR_DOMAIN):
-        _cleanup_sensor_entities(area.hass, [], existing_sensor_entities)
-        return
 
     aggregates = []
 
@@ -64,25 +64,25 @@ async def async_setup_entry(
     entities_by_device_class: dict[str, list[str]] = {}
 
     for entity in area.entities[SENSOR_DOMAIN]:
-        if "device_class" not in entity:
+        if ATTR_DEVICE_CLASS not in entity:
             _LOGGER.debug(
                 "Entity %s does not have device_class defined",
-                entity["entity_id"],
+                entity[ATTR_ENTITY_ID],
             )
             continue
 
-        if "unit_of_measurement" not in entity:
+        if ATTR_UNIT_OF_MEASUREMENT not in entity:
             _LOGGER.debug(
                 "Entity %s does not have unit_of_measurement defined",
-                entity["entity_id"],
+                entity[ATTR_ENTITY_ID],
             )
             continue
 
         # Dictionary of sensors by device class.
-        device_class = entity["device_class"]
+        device_class = entity[ATTR_DEVICE_CLASS]
         if device_class not in entities_by_device_class:
             entities_by_device_class[device_class] = []
-        entities_by_device_class[device_class].append(entity["entity_id"])
+        entities_by_device_class[device_class].append(entity[ATTR_ENTITY_ID])
 
     # Create aggregates/illuminance sensor or illuminance ones.
     for item in entities_by_device_class.items():

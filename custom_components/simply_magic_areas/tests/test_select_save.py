@@ -74,7 +74,7 @@ async def test_save_light_control(
     assert area_binary_sensor.state == STATE_OFF
     assert area_binary_sensor.attributes == {
         "friendly_name": "kitchen kitchen Light Control (Simply Magic Areas)",
-        "icon": "mdi:lightbulb-auto-outline",
+        "icon": "mdi:head-cog",
         "device_class": "switch",
     }
 
@@ -131,6 +131,7 @@ async def test_sensor_humdity(
     assert area_binary_sensor.attributes == {
         "friendly_name": "kitchen kitchen Humidity Occupancy (Simply Magic Areas)",
         "device_class": "moisture",
+        "icon": "mdi:trending-up",
     }
 
     await hass.async_block_till_done()
@@ -161,6 +162,7 @@ async def test_sensor_humdity_empty(
     assert area_binary_sensor.attributes == {
         "friendly_name": "kitchen kitchen Humidity Empty (Simply Magic Areas)",
         "device_class": "moisture",
+        "icon": "mdi:trending-down",
     }
 
     await hass.async_block_till_done()
@@ -295,7 +297,7 @@ async def test_fan(
         "fans": ["fan.test_5678"],
         "entity_id": ["fan.test_5678"],
         "supported_features": 0,
-        "icon": "mdi:fan",
+        "icon": "mdi:fan-auto",
         "last_update_from_entity": False,
     }
 

@@ -46,11 +46,13 @@ from .const import (
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
     CONF_TYPE,
     CONF_UPDATE_INTERVAL,
+    DATA_AREA_OBJECT,
     DEFAULT_ON_STATES,
     DEFAULT_PRESENCE_DEVICE_PLATFORMS,
     DEFAULT_PRESENCE_DEVICE_SENSOR_CLASS,
     DEFAULT_UPDATE_INTERVAL,
     INVALID_STATES,
+    MODULE_DATA,
     AreaState,
 )
 
@@ -64,11 +66,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up the Area config entry."""
     _LOGGER.debug("Doing area select")
-    add_entities_when_ready(hass, async_add_entities, config_entry, _add_state_select)
-
-
-def _add_state_select(area: MagicArea, async_add_entities: AddEntitiesCallback) -> None:
-    """Add the basic sensors for the area."""
+    area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
     # Create basic presence sensor
     async_add_entities([AreaStateSelect(area)])
 

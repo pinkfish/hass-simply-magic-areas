@@ -1,6 +1,5 @@
 """Sensor controls for magic areas."""
 
-from enum import StrEnum
 import logging
 
 from homeassistant.components.group.sensor import (
@@ -19,16 +18,16 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
-from homeassistant.util import slugify
 
-from .add_entities_when_ready import add_entities_when_ready
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .const import (
     AGGREGATE_MODE_SUM,
     CONF_AGGREGATES_MIN_ENTITIES,
     CONF_FEATURE_AGGREGATION,
+    DATA_AREA_OBJECT,
     DOMAIN,
+    MODULE_DATA,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,11 +42,7 @@ async def async_setup_entry(
 ):
     """Set up the magic area sensor config entry."""
 
-    add_entities_when_ready(hass, async_add_entities, config_entry, add_sensors)
-
-
-def add_sensors(area: MagicArea, async_add_entities: AddEntitiesCallback):
-    """Add the sensors for the magic areas."""
+    area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
     existing_sensor_entities: list[str] = []
     if DOMAIN + SENSOR_DOMAIN in area.entities:
         existing_sensor_entities = [

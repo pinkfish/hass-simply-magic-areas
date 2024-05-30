@@ -29,19 +29,19 @@ from homeassistant.core import (
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
 from homeassistant.helpers.event import async_track_state_change_event, call_later
-from homeassistant.util import slugify
 
-from .add_entities_when_ready import add_entities_when_ready
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .const import (
     CONF_MANUAL_TIMEOUT,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
+    DATA_AREA_OBJECT,
     DEFAULT_MANUAL_TIMEOUT,
     DEFAULT_MAX_BRIGHTNESS_LEVEL,
     DEFAULT_MIN_BRIGHTNESS_LEVEL,
     DOMAIN,
+    MODULE_DATA,
     AreaState,
 )
 
@@ -55,22 +55,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ):
     """Set up the Area config entry."""
-
-    add_entities_when_ready(hass, async_add_entities, config_entry, _add_lights)
-
-
-def _cleanup_light_entities(
-    hass: HomeAssistant, new_ids: list[str], old_ids: list[str]
-) -> None:
-    entity_registry = async_get_er(hass)
-    for ent_id in old_ids:
-        if ent_id in new_ids:
-            continue
-        _LOGGER.warning("Deleting old entity %s", ent_id)
-        entity_registry.async_remove(ent_id)
-
-
-def _add_lights(area: MagicArea, async_add_entities: AddEntitiesCallback):
+    area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
     existing_light_entities: list[str] = []
     if DOMAIN + LIGHT_DOMAIN in area.entities:
         existing_light_entities = [
@@ -98,6 +83,17 @@ def _add_lights(area: MagicArea, async_add_entities: AddEntitiesCallback):
     async_add_entities(light_groups)
     group_ids = [e.entity_id for e in light_groups]
     _cleanup_light_entities(area.hass, group_ids, existing_light_entities)
+
+
+def _cleanup_light_entities(
+    hass: HomeAssistant, new_ids: list[str], old_ids: list[str]
+) -> None:
+    entity_registry = async_get_er(hass)
+    for ent_id in old_ids:
+        if ent_id in new_ids:
+            continue
+        _LOGGER.warning("Deleting old entity %s", ent_id)
+        entity_registry.async_remove(ent_id)
 
 
 class AreaLightGroup(MagicEntity, LightGroup):

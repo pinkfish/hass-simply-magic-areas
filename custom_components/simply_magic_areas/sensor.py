@@ -148,7 +148,7 @@ class AreaSensorGroupSensor(MagicEntity, SensorGroup):
             entity_ids=entity_ids,
             ignore_non_numeric=True,
             name=None,
-            unique_id=None,
+            unique_id=self._attr_unique_id,
             sensor_type=ATTR_SUM if device_class in AGGREGATE_MODE_SUM else ATTR_MEAN,
             state_class=SensorStateClass.TOTAL
             if device_class in AGGREGATE_MODE_SUM

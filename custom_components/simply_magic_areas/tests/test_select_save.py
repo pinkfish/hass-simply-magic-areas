@@ -191,7 +191,7 @@ async def test_sensor_humdity_sensor(
     assert area_binary_sensor is not None
     assert area_binary_sensor.state == "1.0"
     assert area_binary_sensor.attributes == {
-        "friendly_name": "kitchen Humidity Sensor (Simply Magic Areas)",
+        "friendly_name": "kitchen kitchen Humidity Sensor (Simply Magic Areas)",
         "device_class": "humidity",
         "unit_of_measurement": "%",
         "entity_id": ["sensor.humidity_sensor"],
@@ -223,7 +223,7 @@ async def test_sensor_illuminance_sensor(
     assert area_binary_sensor is not None
     assert area_binary_sensor.state == "1.0"
     assert area_binary_sensor.attributes == {
-        "friendly_name": "kitchen Illuminance Sensor (Simply Magic Areas)",
+        "friendly_name": "kitchen kitchen Illuminance Sensor (Simply Magic Areas)",
         "device_class": "illuminance",
         "unit_of_measurement": "lx",
         "entity_id": ["sensor.light_sensor"],

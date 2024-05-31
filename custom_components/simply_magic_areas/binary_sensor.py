@@ -43,6 +43,9 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+ATTR_GRADIENT: str = "gradient"
+ATTR_MIN_GRADIENT: str = "min_gradient"
+ATTR_ENTITY_TO_MONITOR: str = "entity_to_monitor"
 
 
 async def async_setup_entry(
@@ -60,111 +63,11 @@ async def async_setup_entry(
         existing_trend_entities = [
             e[ATTR_ENTITY_ID] for e in area.entities[DOMAIN + BINARY_SENSOR_DOMAIN]
         ]
-    # Create extra sensors
-    if area.has_feature(CONF_FEATURE_AGGREGATION):
-        entities.extend(create_aggregate_sensors(area, async_add_entities))
-
-    if area.has_feature(CONF_FEATURE_HEALTH):
-        entities.extend(create_health_sensors(area, async_add_entities))
-    entities.extend(create_trend_sensors(area, async_add_entities))
-
-    _cleanup_binary_sensor_entities(area.hass, entities, existing_trend_entities)
-
-
-def create_health_sensors(
-    area: MagicArea, async_add_entities: AddEntitiesCallback
-) -> list[Entity]:
-    """Add the health sensors for the area."""
-    if not area.has_feature(CONF_FEATURE_HEALTH):
-        return []
-
-    if BINARY_SENSOR_DOMAIN not in area.entities:
-        return []
-
-    distress_entities: list[Entity] = []
-
-    for entity in area.entities[BINARY_SENSOR_DOMAIN]:
-        if ATTR_DEVICE_CLASS not in entity:
-            continue
-
-        if entity[ATTR_DEVICE_CLASS] not in DISTRESS_SENSOR_CLASSES:
-            continue
-
-        distress_entities.append(entity)
-
-    if len(distress_entities) < area.feature_config(CONF_FEATURE_AGGREGATION).get(
-        CONF_AGGREGATES_MIN_ENTITIES, 0
-    ):
-        return []
-
-    _LOGGER.debug("Creating health sensor for area (%s)", area.slug)
-    entities = [AreaSensorGroupBinarySensor(area, entity_ids=distress_entities)]
-    async_add_entities(entities)
-    return entities
-
-
-def create_aggregate_sensors(
-    area: MagicArea, async_add_entities: AddEntitiesCallback
-) -> list[Entity]:
-    """Create the aggregate sensors for the area."""
-    # Create aggregates
-    if not area.has_feature(CONF_FEATURE_AGGREGATION):
-        return []
-
-    aggregates: list[Entity] = []
-
-    # Check BINARY_SENSOR_DOMAIN entities, count by device_class
-    if BINARY_SENSOR_DOMAIN not in area.entities:
-        return []
-
-    device_class_entities: dict[str, list[str]] = {}
-
-    for entity in area.entities[BINARY_SENSOR_DOMAIN]:
-        if ATTR_DEVICE_CLASS not in entity:
-            continue
-
-        if entity[ATTR_DEVICE_CLASS] not in device_class_entities:
-            device_class_entities[entity[ATTR_DEVICE_CLASS]] = [entity[ATTR_ENTITY_ID]]
-        else:
-            device_class_entities[entity[ATTR_DEVICE_CLASS]].append(
-                entity[ATTR_ENTITY_ID]
-            )
-
-    for device_class, entity_count in device_class_entities.items():
-        if entity_count < area.feature_config(CONF_FEATURE_AGGREGATION).get(
-            CONF_AGGREGATES_MIN_ENTITIES, 0
-        ):
-            continue
-
-        _LOGGER.debug(
-            "Creating aggregate sensor for device_class '%s' with %s entities (%s)",
-            device_class,
-            entity_count,
-            area.slug,
-        )
-        aggregates.append(
-            AreaSensorGroupBinarySensor(area, device_class, device_class_entities)
-        )
-
-    async_add_entities(aggregates)
-    return aggregates
-
-
-def create_trend_sensors(area: MagicArea, async_add_entities: AddEntitiesCallback):
-    """Add the sensors for the magic areas."""
-
-    # Create the illuminance sensor if there are any illuminance sensors in the area.
-    if not area.has_entities(SENSOR_DOMAIN):
-        return []
-
-    aggregates = []
 
     # Check SENSOR_DOMAIN entities, count by device_class
-    if not area.has_entities(SENSOR_DOMAIN):
-        return []
+    entities_by_device_class: dict[str, list[str]] = {}
 
-    found = False
-    for entity in area.entities[SENSOR_DOMAIN]:
+    for entity in area.entities.get(BINARY_SENSOR_DOMAIN, []):
         if ATTR_DEVICE_CLASS not in entity:
             _LOGGER.debug(
                 "Entity %s does not have device_class defined",
@@ -181,13 +84,96 @@ def create_trend_sensors(area: MagicArea, async_add_entities: AddEntitiesCallbac
 
         # Dictionary of sensors by device class.
         device_class = entity[ATTR_DEVICE_CLASS]
-        if device_class != SensorDeviceClass.HUMIDITY:
-            continue
-        found = True
+        entities = entities_by_device_class.get(device_class, [])
+        entities.append(entity[ATTR_ENTITY_ID])
+        entities_by_device_class[device_class] = entities
 
-    if not found:
+    # Create extra sensors
+    if area.has_feature(CONF_FEATURE_AGGREGATION):
+        entities.extend(create_aggregate_sensors(area, entities_by_device_class))
+
+    if area.has_feature(CONF_FEATURE_HEALTH):
+        entities.extend(create_health_sensors(area, entities_by_device_class))
+
+    # Create the trend sensors
+    entities.extend(create_trend_sensors(area, entities_by_device_class))
+    async_add_entities(entities)
+
+    _cleanup_binary_sensor_entities(area.hass, entities, existing_trend_entities)
+
+
+def create_health_sensors(
+    area: MagicArea, entities_by_device_class: dict[str, list[str]]
+) -> list[Entity]:
+    """Add the health sensors for the area."""
+    if not area.has_feature(CONF_FEATURE_HEALTH):
         return []
 
+    if BINARY_SENSOR_DOMAIN not in area.entities:
+        return []
+
+    distress_entities = []
+    for dc in DISTRESS_SENSOR_CLASSES:
+        distress_entities.append(entities_by_device_class.get(dc, []))
+
+    if len(distress_entities) < area.feature_config(CONF_FEATURE_AGGREGATION).get(
+        CONF_AGGREGATES_MIN_ENTITIES, 0
+    ):
+        return []
+
+    _LOGGER.debug("Creating health sensor for area (%s)", area.slug)
+    return [AreaSensorGroupBinarySensor(area, entity_ids=distress_entities)]
+
+
+def create_aggregate_sensors(
+    area: MagicArea, entities_by_device_class: dict[str, list[str]]
+) -> list[Entity]:
+    """Create the aggregate sensors for the area."""
+    # Create aggregates
+    if not area.has_feature(CONF_FEATURE_AGGREGATION):
+        return []
+
+    # Check BINARY_SENSOR_DOMAIN entities, count by device_class
+    if BINARY_SENSOR_DOMAIN not in area.entities:
+        return []
+
+    aggregates = []
+    for device_class, entities in entities_by_device_class.items():
+        if len(entities) < area.feature_config(CONF_FEATURE_AGGREGATION).get(
+            CONF_AGGREGATES_MIN_ENTITIES, 0
+        ):
+            continue
+
+        _LOGGER.debug(
+            "Creating aggregate sensor for device_class '%s' with %s entities (%s)",
+            device_class,
+            len(entities),
+            area.slug,
+        )
+        aggregates.append(AreaSensorGroupBinarySensor(area, device_class, entities))
+
+    return aggregates
+
+
+def create_trend_sensors(
+    area: MagicArea, entities_by_device_class: dict[str, list[str]]
+):
+    """Add the humidity trend sensors for the magic areas."""
+
+    if (
+        len(
+            [
+                entity[ATTR_ENTITY_ID]
+                for entity in area.entities[SENSOR_DOMAIN]
+                if entity.get(ATTR_DEVICE_CLASS, "") == SensorDeviceClass.HUMIDITY
+                and ATTR_UNIT_OF_MEASUREMENT in entity
+            ]
+        )
+        == 0
+    ):
+        return []
+
+    aggregates = []
     aggregates.append(
         HumdityTrendSensor(
             area=area,
@@ -201,14 +187,7 @@ def create_trend_sensors(area: MagicArea, async_add_entities: AddEntitiesCallbac
         )
     )
 
-    async_add_entities(aggregates)
-
     return aggregates
-
-
-ATTR_GRADIENT: str = "gradient"
-ATTR_MIN_GRADIENT: str = "min_gradient"
-ATTR_ENTITY_TO_MONITOR: str = "entity_to_monitor"
 
 
 def _cleanup_binary_sensor_entities(
@@ -351,14 +330,6 @@ class HumdityTrendSensor(MagicEntity, BinarySensorEntity):
         self._attr_is_on = (
             abs(self._gradient) > abs(self._min_gradient)
             and math.copysign(self._gradient, self._min_gradient) == self._gradient
-        )
-        _LOGGER.warning(
-            "%s: Waffles %s %s %s [%s]",
-            self.entity_id,
-            self._gradient,
-            self._min_gradient,
-            self.samples,
-            self._attr_is_on,
         )
 
         if self._invert:

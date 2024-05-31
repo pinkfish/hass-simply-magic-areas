@@ -116,7 +116,6 @@ class AreaStateSelect(MagicEntity, SelectEntity):
             self.translation_key,
         )
         self.async_on_remove(self._cleanup_timers)
-        _LOGGER.warning("%s: Done with adding select to hass", self.area.slug)
 
     async def _restore_state(self) -> None:
         """Restore the state of the select entity on initialize."""

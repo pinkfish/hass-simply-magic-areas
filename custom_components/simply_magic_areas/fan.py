@@ -231,11 +231,11 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         # For fans we only worry about the extended state.
         if to_state == AreaState.AREA_STATE_EXTENDED:
-            self.turn_on()
+            self._turn_on_fan()
         elif self.is_on and not self._attr_extra_state_attributes.get(
             ATTR_HUMIDITY_UP, False
         ):
-            self.turn_off()
+            self._turn_off_fan()
         else:
             _LOGGER.debug("Ignoring state change")
 
@@ -253,7 +253,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if to_state == STATE_ON and from_state != STATE_ON:
             # We have stuff going down.
             self._attr_extra_state_attributes[ATTR_HUMIDITY_UP] = False
-            self.turn_off()
+            self._turn_off_fan()
 
     def _trend_up_state_change(self, event: Event[EventStateChangedData]):
         if event.event_type != "state_changed":
@@ -271,7 +271,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if to_state == STATE_ON and from_state != STATE_ON:
             # We have stuff going up.
             self._attr_extra_state_attributes[ATTR_HUMIDITY_UP] = True
-            self.turn_on()
+            self._turn_on_fan()
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
         if self.area.state == AreaState.AREA_STATE_CLEAR:
@@ -318,7 +318,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self._manual_timeout_cb = None
 
     ####  Fan Handling
-    def turn_on(self) -> None:
+    def _turn_on_fan(self) -> None:
         """Turn on the fan group."""
 
         if not self.area.is_control_enabled():
@@ -334,7 +334,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         return True
 
-    def turn_off(self) -> None:
+    def _turn_off_fan(self) -> None:
         """Turn off the fan group."""
         if not self.area.is_control_enabled():
             _LOGGER.debug("%s: Fan control is off", self.name)

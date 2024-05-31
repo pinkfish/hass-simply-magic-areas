@@ -255,7 +255,7 @@ async def test_light(
     assert area_binary_sensor is not None
     assert area_binary_sensor.state == STATE_OFF
     assert area_binary_sensor.attributes == {
-        "friendly_name": "kitchen Lights (Simply Magic Areas)",
+        "friendly_name": "kitchen kitchen Lights (Simply Magic Areas)",
         "lights": ["light.test_5678"],
         "entity_id": ["light.test_5678"],
         "color_mode": None,

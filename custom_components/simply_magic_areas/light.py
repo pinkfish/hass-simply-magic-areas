@@ -114,7 +114,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self,
             name=None,
             entity_ids=entities,
-            unique_id=None,
+            unique_id=self._attr_unique_id,
             mode=False,
         )
 

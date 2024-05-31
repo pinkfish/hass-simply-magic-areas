@@ -59,7 +59,7 @@ async def test_light_on_off(
     for light in one_light:
         e = hass.states.get(light)
         assert e.state == STATE_OFF
-    assert control_entity.state == STATE_OFF
+    assert control_entity.state == STATE_ON
     assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
 
@@ -69,6 +69,11 @@ async def test_light_on_off(
             ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
         }
         await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_ON, service_data)
+    else:
+        service_data = {
+            ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
+        }
+        await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_OFF, service_data)
     one_motion[0].turn_on()
     await hass.async_block_till_done()
 
@@ -195,6 +200,11 @@ async def test_light_on_off_with_light_sensor(
     brightness: int,
 ) -> None:
     """Test loading the integration."""
+    service_data = {
+        ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
+    }
+    await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_OFF, service_data)
+    await hass.async_block_till_done()
     # Validate the right enties were created.
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"

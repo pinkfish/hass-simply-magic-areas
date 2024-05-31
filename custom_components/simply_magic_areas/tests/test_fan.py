@@ -12,12 +12,14 @@ from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import ATTR_ENTITY_ID, SERVICE_TURN_ON, STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_registry import (
-    RegistryEntry,
-    async_get as async_get_er,
+from homeassistant.const import (
+    ATTR_ENTITY_ID,
+    SERVICE_TURN_OFF,
+    SERVICE_TURN_ON,
+    STATE_OFF,
+    STATE_ON,
 )
+from homeassistant.core import HomeAssistant
 
 from ..const import DOMAIN
 from .common import async_mock_service
@@ -58,7 +60,7 @@ async def test_fan_on_off(
     assert area_binary_sensor is not None
     for fan in one_fan:
         assert not fan.is_on
-    assert control_entity.state == STATE_OFF
+    assert control_entity.state == STATE_ON
     assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
 
@@ -68,6 +70,11 @@ async def test_fan_on_off(
             ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
         }
         await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_ON, service_data)
+    else:
+        service_data = {
+            ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
+        }
+        await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_OFF, service_data)
     one_motion[0].turn_on()
     await hass.async_block_till_done()
 

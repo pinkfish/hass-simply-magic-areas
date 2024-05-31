@@ -10,7 +10,7 @@ from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import STATE_OFF
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 
 from ..const import DOMAIN
@@ -55,7 +55,7 @@ async def test_init_no_devices(
     assert humidity_sensor is None
     assert trend_up is None
     assert trend_down is None
-    assert control_entity.state == STATE_OFF
+    assert control_entity.state == STATE_ON
     assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
 
@@ -93,7 +93,7 @@ async def test_init_with_lights(
     assert manual_override_entity is not None
     assert area_binary_sensor is not None
     assert occupied_lights is not None
-    assert control_entity.state == STATE_OFF
+    assert control_entity.state == STATE_ON
     assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
 
@@ -135,7 +135,7 @@ async def test_init_with_light_sensor(
     assert area_binary_sensor is not None
     assert occupied_lights is None
     assert light_sensor is not None
-    assert control_entity.state == STATE_OFF
+    assert control_entity.state == STATE_ON
     assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
 
@@ -185,7 +185,7 @@ async def test_init_with_humidity_sensor(
     assert humidity_sensor is not None
     assert trend_up is not None
     assert trend_down is not None
-    assert control_entity.state == STATE_OFF
+    assert control_entity.state == STATE_ON
     assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
     await hass.async_block_till_done()
@@ -225,7 +225,7 @@ async def test_init_with_lights_and_sensor(
     assert manual_override_entity is not None
     assert area_binary_sensor is not None
     assert occupied_lights is not None
-    assert control_entity.state == STATE_OFF
+    assert control_entity.state == STATE_ON
     assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
     await hass.async_block_till_done()

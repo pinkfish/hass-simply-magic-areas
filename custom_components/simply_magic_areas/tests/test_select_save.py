@@ -11,7 +11,7 @@ from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorStateClass
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import STATE_OFF
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 
 from ..const import DOMAIN, AreaState
@@ -71,7 +71,7 @@ async def test_save_light_control(
     )
 
     assert area_binary_sensor is not None
-    assert area_binary_sensor.state == STATE_OFF
+    assert area_binary_sensor.state == STATE_ON
     assert area_binary_sensor.attributes == {
         "friendly_name": "kitchen kitchen Light Control (Simply Magic Areas)",
         "icon": "mdi:head-cog",

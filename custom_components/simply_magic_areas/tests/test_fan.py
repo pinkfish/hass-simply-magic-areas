@@ -156,7 +156,7 @@ async def test_fan_on_off_humidity(
     assert area_binary_sensor is not None
     for fan in one_fan:
         assert not fan.is_on
-    assert control_entity.state == STATE_OFF
+    assert control_entity.state == STATE_ON
     assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
     assert area_humidity_occupied.state == STATE_OFF

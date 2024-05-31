@@ -18,6 +18,7 @@ from .const import CONF_FEATURE_COVER_GROUPS, DATA_AREA_OBJECT, MODULE_DATA
 
 _LOGGER = logging.getLogger(__name__)
 DEPENDENCIES = ["magic_areas"]
+ATTR_COVER_ENTITY_ID = "cover_entity_id"
 
 
 async def async_setup_entry(
@@ -66,24 +67,22 @@ class AreaCoverGroup(MagicEntity, CoverGroup):
         """Initialize the cover group."""
         MagicEntity.__init__(self, area=area, translation_key=f"cover_{device_class}")
 
-        if device_class:
-            device_class_name = " ".join(device_class.split("_")).title()
-            self._name = f"Area Covers ({device_class_name}) ({area.name})"
-        else:
-            self._name = f"Area Covers ({area.name})"
-
         self._device_class = device_class
         self._entities = [
             e
             for e in area.entities[COVER_DOMAIN]
             if e.get("device_class") == device_class
         ]
-        self._attributes[ATTR_ENTITY_ID] = [e[ATTR_ENTITY_ID] for e in self._entities]
+        self._attributes[ATTR_COVER_ENTITY_ID] = [
+            e[ATTR_ENTITY_ID] for e in self._entities
+        ]
 
         CoverGroup.__init__(
-            self, self.unique_id, self._name, self._attributes[ATTR_ENTITY_ID]
+            self, self.unique_id, "", self._attributes[ATTR_COVER_ENTITY_ID]
         )
+        delattr(self, "_attr_name")
 
     @property
     def device_class(self):
+        """The cover device classes."""
         return self._device_class

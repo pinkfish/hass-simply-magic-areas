@@ -97,6 +97,7 @@ class EntityNames(StrEnum):
     FAN = "fan"
     ILLUMINANCE = "illuminance"
     HUMIDITY = "humidity"
+    MEDIA_PLAYER="media"
 
 
 # MagicAreas Components

@@ -300,7 +300,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self.area.config.get(
                 CONF_MAX_BRIGHTNESS_LEVEL, DEFAULT_MAX_BRIGHTNESS_LEVEL
             ),
-            self._attr_extra_state_attributes[ATTR_LAST_ON_ILLUMINANCE],
+            self._attr_extra_state_attributes.get(ATTR_LAST_ON_ILLUMINANCE, 0),
         )
         if luminesence > min_brightness:
             max_brightness = self.area.config.get(

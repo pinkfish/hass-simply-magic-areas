@@ -27,20 +27,20 @@ from homeassistant.helpers.entity_registry import async_get as async_get_er
 from homeassistant.helpers.event import async_track_state_change_event, call_later
 from homeassistant.util import slugify
 
-from .add_entities_when_ready import add_entities_when_ready
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .const import (
     ATTR_LAST_UPDATE_FROM_ENTITY,
     CONF_MANUAL_TIMEOUT,
+    DATA_AREA_OBJECT,
     DEFAULT_MANUAL_TIMEOUT,
     DOMAIN,
+    MODULE_DATA,
     AreaState,
     EntityNames,
 )
 
 _LOGGER = logging.getLogger(__name__)
-DEPENDENCIES = ["magic_areas"]
 ATTR_HUMIDITY_UP = "humidity_up"
 ATTR_FANS = "fans"
 
@@ -52,21 +52,8 @@ async def async_setup_entry(
 ):
     """Set up the Area config entry."""
 
-    add_entities_when_ready(hass, async_add_entities, config_entry, _add_fans)
+    area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
 
-
-def _cleanup_fan_entities(
-    hass: HomeAssistant, new_ids: list[str], old_ids: list[str]
-) -> None:
-    entity_registry = async_get_er(hass)
-    for ent_id in old_ids:
-        if ent_id in new_ids:
-            continue
-        _LOGGER.warning("Deleting old entity %s", ent_id)
-        entity_registry.async_remove(ent_id)
-
-
-def _add_fans(area: MagicArea, async_add_entities: AddEntitiesCallback):
     existing_fan_entities: list[str] = []
     if DOMAIN + FAN_DOMAIN in area.entities:
         existing_fan_entities = [
@@ -85,7 +72,7 @@ def _add_fans(area: MagicArea, async_add_entities: AddEntitiesCallback):
     fan_groups = []
 
     # Find fans
-    fan_entities = [e["entity_id"] for e in area.entities[FAN_DOMAIN]]
+    fan_entities = [e[ATTR_ENTITY_ID] for e in area.entities[FAN_DOMAIN]]
 
     # Create the ones with no entity automatically plus ones with an entity set
     fan_group_object = AreaFanGroup(area, fan_entities)
@@ -95,6 +82,17 @@ def _add_fans(area: MagicArea, async_add_entities: AddEntitiesCallback):
     async_add_entities(fan_groups)
     group_ids = [e.entity_id for e in fan_groups]
     _cleanup_fan_entities(area.hass, group_ids, existing_fan_entities)
+
+
+def _cleanup_fan_entities(
+    hass: HomeAssistant, new_ids: list[str], old_ids: list[str]
+) -> None:
+    entity_registry = async_get_er(hass)
+    for ent_id in old_ids:
+        if ent_id in new_ids:
+            continue
+        _LOGGER.warning("Deleting old entity %s", ent_id)
+        entity_registry.async_remove(ent_id)
 
 
 class AreaFanGroup(MagicEntity, FanGroup):

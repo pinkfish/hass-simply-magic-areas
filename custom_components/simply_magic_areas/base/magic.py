@@ -383,9 +383,13 @@ class MagicArea(object):  # noqa: UP004
             return switch_entity.state.lower() == STATE_ON
         return True
 
-    def simply_magic_entity_id(self, domain: str, name: str):
+    def simply_magic_entity_id(
+        self, domain: str, name: str, area_name: str | None = None
+    ):
         """Return the name for the entity."""
-        return f"{domain}.{MAGIC_DEVICE_ID_PREFIX}{slugify(name)}_{slugify(self.name)}"
+        if area_name is None:
+            area_name = self.name
+        return f"{domain}.{MAGIC_DEVICE_ID_PREFIX}{slugify(name)}_{slugify(area_name)}"
 
 
 class MagicMetaArea(MagicArea):

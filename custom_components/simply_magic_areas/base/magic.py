@@ -7,7 +7,7 @@ import logging
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_ON
+from homeassistant.const import ATTR_ENTITY_ID, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.area_registry import AreaEntry
 from homeassistant.helpers.device_registry import async_get as async_get_dr
@@ -38,8 +38,9 @@ from ..const import (
     META_AREA_GLOBAL,
     MODULE_DATA,
     AreaState,
+    EntityNames,
 )
-from ..util import areas_loaded, is_entity_list
+from ..util import is_entity_list
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,6 +110,19 @@ class MagicArea(object):  # noqa: UP004
 
         self._finalize_init()
 
+    def areas_loaded(self) -> bool:
+        """Return the state of the area being loaded."""
+        if MODULE_DATA not in self.hass.data:
+            return False
+
+        data = self.hass.data[MODULE_DATA]
+        for area_info in data.values():
+            area = area_info[DATA_AREA_OBJECT]
+            if not area.is_meta():
+                if not area.initialized:
+                    return False
+        return True
+
     def _finalize_init(self) -> None:
         self.initialized = True
 
@@ -116,7 +130,7 @@ class MagicArea(object):  # noqa: UP004
 
         if not self.is_meta():
             # Check if we finished loading all areas
-            if areas_loaded(self.hass):
+            if self.areas_loaded():
                 self.hass.bus.async_fire(EVENT_MAGICAREAS_READY)
 
         area_type = "Meta-Area" if self.is_meta() else "Area"
@@ -276,18 +290,18 @@ class MagicArea(object):  # noqa: UP004
 
                 # Get latest state and create object
                 latest_state = self.hass.states.get(entity_id)
-                updated_entity = {"entity_id": entity_id}
+                updated_entity = {ATTR_ENTITY_ID: entity_id}
 
                 if latest_state:
                     # Need to exclude entity_id if present but latest_state.attributes
                     # is a ReadOnlyDict so we can't remove it, need to iterate and select
                     # all keys that are NOT entity_id
                     for attr_key, attr_value in latest_state.attributes.items():
-                        if attr_key != "entity_id":
+                        if attr_key != ATTR_ENTITY_ID:
                             updated_entity[attr_key] = attr_value
 
                 # Ignore groups
-                if is_entity_list(updated_entity["entity_id"]):
+                if is_entity_list(updated_entity[ATTR_ENTITY_ID]):
                     _LOGGER.debug(
                         "%s: %s is probably a group, skipping",
                         self.slug,
@@ -324,7 +338,7 @@ class MagicArea(object):  # noqa: UP004
     async def _load_state_config(self) -> None:
         light_entities = []
         if LIGHT_DOMAIN in self.entities:
-            light_entities = [e["entity_id"] for e in self.entities[LIGHT_DOMAIN]]
+            light_entities = [e[ATTR_ENTITY_ID] for e in self.entities[LIGHT_DOMAIN]]
 
         for lg in ALL_LIGHT_ENTITIES:
             entity_ob: str | None = None
@@ -349,14 +363,20 @@ class MagicArea(object):  # noqa: UP004
                 dim_level=int(base.get(lg.state_dim_level(), lg.default_dim_level)),
                 for_state=lg.enable_state,
                 icon=lg.icon,
-                control_entity=f"{SWITCH_DOMAIN}.area_light_control_{self.slug}",
-                manual_entity=f"{SWITCH_DOMAIN}.area_manual_override_active_{self.slug}",
+                control_entity=self.simply_magic_entity_id(
+                    SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
+                ),
+                manual_entity=self.simply_magic_entity_id(
+                    SWITCH_DOMAIN, EntityNames.MANUAL_OVERRIDE
+                ),
                 lights=lights,
             )
 
     def is_control_enabled(self) -> bool:
         """If the area has controled turned on for simply magic areas."""
-        entity_id = self.simply_magic_entity_id(SWITCH_DOMAIN, "light_control")
+        entity_id = self.simply_magic_entity_id(
+            SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
+        )
 
         switch_entity = self.hass.states.get(entity_id)
         if switch_entity:
@@ -380,7 +400,7 @@ class MagicMetaArea(MagicArea):
             area,
             config,
             EVENT_MAGICAREAS_READY,
-            init_on_hass_running=areas_loaded(hass),
+            init_on_hass_running=self.areas_loaded(),
         )
 
     def _areas_loaded(self, hass: HomeAssistant = None) -> bool:

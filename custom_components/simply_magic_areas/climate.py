@@ -52,27 +52,20 @@ from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_SUPPORTED_FEATURES,
     ATTR_TEMPERATURE,
-    CONF_ENTITIES,
-    CONF_NAME,
-    CONF_TEMPERATURE_UNIT,
-    CONF_UNIQUE_ID,
-    STATE_OFF,
     STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
-    UnitOfTemperature,
 )
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .add_entities_when_ready import add_entities_when_ready
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .const import (
     CONF_CLIMATE_GROUPS_TURN_ON_STATE,
     CONF_FEATURE_CLIMATE_GROUPS,
+    DATA_AREA_OBJECT,
     DEFAULT_CLIMATE_GROUPS_TURN_ON_STATE,
+    MODULE_DATA,
     AreaState,
 )
 
@@ -101,12 +94,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ):
     """Create the climate group entry on startup."""
-    add_entities_when_ready(
-        hass, async_add_entities, config_entry, _setup_climate_group
-    )
+    area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
 
-
-def _setup_climate_group(area: MagicArea, async_add_entities: AddEntitiesCallback):
     # Check feature availability
     if not area.has_feature(CONF_FEATURE_CLIMATE_GROUPS):
         return
@@ -120,8 +109,11 @@ def _setup_climate_group(area: MagicArea, async_add_entities: AddEntitiesCallbac
         )
         return
 
-    climate_entities = [e["entity_id"] for e in area.entities[CLIMATE_DOMAIN]]
+    climate_entities = [e[ATTR_ENTITY_ID] for e in area.entities[CLIMATE_DOMAIN]]
     async_add_entities([AreaClimateGroup(area, climate_entities)])
+
+
+ATTR_CLIMMATE_ENTITY_IDS = "climate_entity_ids"
 
 
 class ClimateGroup(GroupEntity, ClimateEntity):
@@ -138,11 +130,11 @@ class ClimateGroup(GroupEntity, ClimateEntity):
         temperature_unit: str,
     ) -> None:
         """Initialize a climate group."""
-        self._entity_ids = entity_ids
+        self._climate_entity_ids = entity_ids
 
         self._attr_name = name
         self._attr_unique_id = unique_id
-        self._attr_extra_state_attributes = {ATTR_ENTITY_ID: entity_ids}
+        self._attr_extra_state_attributes = {ATTR_CLIMMATE_ENTITY_IDS: entity_ids}
 
         self._attr_temperature_unit = temperature_unit
 
@@ -186,7 +178,7 @@ class ClimateGroup(GroupEntity, ClimateEntity):
 
         states = [
             state
-            for entity_id in self._entity_ids
+            for entity_id in self._climate_entity_ids
             if (state := self.hass.states.get(entity_id)) is not None
         ]
         self._attr_assumed_state |= not states_equal(states)
@@ -365,7 +357,10 @@ class ClimateGroup(GroupEntity, ClimateEntity):
 
 
 class AreaClimateGroup(MagicEntity, ClimateGroup):
+    """Climate group for the meta area."""
+
     def __init__(self, area, entities):
+        """Initialize the climate group."""
         MagicEntity.__init__(self, area)
 
         name = f"Area Climate ({area.name})"

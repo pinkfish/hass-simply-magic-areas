@@ -64,6 +64,7 @@ ATTR_ACTIVE_SENSORS = "active_sensors"
 ATTR_LAST_ACTIVE_SENSORS = "last_active_sensors"
 ATTR_FEATURES = "features"
 ATTR_PRESENCE_SENSORS = "presence_sensors"
+ATTR_LAST_UPDATE_FROM_ENTITY: str = "last_update_from_entity"
 
 # Icons
 ICON_PRESENCE_HOLD = "mdi:car-brake-hold"
@@ -81,6 +82,21 @@ class AreaState(StrEnum):
     AREA_STATE_BRIGHT = "bright"  # Bright state, high lumens
     AREA_STATE_SLEEP = "sleep"  # Sleep state (night)
     AREA_STATE_ACCENTED = "accented"  # If the state is accented
+
+
+class EntityNames(StrEnum):
+    """The names of the fixed entities to use."""
+
+    STATE = "state"
+    HUMIDITY_OCCUPIED = "humidity_occupancy"
+    HUMIDITY_EMPTY = "humidity_empty"
+    MANUAL_OVERRIDE = "manual_override"
+    LIGHT_CONTROL = "light_control"
+    PRESENCE_HOLD = "presence_hold"
+    LIGHT = "light"
+    FAN = "fan"
+    ILLUMINANCE = "illuminance"
+    HUMIDITY = "humidity"
 
 
 # MagicAreas Components

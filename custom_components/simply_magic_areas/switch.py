@@ -24,6 +24,7 @@ from .const import (
     ICON_MANUAL_OVERRIDE,
     ICON_PRESENCE_HOLD,
     MODULE_DATA,
+    EntityNames,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,7 +84,7 @@ class AreaLightControlSwitch(SwitchBase):
     def __init__(self, area: MagicArea) -> None:
         """Initialize the area light control switch."""
 
-        super().__init__(area, translation_key="light_control")
+        super().__init__(area, translation_key=EntityNames.LIGHT_CONTROL)
         self._attr_state = STATE_ON
         self._attr_is_on = True
 
@@ -99,7 +100,7 @@ class AreaLightsManualOverrideActiveSwitch(SwitchBase):
     def __init__(self, area: MagicArea) -> None:
         """Initialize the area manual override switch."""
 
-        super().__init__(area, translation_key="manual_override")
+        super().__init__(area, translation_key=EntityNames.MANUAL_OVERRIDE)
         self._attr_state = STATE_OFF
         self._attr_is_on = False
 
@@ -115,7 +116,7 @@ class AreaPresenceHoldSwitch(SwitchBase):
     def __init__(self, area: MagicArea) -> None:
         """Initialize the area presence hold switch."""
 
-        super().__init__(area, translation_key="presence_hold")
+        super().__init__(area, translation_key=EntityNames.PRESENCE_HOLD)
         self.timeout_callback = None
         self._attr_state = STATE_OFF
         self._attr_is_on = False

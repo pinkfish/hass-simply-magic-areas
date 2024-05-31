@@ -33,6 +33,7 @@ from homeassistant.helpers.event import async_track_state_change_event, call_lat
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .const import (
+    ATTR_LAST_UPDATE_FROM_ENTITY,
     CONF_MANUAL_TIMEOUT,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
@@ -43,10 +44,11 @@ from .const import (
     DOMAIN,
     MODULE_DATA,
     AreaState,
+    EntityNames,
 )
 
 _LOGGER = logging.getLogger(__name__)
-DEPENDENCIES = ["magic_areas"]
+ATTR_LAST_ON_ILLUMINANCE: str = "last_on_illuminance"
 
 
 async def async_setup_entry(
@@ -59,7 +61,7 @@ async def async_setup_entry(
     existing_light_entities: list[str] = []
     if DOMAIN + LIGHT_DOMAIN in area.entities:
         existing_light_entities = [
-            e["entity_id"] for e in area.entities[DOMAIN + LIGHT_DOMAIN]
+            e[ATTR_ENTITY_ID] for e in area.entities[DOMAIN + LIGHT_DOMAIN]
         ]
     # Check if there are any lights
     if not area.has_entities(LIGHT_DOMAIN):
@@ -70,7 +72,7 @@ async def async_setup_entry(
     light_groups = []
 
     # Create light groups
-    light_entities = [e["entity_id"] for e in area.entities[LIGHT_DOMAIN]]
+    light_entities = [e[ATTR_ENTITY_ID] for e in area.entities[LIGHT_DOMAIN]]
     if area.is_meta():
         # light_groups.append(MagicLightGroup(area, light_entities))
         pass
@@ -130,7 +132,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         # Add static attributes
         self.last_update_from_entity: bool = False
         self._attr_extra_state_attributes["lights"] = self._entity_ids
-        self._attr_extra_state_attributes["last_update_from_entity"] = False
+        self._attr_extra_state_attributes[ATTR_LAST_UPDATE_FROM_ENTITY] = False
 
     @property
     def icon(self) -> str:
@@ -150,11 +152,11 @@ class AreaLightGroup(MagicEntity, LightGroup):
             )
             self._attr_is_on = last_state.state == STATE_ON
 
-            if "last_update_from_entity" in last_state.attributes:
+            if ATTR_LAST_UPDATE_FROM_ENTITY in last_state.attributes:
                 self.last_update_from_entity = last_state.attributes[
-                    "last_update_from_entity"
+                    ATTR_LAST_UPDATE_FROM_ENTITY
                 ]
-                self._attr_extra_state_attributes["last_update_from_entity"] = (
+                self._attr_extra_state_attributes[ATTR_LAST_UPDATE_FROM_ENTITY] = (
                     self.last_update_from_entity
                 )
         else:
@@ -179,8 +181,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
             async_track_state_change_event(
                 self.hass,
                 [
-                    self.area.simply_magic_entity_id(SELECT_DOMAIN, "state"),
-                    self.area.simply_magic_entity_id(SWITCH_DOMAIN, "light_control"),
+                    self.area.simply_magic_entity_id(SELECT_DOMAIN, EntityNames.STATE),
+                    self.area.simply_magic_entity_id(
+                        SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
+                    ),
                 ],
                 self._area_state_change,
             )
@@ -296,7 +300,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self.area.config.get(
                 CONF_MAX_BRIGHTNESS_LEVEL, DEFAULT_MAX_BRIGHTNESS_LEVEL
             ),
-            self._attr_extra_state_attributes["last_on_illuminance"],
+            self._attr_extra_state_attributes[ATTR_LAST_ON_ILLUMINANCE],
         )
         if luminesence > min_brightness:
             max_brightness = self.area.config.get(
@@ -349,14 +353,21 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     def _get_illuminance(self) -> float:
         if self.is_on:
-            return self._attr_extra_state_attributes["last_on_illuminance"] or 0.0
-        entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_illuminance_{self.area.slug}"
+            if ATTR_LAST_ON_ILLUMINANCE in self._attr_extra_state_attributes:
+                return (
+                    self._attr_extra_state_attributes[ATTR_LAST_ON_ILLUMINANCE] or 0.0
+                )
+            return 0.0
+        entity_id = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.ILLUMINANCE
+        )
+
         sensor_entity = self.hass.states.get(entity_id)
         if sensor_entity is None:
-            self._attr_extra_state_attributes["last_on_illuminance"] = 0.0
+            self._attr_extra_state_attributes[ATTR_LAST_ON_ILLUMINANCE] = 0.0
             return 0.0
         try:
-            self._attr_extra_state_attributes["last_on_illuminance"] = float(
+            self._attr_extra_state_attributes[ATTR_LAST_ON_ILLUMINANCE] = float(
                 sensor_entity.state
             )
             return float(sensor_entity.state)
@@ -365,13 +376,21 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     #### Control Release
     def _is_controlled_by_this_entity(self) -> bool:
-        entity_id = f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_active_kitchen{self.area.slug}"
+        entity_id = (
+            self.area.simply_magic_entity_id(
+                SWITCH_DOMAIN, EntityNames.MANUAL_OVERRIDE
+            ),
+        )
         switch_entity = self.hass.states.get(entity_id)
         return switch_entity.state.lower() == STATE_OFF
 
     def _set_controlled_by_this_entity(self, enabled: bool) -> None:
         if self.hass:
-            entity_id = f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_active_{self.area.slug}"
+            entity_id = (
+                self.area.simply_magic_entity_id(
+                    SWITCH_DOMAIN, EntityNames.MANUAL_OVERRIDE
+                ),
+            )
             service_data = {
                 ATTR_ENTITY_ID: entity_id,
             }

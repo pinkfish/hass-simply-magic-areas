@@ -3,11 +3,8 @@
 from collections.abc import Iterable
 import inspect
 
-from homeassistant.core import HomeAssistant
 from homeassistant.helpers.area_registry import AreaEntry
 from homeassistant.util import slugify
-
-from .const import DATA_AREA_OBJECT, MODULE_DATA
 
 basestring = (str, bytes)
 
@@ -24,21 +21,6 @@ def flatten_entity_list(input_list):
             yield from flatten_entity_list(i)
         else:
             yield i
-
-
-def areas_loaded(hass: HomeAssistant) -> bool:
-    """Return the state of the area being loaded."""
-    if MODULE_DATA not in hass.data:
-        return False
-
-    data = hass.data[MODULE_DATA]
-    for area_info in data.values():
-        area = area_info[DATA_AREA_OBJECT]
-        if not area.is_meta():
-            if not area.initialized:
-                return False
-
-    return True
 
 
 def get_meta_area_object(name: str):

@@ -19,10 +19,6 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
     call_later,
 )
-from homeassistant.helpers.entity_registry import (
-    RegistryEntry,
-    async_get as async_get_er,
-)
 
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
@@ -52,6 +48,7 @@ from .const import (
     INVALID_STATES,
     MODULE_DATA,
     AreaState,
+    EntityNames,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -200,7 +197,7 @@ class AreaStateSelect(MagicEntity, SelectEntity):
             # MetaAreas track their children
             child_areas = self.area.get_child_areas()
             for child_area in child_areas:
-                entity_id = f"{SELECT_DOMAIN}.area_{child_area}"
+                entity_id = f"{SELECT_DOMAIN}.simply_magic_area_state_{child_area}"
                 self._sensors.append(entity_id)
             return
 
@@ -609,11 +606,13 @@ class AreaStateSelect(MagicEntity, SelectEntity):
         if len(active_sensors) == 0:
             trend_up = self.hass.states.get(
                 self.area.simply_magic_entity_id(
-                    BINARY_SENSOR_DOMAIN, "humidity_occupancy"
+                    BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_OCCUPIED
                 )
             )
             trend_down = self.hass.states.get(
-                self.area.simply_magic_entity_id(BINARY_SENSOR_DOMAIN, "humidity_empty")
+                self.area.simply_magic_entity_id(
+                    BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_EMPTY
+                )
             )
             if trend_up is not None and trend_down is not None:
                 if trend_up.state == STATE_ON and trend_down.state != STATE_ON:

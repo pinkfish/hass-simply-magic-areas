@@ -30,10 +30,19 @@ from homeassistant.util import slugify
 from .add_entities_when_ready import add_entities_when_ready
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
-from .const import CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT, DOMAIN, AreaState
+from .const import (
+    ATTR_LAST_UPDATE_FROM_ENTITY,
+    CONF_MANUAL_TIMEOUT,
+    DEFAULT_MANUAL_TIMEOUT,
+    DOMAIN,
+    AreaState,
+    EntityNames,
+)
 
 _LOGGER = logging.getLogger(__name__)
 DEPENDENCIES = ["magic_areas"]
+ATTR_HUMIDITY_UP = "humidity_up"
+ATTR_FANS = "fans"
 
 
 async def async_setup_entry(
@@ -115,8 +124,8 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         # Add static attributes
         self.last_update_from_entity: bool = False
-        self._attr_extra_state_attributes["fans"] = self._entity_ids
-        self._attr_extra_state_attributes["last_update_from_entity"] = False
+        self._attr_extra_state_attributes[ATTR_FANS] = self._entity_ids
+        self._attr_extra_state_attributes[ATTR_LAST_UPDATE_FROM_ENTITY] = False
 
     @property
     def icon(self) -> str:
@@ -136,11 +145,11 @@ class AreaFanGroup(MagicEntity, FanGroup):
             )
             self._attr_is_on = last_state.state == STATE_ON
 
-            if "last_update_from_entity" in last_state.attributes:
+            if ATTR_LAST_UPDATE_FROM_ENTITY in last_state.attributes:
                 self.last_update_from_entity = last_state.attributes[
-                    "last_update_from_entity"
+                    ATTR_LAST_UPDATE_FROM_ENTITY
                 ]
-                self._attr_extra_state_attributes["last_update_from_entity"] = (
+                self._attr_extra_state_attributes[ATTR_LAST_UPDATE_FROM_ENTITY] = (
                     self.last_update_from_entity
                 )
         else:
@@ -165,18 +174,21 @@ class AreaFanGroup(MagicEntity, FanGroup):
             async_track_state_change_event(
                 self.hass,
                 [
-                    self.area.simply_magic_entity_id(SELECT_DOMAIN, "state"),
-                    self.area.simply_magic_entity_id(SWITCH_DOMAIN, "light_control"),
+                    self.area.simply_magic_entity_id(SELECT_DOMAIN, EntityNames.STATE),
+                    self.area.simply_magic_entity_id(
+                        SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
+                    ),
                 ],
                 self._area_state_change,
             )
         )
         # If the trend entities exist, listen to them
         trend_up = self.area.simply_magic_entity_id(
-            BINARY_SENSOR_DOMAIN, "humidity_occupancy"
+            BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_OCCUPIED
         )
         trend_down = self.area.simply_magic_entity_id(
-            BINARY_SENSOR_DOMAIN, "humidity_empty"
+            BINARY_SENSOR_DOMAIN,
+            EntityNames.HUMIDITY_EMPTY,
         )
         if (
             self.hass.states.get(trend_up) is not None
@@ -213,7 +225,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self.name,
             to_state,
             from_state,
-            self._attr_extra_state_attributes.get("humidity_up", False),
+            self._attr_extra_state_attributes.get(ATTR_HUMIDITY_UP, False),
             self.is_on,
         )
 
@@ -221,7 +233,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if to_state == AreaState.AREA_STATE_EXTENDED:
             self.turn_on()
         elif self.is_on and not self._attr_extra_state_attributes.get(
-            "humidity_up", False
+            ATTR_HUMIDITY_UP, False
         ):
             self.turn_off()
         else:
@@ -240,7 +252,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         )
         if to_state == STATE_ON and from_state != STATE_ON:
             # We have stuff going down.
-            self._attr_extra_state_attributes["humidity_up"] = False
+            self._attr_extra_state_attributes[ATTR_HUMIDITY_UP] = False
             self.turn_off()
 
     def _trend_up_state_change(self, event: Event[EventStateChangedData]):
@@ -258,52 +270,50 @@ class AreaFanGroup(MagicEntity, FanGroup):
         )
         if to_state == STATE_ON and from_state != STATE_ON:
             # We have stuff going up.
-            self._attr_extra_state_attributes["humidity_up"] = True
+            self._attr_extra_state_attributes[ATTR_HUMIDITY_UP] = True
             self.turn_on()
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
         if self.area.state == AreaState.AREA_STATE_CLEAR:
             self._reset_control(datetime.now(UTC))
         else:
-            origin_event = event.context.origin_event
-            if origin_event.event_type == "state_changed":
-                # Skip non ON/OFF state changes
-                if origin_event.data["old_state"].state not in [
-                    STATE_ON,
-                    STATE_OFF,
-                ]:
-                    return
-                if origin_event.data["new_state"].state not in [
-                    STATE_ON,
-                    STATE_OFF,
-                ]:
-                    return
-                manual_timeout = self.area.config.get(
-                    CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
-                )
-                if (
-                    "restored" in origin_event.data["old_state"].attributes
-                    and origin_event.data["old_state"].attributes["restored"]
-                ):
-                    # On state restored, also setup the timeout callback.
-                    if not self._in_controlled_by_this_entity():
-                        if self._manual_timeout_cb is not None:
-                            self._manual_timeout_cb()
-                        self._manual_timeout_cb = call_later(
-                            self.hass, manual_timeout, self._reset_manual_timeout
-                        )
-                    return
-                if self.last_update_from_entity:
-                    self.last_update_from_entity = False
-                    return
-                self._set_controlled_by_this_entity(False)
-                if self._manual_timeout_cb is not None:
-                    self._manual_timeout_cb()
-                self._manual_timeout_cb = call_later(
-                    self.hass, manual_timeout, self._reset_manual_timeout
-                )
+            # Skip non ON/OFF state changes
+            if event.data["old_state"].state not in [
+                STATE_ON,
+                STATE_OFF,
+            ]:
+                return
+            if event.data["new_state"].state not in [
+                STATE_ON,
+                STATE_OFF,
+            ]:
+                return
+            manual_timeout = self.area.config.get(
+                CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
+            )
+            if (
+                "restored" in event.data["old_state"].attributes
+                and event.data["old_state"].attributes["restored"]
+            ):
+                # On state restored, also setup the timeout callback.
+                if not self._in_controlled_by_this_entity():
+                    if self._manual_timeout_cb is not None:
+                        self._manual_timeout_cb()
+                    self._manual_timeout_cb = call_later(
+                        self.hass, manual_timeout, self._reset_manual_timeout
+                    )
+                return
+            if self.last_update_from_entity:
+                self.last_update_from_entity = False
+                return
+            self._set_controlled_by_this_entity(False)
+            if self._manual_timeout_cb is not None:
+                self._manual_timeout_cb()
+            self._manual_timeout_cb = call_later(
+                self.hass, manual_timeout, self._reset_manual_timeout
+            )
 
-    def _reset_manual_timeout(self):
+    def _reset_manual_timeout(self, dt: datetime):
         self._set_controlled_by_this_entity(True)
         self._manual_timeout_cb = None
 

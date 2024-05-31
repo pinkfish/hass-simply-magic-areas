@@ -216,7 +216,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         if self.area.has_configured_state(to_state):
             conf = self.area.state_config(to_state)
-            self.turn_on(conf)
+            self._turn_on_light(conf)
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
         if self.area.state != AreaState.AREA_STATE_CLEAR:
@@ -264,7 +264,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._manual_timeout_cb = None
 
     ####  Light Handling
-    def turn_on(self, conf: ConfigEntry) -> None:
+    def _turn_on_light(self, conf: ConfigEntry) -> None:
         """Turn on the light group."""
 
         if not self.area.is_control_enabled():
@@ -323,7 +323,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         if brightness == 0:
             _LOGGER.debug("%s: Brightness is 0", self.name)
-            return self.turn_off()
+            return self._turn_off_light()
 
         _LOGGER.debug("Turning on lights")
         self.last_update_from_entity = True
@@ -335,7 +335,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         return True
 
-    def turn_off(self) -> None:
+    def _turn_off_light(self) -> None:
         """Turn off the light group."""
         if not self.area.is_control_enabled():
             return False

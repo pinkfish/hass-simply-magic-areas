@@ -64,7 +64,6 @@ async def async_setup_entry(
     area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
 
     select = AreaStateSelect(area)
-
     # Create basic presence sensor
     async_add_entities([select])
 

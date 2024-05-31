@@ -84,8 +84,8 @@ class AreaLightControlSwitch(SwitchBase):
         """Initialize the area light control switch."""
 
         super().__init__(area, translation_key="light_control")
-        self._attr_state = STATE_OFF
-        self._attr_is_on = False
+        self._attr_state = STATE_ON
+        self._attr_is_on = True
 
     @property
     def icon(self):

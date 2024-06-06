@@ -2,9 +2,9 @@
 black==24.4.2
 mypy-dev==1.11.a3
 pip==24.0.0
-pre-commit==3.6.0
+pre-commit==3.7.1
 pytest==8.2.0
-ruff==0.4.4
+ruff==0.4.8
 
 # Home Assistant testing dependencies
 pytest-asyncio==0.23.6

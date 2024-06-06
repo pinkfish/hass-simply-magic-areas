@@ -36,7 +36,6 @@ from .const import (
     CONF_FEATURE_LIST,
     CONF_FEATURE_LIST_GLOBAL,
     CONF_FEATURE_LIST_META,
-    CONF_FEATURE_PRESENCE_HOLD,
     CONF_ICON,
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
@@ -44,7 +43,6 @@ from .const import (
     CONF_NOTIFY_STATES,
     CONF_ON_STATES,
     CONF_PRESENCE_DEVICE_PLATFORMS,
-    CONF_PRESENCE_HOLD_TIMEOUT,
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
     CONF_TYPE,
     CONF_UPDATE_INTERVAL,
@@ -65,7 +63,6 @@ from .const import (
     OPTIONS_AREA_META,
     OPTIONS_CLIMATE_GROUP,
     OPTIONS_CLIMATE_GROUP_META,
-    OPTIONS_PRESENCE_HOLD,
     REGULAR_AREA_SCHEMA,
     AreaState,
 )
@@ -185,8 +182,7 @@ class ConfigFlow(config_entries.ConfigFlow, ConfigBase, domain=DOMAIN):
 
         reserved_names = [meta_area.lower() for meta_area in META_AREAS]
 
-        # Load registries
-
+        # Load area registry
         area_registry = async_get_ar(self.hass)
         areas = list(area_registry.async_list_areas())
         area_ids = [area.id for area in areas]
@@ -629,20 +625,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
         return await self.do_feature_config(
             name=CONF_FEATURE_AGGREGATION,
             options=OPTIONS_AGGREGATES,
-            selectors=selectors,
-            user_input=user_input,
-        )
-
-    async def async_step_feature_conf_presence_hold(
-        self, user_input: dict[str, Any] | None = None
-    ):
-        """Configure the sensor presence_hold feature."""
-
-        selectors = {CONF_PRESENCE_HOLD_TIMEOUT: self._build_selector_number()}
-
-        return await self.do_feature_config(
-            name=CONF_FEATURE_PRESENCE_HOLD,
-            options=OPTIONS_PRESENCE_HOLD,
             selectors=selectors,
             user_input=user_input,
         )

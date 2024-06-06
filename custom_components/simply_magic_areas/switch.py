@@ -8,21 +8,15 @@ from homeassistant.components.switch import (
     SwitchEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import call_later
 
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .const import (
-    CONF_FEATURE_PRESENCE_HOLD,
-    CONF_PRESENCE_HOLD_TIMEOUT,
     DATA_AREA_OBJECT,
-    DEFAULT_PRESENCE_HOLD_TIMEOUT,
     ICON_LIGHT_CONTROL,
     ICON_MANUAL_OVERRIDE,
-    ICON_PRESENCE_HOLD,
     MODULE_DATA,
     EntityNames,
 )
@@ -38,8 +32,6 @@ async def async_setup_entry(
     """Set up the Area config entry."""
 
     area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
-    if area.has_feature(CONF_FEATURE_PRESENCE_HOLD):
-        async_add_entities([AreaPresenceHoldSwitch(area)])
 
     async_add_entities(
         [AreaLightControlSwitch(area), AreaLightsManualOverrideActiveSwitch(area)]
@@ -66,12 +58,12 @@ class SwitchBase(MagicEntity, SwitchEntity):
         self.schedule_update_ha_state()
 
     async def async_turn_on(self, **kwargs) -> None:
-        """Turn on presence hold."""
+        """Turn on the switch."""
         self._attr_is_on = True
         self.schedule_update_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
-        """Turn off presence hold."""
+        """Turn off the switch."""
         self._attr_is_on = False
         self.schedule_update_ha_state()
 
@@ -104,49 +96,3 @@ class AreaLightsManualOverrideActiveSwitch(SwitchBase):
     def icon(self):
         """Return the icon to be used for this entity."""
         return ICON_MANUAL_OVERRIDE
-
-
-class AreaPresenceHoldSwitch(SwitchBase):
-    """Control the presense/state from being changed for the device."""
-
-    def __init__(self, area: MagicArea) -> None:
-        """Initialize the area presence hold switch."""
-
-        super().__init__(area, translation_key=EntityNames.PRESENCE_HOLD)
-        self.timeout_callback = None
-        self._attr_is_on = False
-
-    @property
-    def icon(self):
-        """Return the icon to be used for this entity."""
-        return ICON_PRESENCE_HOLD
-
-    def timeout_turn_off(self, next_interval):
-        """Turn off the presence hold after the timeout."""
-        if self._attr_state == STATE_ON:
-            self.turn_off()
-
-    async def async_turn_on(self, **kwargs):
-        """Turn on presence hold."""
-        self._attr_state = STATE_ON
-        self._attr_is_on = True
-        self.schedule_update_ha_state()
-
-        timeout = self.area.feature_config(CONF_FEATURE_PRESENCE_HOLD).get(
-            CONF_PRESENCE_HOLD_TIMEOUT, DEFAULT_PRESENCE_HOLD_TIMEOUT
-        )
-
-        if timeout and not self.timeout_callback:
-            self.timeout_callback = call_later(
-                self.hass, timeout, self.timeout_turn_off
-            )
-
-    async def async_turn_off(self, **kwargs):
-        """Turn off presence hold."""
-        self._attr_state = STATE_OFF
-        self._attr_is_on = False
-        self.schedule_update_ha_state()
-
-        if self.timeout_callback:
-            self.timeout_callback()
-            self.timeout_callback = None

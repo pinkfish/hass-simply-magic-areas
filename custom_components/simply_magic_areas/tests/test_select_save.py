@@ -49,6 +49,7 @@ async def test_save_select(
             AreaState.AREA_STATE_BRIGHT,
             AreaState.AREA_STATE_SLEEP,
             AreaState.AREA_STATE_ACCENTED,
+            AreaState.AREA_STATE_MANUAL,
         ],
     }
 

@@ -35,7 +35,7 @@ async def test_fan_on_off(
     config_entry: MockConfigEntry,
     one_fan: list[MockFan],
     one_motion: list[MockBinarySensor],
-    _setup_integration,
+    _setup_integration: None,
     automated: bool,
     state: str,
     monkeypatch: MonkeyPatch,
@@ -82,7 +82,10 @@ async def test_fan_on_off(
     area_binary_sensor = hass.states.get(
         f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_binary_sensor.state == "occupied"
+    if automated:
+        assert area_binary_sensor.state == "occupied"
+    else:
+        assert area_binary_sensor.state == "manual"
     assert len(calls) == 0
 
     # Delay for a while and it should go into extended mode.
@@ -93,7 +96,11 @@ async def test_fan_on_off(
     area_binary_sensor = hass.states.get(
         f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_binary_sensor.state == "extended"
+    if automated:
+        assert area_binary_sensor.state == "extended"
+    else:
+        assert area_binary_sensor.state == "manual"
+
     if automated:
         assert len(calls) == 1
         assert calls[0].data == {
@@ -110,9 +117,11 @@ async def test_fan_on_off(
     area_binary_sensor = hass.states.get(
         f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_binary_sensor.state == "clear"
     if automated:
+        assert area_binary_sensor.state == "clear"
         assert len(calls_off) == 1
+    else:
+        assert area_binary_sensor.state == "manual"
 
     await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
@@ -129,7 +138,7 @@ async def test_fan_on_off_humidity(
     one_fan: list[MockFan],
     one_motion: list[MockBinarySensor],
     one_sensor_humidity: list[MockSensor],
-    _setup_integration,
+    _setup_integration: None,
 ) -> None:
     """Test loading the integration."""
     # Validate the right enties were created.
@@ -170,19 +179,19 @@ async def test_fan_on_off_humidity(
     await hass.async_block_till_done()
     hass.states.async_set(
         one_sensor_humidity[0].entity_id,
-        10.0,
+        str(10.0),
         attributes={"unit_of_measurement": "%"},
     )
     await hass.async_block_till_done()
     hass.states.async_set(
         one_sensor_humidity[0].entity_id,
-        20.0,
+        str(20.0),
         attributes={"unit_of_measurement": "%"},
     )
     await hass.async_block_till_done()
     hass.states.async_set(
         one_sensor_humidity[0].entity_id,
-        30.0,
+        str(30.0),
         attributes={"unit_of_measurement": "%"},
     )
     await hass.async_block_till_done()
@@ -208,19 +217,19 @@ async def test_fan_on_off_humidity(
     # Push events down, should turn on the down trending sensor.
     hass.states.async_set(
         one_sensor_humidity[0].entity_id,
-        25,
+        str(25),
         attributes={"unit_of_measurement": "%"},
     )
     await hass.async_block_till_done()
     hass.states.async_set(
         one_sensor_humidity[0].entity_id,
-        20,
+        str(20),
         attributes={"unit_of_measurement": "%"},
     )
     await hass.async_block_till_done()
     hass.states.async_set(
         one_sensor_humidity[0].entity_id,
-        5,
+        str(5),
         attributes={"unit_of_measurement": "%"},
     )
     await hass.async_block_till_done()

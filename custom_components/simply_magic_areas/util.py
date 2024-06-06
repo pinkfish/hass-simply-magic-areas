@@ -1,7 +1,8 @@
 """Utility details for the system."""
 
-from collections.abc import Iterable
+from collections.abc import Generator, Iterable
 import inspect
+from typing import Any
 
 from homeassistant.helpers.area_registry import AreaEntry
 from homeassistant.util import slugify
@@ -9,12 +10,12 @@ from homeassistant.util import slugify
 basestring = (str, bytes)
 
 
-def is_entity_list(item) -> bool:
+def is_entity_list(item: Any) -> bool:
     """If this is an entity list."""
     return isinstance(item, Iterable) and not isinstance(item, basestring)
 
 
-def flatten_entity_list(input_list):
+def flatten_entity_list(input_list: list[Any]) -> Generator[str, Any, Any]:
     """Flatten the entity list."""
     for i in input_list:
         if is_entity_list(i):
@@ -23,11 +24,11 @@ def flatten_entity_list(input_list):
             yield i
 
 
-def get_meta_area_object(name: str):
+def get_meta_area_object(name: str) -> AreaEntry:
     """Get the meta area object from the entity."""
     area_slug = slugify(name)
 
-    params = {
+    params: dict[str, Any] = {
         "name": name,
         "normalized_name": area_slug,
         "aliases": set(),
@@ -45,10 +46,10 @@ def get_meta_area_object(name: str):
     # in particular.
 
     available_params = {}
-    constructor_params = inspect.signature(AreaEntry.__init__).parameters
+    constructor_params = inspect.signature(AreaEntry.__init__).parameters  # type: ignore  # noqa: PGH003
 
     for k, v in params.items():
         if k in constructor_params:
             available_params[k] = v
 
-    return AreaEntry(**available_params)
+    return AreaEntry(**available_params)  # type: ignore  # noqa: PGH003

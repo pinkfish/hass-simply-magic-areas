@@ -1,6 +1,6 @@
 """The basic entities for magic areas."""
 
-import logging
+from functools import cached_property
 
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -9,13 +9,10 @@ from ..const import DOMAIN, MAGIC_DEVICE_ID_PREFIX
 from ..util import slugify
 from .magic import MagicArea
 
-_LOGGER = logging.getLogger(__name__)
-
 
 class MagicEntity(RestoreEntity):
     """MagicEntity is the base entity for use with all the magic classes."""
 
-    area: MagicArea = None
     _attr_has_entity_name = True
 
     def __init__(self, area: MagicArea, domain: str, translation_key: str) -> None:
@@ -28,13 +25,9 @@ class MagicEntity(RestoreEntity):
         self._attr_unique_id = f"{MAGIC_DEVICE_ID_PREFIX}{translation_key}_{area.slug}"
         self.entity_id = area.simply_magic_entity_id(domain, translation_key)
         self._attr_translation_placeholders = {"area_name": area.name}
+        self._attr_should_poll = False
 
-    @property
-    def should_poll(self) -> str:
-        """If entity should be polled."""
-        return False
-
-    @property
+    @cached_property
     def device_info(self) -> DeviceInfo:
         """Return the device info."""
         return DeviceInfo(

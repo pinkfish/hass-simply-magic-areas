@@ -164,7 +164,7 @@ def create_trend_sensors(
         len(
             [
                 entity[ATTR_ENTITY_ID]
-                for entity in area.entities[SENSOR_DOMAIN]
+                for entity in area.entities.get(SENSOR_DOMAIN, [])
                 if entity.get(ATTR_DEVICE_CLASS, "") == SensorDeviceClass.HUMIDITY
                 and ATTR_UNIT_OF_MEASUREMENT in entity
             ]

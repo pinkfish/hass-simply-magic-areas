@@ -140,7 +140,8 @@
           "occupied": "Occupied",
           "bright": "Bright",
           "clear": "Clear",
-          "accented": "Accented"
+          "accented": "Accented",
+          "manual": "Manual"
         }
       }
     },

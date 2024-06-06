@@ -35,7 +35,7 @@ async def test_light_on_off(
     config_entry: MockConfigEntry,
     one_light: list[str],
     one_motion: list[MockBinarySensor],
-    _setup_integration,
+    _setup_integration: None,
     automated: bool,
     state: str,
 ) -> None:
@@ -81,7 +81,10 @@ async def test_light_on_off(
     area_binary_sensor = hass.states.get(
         f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_binary_sensor.state == "occupied"
+    if automated:
+        assert area_binary_sensor.state == "occupied"
+    else:
+        assert area_binary_sensor.state == "manual"
     if automated:
         assert len(calls) == 1
         assert calls[0].data == {
@@ -100,13 +103,19 @@ async def test_light_on_off(
     area_binary_sensor = hass.states.get(
         f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_binary_sensor.state == "extended"
+    if automated:
+        assert area_binary_sensor.state == "extended"
+    else:
+        assert area_binary_sensor.state == "manual"
     await asyncio.sleep(3)
     await hass.async_block_till_done()
     area_binary_sensor = hass.states.get(
         f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_binary_sensor.state == "clear"
+    if automated:
+        assert area_binary_sensor.state == "clear"
+    else:
+        assert area_binary_sensor.state == "manual"
 
     await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
@@ -121,7 +130,7 @@ async def test_light_entity_change(
     config_entry_entities: MockConfigEntry,
     one_light: list[str],
     one_motion: list[MockBinarySensor],
-    _setup_integration_entities,
+    _setup_integration_entities: None,
 ) -> None:
     """Test loading the integration."""
     assert config_entry_entities.state is ConfigEntryState.LOADED
@@ -195,7 +204,7 @@ async def test_light_on_off_with_light_sensor(
     one_light: list[str],
     one_motion: list[MockBinarySensor],
     one_sensor_light: list[MockSensor],
-    _setup_integration,
+    _setup_integration: None,
     luminesnce: float,
     brightness: int,
 ) -> None:
@@ -231,7 +240,7 @@ async def test_light_on_off_with_light_sensor(
         assert e.state == STATE_OFF
     assert control_entity.state == STATE_OFF
     assert manual_override_entity.state == STATE_OFF
-    assert area_binary_sensor.state == "clear"
+    assert area_binary_sensor.state == "manual"
 
     # Make the sensor on to make the area occupied and setup automated, leave the light low to get the brightness correct.
     service_data = {

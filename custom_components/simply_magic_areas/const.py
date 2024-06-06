@@ -82,6 +82,7 @@ class AreaState(StrEnum):
     AREA_STATE_BRIGHT = "bright"  # Bright state, high lumens
     AREA_STATE_SLEEP = "sleep"  # Sleep state (night)
     AREA_STATE_ACCENTED = "accented"  # If the state is accented
+    AREA_STATE_MANUAL = "manual"  # Manual control enableds
 
 
 class EntityNames(StrEnum):
@@ -97,7 +98,7 @@ class EntityNames(StrEnum):
     FAN = "fan"
     ILLUMINANCE = "illuminance"
     HUMIDITY = "humidity"
-    MEDIA_PLAYER="media"
+    MEDIA_PLAYER = "media"
 
 
 # MagicAreas Components

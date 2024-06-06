@@ -360,7 +360,11 @@ class MagicArea(object):  # noqa: UP004
                 entity_state_on=self.feature_config(
                     CONF_FEATURE_ADVANCED_LIGHT_GROUPS
                 ).get(lg.advanced_state_check(), "on"),
-                dim_level=int(base.get(lg.state_dim_level(), lg.default_dim_level)),
+                dim_level=int(
+                    self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                        lg.state_dim_level(), lg.default_dim_level
+                    )
+                ),
                 for_state=lg.enable_state,
                 icon=lg.icon,
                 control_entity=self.simply_magic_entity_id(

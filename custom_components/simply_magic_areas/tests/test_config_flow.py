@@ -62,12 +62,8 @@ async def test_form(hass: HomeAssistant) -> None:
         CONF_ID: "kitchen",
         CONF_TYPE: AREA_TYPE_INTERIOR,
         CONF_EXTENDED_TIMEOUT: 360,
-        CONF_UPDATE_INTERVAL: 1800,
         "bright_entity": "",
-        "bright_state_dim": 0.0,
         "sleep_entity": "",
-        "sleep_state_dim": 30.0,
-        "occupied_state_dim": 100.0,
     }
     # assert len(mock_setup_entry.mock_calls) == 1
     await hass.async_block_till_done()
@@ -108,12 +104,8 @@ async def test_options(hass: HomeAssistant, config_entry: MockConfigEntry) -> No
         CONF_ENABLED_FEATURES: {},
         CONF_ICON: "mdi:texture-box",
         CONF_TYPE: AREA_TYPE_INTERIOR,
-        CONF_UPDATE_INTERVAL: 1800,
         "bright_entity": "",
-        "bright_state_dim": 0.0,
         "sleep_entity": "",
-        "sleep_state_dim": 30.0,
-        "occupied_state_dim": 100.0,
     }
 
     await hass.async_block_till_done()
@@ -141,14 +133,10 @@ async def test_options_enable_advanced_lights(
     assert result["step_id"] == "area_config"
     assert result["data_schema"]({}) == {
         "bright_entity": "",
-        "bright_state_dim": 0.0,
         CONF_EXTENDED_TIMEOUT: 360.0,
         CONF_ICON: "mdi:texture-box",
         CONF_CLEAR_TIMEOUT: 360.0,
-        CONF_UPDATE_INTERVAL: 1800,
-        "occupied_state_dim": 100.0,
         "sleep_entity": "",
-        "sleep_state_dim": 30.0,
         CONF_TYPE: "interior",
     }
 
@@ -190,14 +178,18 @@ async def test_options_enable_advanced_lights(
                 "clear_state_dim": 0.0,
                 "bright_lights": [],
                 "bright_state_check": STATE_ON,
+                "bright_state_dim": 0.0,
                 "clear_lights": [],
                 "clear_state_check": STATE_ON,
                 "sleep_lights": [],
                 "sleep_state_check": STATE_ON,
+                "sleep_state_dim": 30.0,
                 "extended_lights": [],
                 "extended_state_check": STATE_ON,
                 "occupied_lights": [],
                 "occupied_state_check": STATE_ON,
+                "occupied_state_dim": 100.0,
+                CONF_UPDATE_INTERVAL: 1800,
                 CONF_EXCLUDE_ENTITIES: [],
                 CONF_PRESENCE_DEVICE_PLATFORMS: [
                     MEDIA_PLAYER_DOMAIN,
@@ -214,12 +206,8 @@ async def test_options_enable_advanced_lights(
         },
         CONF_ICON: "mdi:texture-box",
         CONF_TYPE: AREA_TYPE_INTERIOR,
-        CONF_UPDATE_INTERVAL: 1800,
         "bright_entity": "",
-        "bright_state_dim": 0.0,
         "sleep_entity": "",
-        "sleep_state_dim": 30.0,
-        "occupied_state_dim": 100.0,
     }
     await hass.async_block_till_done()
     await hass.config_entries.async_unload(config_entry.entry_id)

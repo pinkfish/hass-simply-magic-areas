@@ -404,7 +404,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
                 sorted([AREA_TYPE_INTERIOR, AREA_TYPE_EXTERIOR])
             ),
             CONF_ICON: icon_selector,
-            CONF_UPDATE_INTERVAL: self._build_selector_number(),
             CONF_CLEAR_TIMEOUT: self._build_selector_number(),
             CONF_EXTENDED_TIMEOUT: self._build_selector_number(),
         }
@@ -522,6 +521,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
             CONF_EXCLUDE_ENTITIES: self._build_selector_entity_simple(
                 self.all_area_entities, multiple=True
             ),
+            CONF_UPDATE_INTERVAL: self._build_selector_number(),
             CONF_ON_STATES: self._build_selector_select(
                 sorted(AVAILABLE_ON_STATES), multiple=True
             ),
@@ -615,6 +615,24 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
         self, user_input: dict[str, Any] | None = None
     ):
         """Configure the sensor aggregates feature."""
+
+        selectors = {
+            CONF_AGGREGATES_MIN_ENTITIES: self._build_selector_number(
+                unit_of_measurement="entities"
+            )
+        }
+
+        return await self.do_feature_config(
+            name=CONF_FEATURE_AGGREGATION,
+            options=OPTIONS_AGGREGATES,
+            selectors=selectors,
+            user_input=user_input,
+        )
+
+    async def async_step_feature_conf_dim_levels(
+        self, user_input: dict[str, Any] | None = None
+    ):
+        """Configure the dim levels for the lights."""
 
         selectors = {
             CONF_AGGREGATES_MIN_ENTITIES: self._build_selector_number(

@@ -70,11 +70,11 @@ def mock_config_entry() -> MockConfigEntry:
         "sleep_entity": "",
         "sleep_state_dim": 30,
         "occupied_state_dim": 100,
-        CONF_UPDATE_INTERVAL: 60,
         CONF_ENABLED_FEATURES: {
             CONF_FEATURE_ADVANCED_LIGHT_GROUPS: {
                 CONF_INCLUDE_ENTITIES: [],
                 CONF_ON_STATES: [STATE_ON],
+                CONF_UPDATE_INTERVAL: 60,
                 CONF_PRESENCE_DEVICE_PLATFORMS: [
                     MEDIA_PLAYER_DOMAIN,
                     BINARY_SENSOR_DOMAIN,
@@ -115,12 +115,11 @@ def mock_config_entry_entities() -> MockConfigEntry:
         CONF_CLEAR_TIMEOUT: 30,
         CONF_EXTENDED_TIMEOUT: 20,
         CONF_TYPE: AREA_TYPE_INTERIOR,
-        CONF_UPDATE_INTERVAL: 1800,
         "sleep_entity": "binary_sensor.sleep",
         "bright_entity": "binary_sensor.bright",
         CONF_ENABLED_FEATURES: {
             CONF_FEATURE_ADVANCED_LIGHT_GROUPS: {
-                CONF_UPDATE_INTERVAL: 60,
+                CONF_UPDATE_INTERVAL: 1800,
                 CONF_PRESENCE_SENSOR_DEVICE_CLASS: [BinarySensorDeviceClass.MOTION],
                 CONF_ON_STATES: [STATE_ON],
                 "accented_entity": "binary_sensor.accent",

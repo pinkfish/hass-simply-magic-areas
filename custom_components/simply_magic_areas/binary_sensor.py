@@ -57,8 +57,8 @@ async def async_setup_entry(
 
     area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
 
-    entities = []
-    existing_trend_entities = []
+    entities: list[str] = []
+    existing_trend_entities: list[str] = []
     if DOMAIN + BINARY_SENSOR_DOMAIN in area.entities:
         existing_trend_entities = [
             e[ATTR_ENTITY_ID] for e in area.entities[DOMAIN + BINARY_SENSOR_DOMAIN]
@@ -89,17 +89,18 @@ async def async_setup_entry(
         entities_by_device_class[device_class] = entities
 
     # Create extra sensors
+    sensors: list[Entity] = []
     if area.has_feature(CONF_FEATURE_AGGREGATION):
-        entities.extend(create_aggregate_sensors(area, entities_by_device_class))
+        sensors.extend(create_aggregate_sensors(area, entities_by_device_class))
 
     if area.has_feature(CONF_FEATURE_HEALTH):
-        entities.extend(create_health_sensors(area, entities_by_device_class))
+        sensors.extend(create_health_sensors(area, entities_by_device_class))
 
     # Create the trend sensors
-    entities.extend(create_trend_sensors(area, entities_by_device_class))
-    async_add_entities(entities)
+    sensors.extend(create_trend_sensors(area, entities_by_device_class))
+    async_add_entities(sensors)
 
-    _cleanup_binary_sensor_entities(area.hass, entities, existing_trend_entities)
+    _cleanup_binary_sensor_entities(area.hass, sensors, existing_trend_entities)
 
 
 def create_health_sensors(
@@ -112,9 +113,11 @@ def create_health_sensors(
     if BINARY_SENSOR_DOMAIN not in area.entities:
         return []
 
-    distress_entities = []
-    for dc in DISTRESS_SENSOR_CLASSES:
-        distress_entities.append(entities_by_device_class.get(dc, []))
+    distress_entities = [
+        e
+        for dc in DISTRESS_SENSOR_CLASSES
+        for e in entities_by_device_class.get(dc, [])
+    ]
 
     if len(distress_entities) < area.feature_config(CONF_FEATURE_AGGREGATION).get(
         CONF_AGGREGATES_MIN_ENTITIES, 0
@@ -122,7 +125,15 @@ def create_health_sensors(
         return []
 
     _LOGGER.debug("Creating health sensor for area (%s)", area.slug)
-    return [AreaSensorGroupBinarySensor(area, entity_ids=distress_entities)]
+    ret: list[Entity] = []
+    ret.append(
+        AreaSensorGroupBinarySensor(
+            area,
+            entity_ids=distress_entities,
+            device_class=BinarySensorDeviceClass.PROBLEM,
+        )
+    )
+    return ret
 
 
 def create_aggregate_sensors(
@@ -137,7 +148,7 @@ def create_aggregate_sensors(
     if BINARY_SENSOR_DOMAIN not in area.entities:
         return []
 
-    aggregates = []
+    aggregates: list[Entity] = []
     for device_class, entities in entities_by_device_class.items():
         if len(entities) < area.feature_config(CONF_FEATURE_AGGREGATION).get(
             CONF_AGGREGATES_MIN_ENTITIES, 0
@@ -150,7 +161,11 @@ def create_aggregate_sensors(
             len(entities),
             area.slug,
         )
-        aggregates.append(AreaSensorGroupBinarySensor(area, device_class, entities))
+        aggregates.append(
+            AreaSensorGroupBinarySensor(
+                area, BinarySensorDeviceClass(device_class), entities
+            )
+        )
 
     return aggregates
 
@@ -191,11 +206,12 @@ def create_trend_sensors(
 
 
 def _cleanup_binary_sensor_entities(
-    hass: HomeAssistant, new_ids: list[str], old_ids: list[str]
+    hass: HomeAssistant, new_ids: list[Entity], old_ids: list[str]
 ) -> None:
     entity_registry = async_get_er(hass)
+    new_entity_ids = [e.entity_id for e in new_ids]
     for ent_id in old_ids:
-        if ent_id in new_ids:
+        if ent_id in new_entity_ids:
             continue
         _LOGGER.warning("Deleting old entity %s", ent_id)
         entity_registry.async_remove(ent_id)
@@ -220,6 +236,7 @@ class AreaSensorGroupBinarySensor(MagicEntity, BinarySensorGroup):
             device_class=device_class,
             entity_ids=entity_ids,
             mode=device_class in AGGREGATE_MODE_ALL,
+            unique_id=self._attr_unique_id,
         )
 
         self.area = area

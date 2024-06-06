@@ -369,7 +369,7 @@ class AreaStateSelect(MagicEntity, SelectEntity):
             last_state,
         )
 
-    def _group_entity_state_change(self, event: Event) -> None:
+    def _group_entity_state_change(self, event: Event[EventStateChangedData]) -> None:
         if event.event_type != "state_changed":
             return
         if event.data["new_state"] is None:

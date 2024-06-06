@@ -61,7 +61,7 @@ async def test_save_select(
 
 
 async def test_save_light_control(
-    hass: HomeAssistant, config_entry: MockConfigEntry, _setup_integration
+    hass: HomeAssistant, config_entry: MockConfigEntry, _setup_integration: None
 ) -> None:
     """Test loading the integration."""
     assert config_entry.state is ConfigEntryState.LOADED

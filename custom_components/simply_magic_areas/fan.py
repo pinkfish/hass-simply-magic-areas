@@ -213,7 +213,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             _LOGGER.debug(
                 "%s: Automatic control for fan group is disabled, skipping", self.name
             )
-            return False
+            return
 
         from_state = event.data["old_state"].state
         to_state = event.data["new_state"].state
@@ -276,12 +276,12 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self._reset_control(datetime.now(UTC))
         else:
             # Skip non ON/OFF state changes
-            if event.data["old_state"].state not in [
+            if not event.data["old_state"] or event.data["old_state"].state not in [
                 STATE_ON,
                 STATE_OFF,
             ]:
                 return
-            if event.data["new_state"].state not in [
+            if not event.data["new_state"] or event.data["new_state"].state not in [
                 STATE_ON,
                 STATE_OFF,
             ]:
@@ -294,7 +294,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 and event.data["old_state"].attributes["restored"]
             ):
                 # On state restored, also setup the timeout callback.
-                if not self._in_controlled_by_this_entity():
+                if not self._is_controlled_by_this_entity():
                     if self._manual_timeout_cb is not None:
                         self._manual_timeout_cb()
                     self._manual_timeout_cb = call_later(
@@ -311,7 +311,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 self.hass, manual_timeout, self._reset_manual_timeout
             )
 
-    def _reset_manual_timeout(self, dt: datetime):
+    def _reset_manual_timeout(self, dt: datetime) -> None:
         self._set_controlled_by_this_entity(True)
         self._manual_timeout_cb = None
 
@@ -321,7 +321,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         if not self.area.is_control_enabled():
             _LOGGER.debug("%s: No control enabled", self.name)
-            return False
+            return
 
         _LOGGER.debug("%s: Turning on fans", self.name)
         self.last_update_from_entity = True
@@ -330,24 +330,24 @@ class AreaFanGroup(MagicEntity, FanGroup):
         }
         self.hass.services.call(FAN_DOMAIN, SERVICE_TURN_ON, service_data)
 
-        return True
+        return
 
     def _turn_off_fan(self) -> None:
         """Turn off the fan group."""
         if not self.area.is_control_enabled():
             _LOGGER.debug("%s: Fan control is off", self.name)
-            return False
+            return
 
         if not self.is_on:
             _LOGGER.debug("%s: Fan already off", self.name)
-            return False
+            return
 
         _LOGGER.debug("%s: Turning fan off", self.name)
         self.last_update_from_entity = True
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         self.hass.services.call(FAN_DOMAIN, SERVICE_TURN_OFF, service_data)
 
-        return True
+        return
 
     #### Control Release
     def _is_controlled_by_this_entity(self) -> bool:

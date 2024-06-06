@@ -54,7 +54,7 @@ async def async_setup_entry(
             e[ATTR_ENTITY_ID] for e in area.entities[DOMAIN + SENSOR_DOMAIN]
         ]
 
-    aggregates = []
+    aggregates: list[AreaSensorGroupSensor] = []
 
     # Check SENSOR_DOMAIN entities, count by device_class
     if not area.has_entities(SENSOR_DOMAIN):
@@ -93,7 +93,7 @@ async def async_setup_entry(
             if not area.has_feature(CONF_FEATURE_AGGREGATION):
                 continue
             if len(entities) < area.feature_config(CONF_FEATURE_AGGREGATION).get(
-                CONF_AGGREGATES_MIN_ENTITIES
+                CONF_AGGREGATES_MIN_ENTITIES, 2
             ):
                 continue
 
@@ -106,12 +106,14 @@ async def async_setup_entry(
         aggregates.append(
             AreaSensorGroupSensor(
                 area=area,
-                device_class=device_class,
+                device_class=SensorDeviceClass(device_class),
                 entity_ids=entities,
             )
         )
 
-    _cleanup_sensor_entities(area.hass, aggregates, existing_sensor_entities)
+    _cleanup_sensor_entities(
+        area.hass, [a.entity_id for a in aggregates], existing_sensor_entities
+    )
 
     async_add_entities(aggregates)
 
@@ -153,7 +155,7 @@ class AreaSensorGroupSensor(MagicEntity, SensorGroup):
             state_class=SensorStateClass.TOTAL
             if device_class in AGGREGATE_MODE_SUM
             else SensorStateClass.MEASUREMENT,
-            unit_of_measurement=UNIT_CONVERTERS[device_class].NORMALALIZED_UNIT
+            unit_of_measurement=UNIT_CONVERTERS[device_class].NORMALIZED_UNIT
             if device_class in UNIT_CONVERTERS
             else list(DEVICE_CLASS_UNITS[device_class])[0],
         )

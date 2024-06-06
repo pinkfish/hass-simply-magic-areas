@@ -67,13 +67,11 @@ class SwitchBase(MagicEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn on presence hold."""
-        self._attr_state = STATE_ON
         self._attr_is_on = True
         self.schedule_update_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn off presence hold."""
-        self._attr_state = STATE_OFF
         self._attr_is_on = False
         self.schedule_update_ha_state()
 
@@ -85,7 +83,6 @@ class AreaLightControlSwitch(SwitchBase):
         """Initialize the area light control switch."""
 
         super().__init__(area, translation_key=EntityNames.LIGHT_CONTROL)
-        self._attr_state = STATE_ON
         self._attr_is_on = True
 
     @property
@@ -101,7 +98,6 @@ class AreaLightsManualOverrideActiveSwitch(SwitchBase):
         """Initialize the area manual override switch."""
 
         super().__init__(area, translation_key=EntityNames.MANUAL_OVERRIDE)
-        self._attr_state = STATE_OFF
         self._attr_is_on = False
 
     @property
@@ -118,7 +114,6 @@ class AreaPresenceHoldSwitch(SwitchBase):
 
         super().__init__(area, translation_key=EntityNames.PRESENCE_HOLD)
         self.timeout_callback = None
-        self._attr_state = STATE_OFF
         self._attr_is_on = False
 
     @property

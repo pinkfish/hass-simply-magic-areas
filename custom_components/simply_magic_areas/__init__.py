@@ -30,7 +30,7 @@ from .util import get_meta_area_object
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = []
+PLATFORMS: list[str] = []
 
 
 async def async_setup_entry(
@@ -62,7 +62,7 @@ async def async_setup_entry(
 
             if not area:
                 _LOGGER.debug("Could not find %s (%s) on registry", area_name, area_id)
-                return False
+                return
 
             _LOGGER.debug("Got area %s from registry: %s", area_name, area)
 
@@ -112,11 +112,11 @@ async def async_setup_entry(
         #  Conditional reload of related meta-areas
 
         # Populate dict with all meta-areas with ID as key
-        meta_areas = defaultdict()
+        meta_areas: dict[str, MagicArea] = defaultdict()
 
         for area in hass.data[MODULE_DATA].values():
             area_obj = area[DATA_AREA_OBJECT]
-            if area_obj.is_meta():
+            if area_obj is not None and area_obj.is_meta():
                 meta_areas[area_obj.id] = area_obj
 
         # Handle non-meta areas

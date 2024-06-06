@@ -31,7 +31,7 @@ from homeassistant.helpers.entity_registry import async_get as async_get_er
 from homeassistant.helpers.event import async_track_state_change_event, call_later
 
 from .base.entities import MagicEntity
-from .base.magic import MagicArea
+from .base.magic import MagicArea, StateConfigData
 from .const import (
     ATTR_LAST_UPDATE_FROM_ENTITY,
     CONF_MANUAL_TIMEOUT,
@@ -69,7 +69,7 @@ async def async_setup_entry(
         _cleanup_light_entities(area.hass, [], existing_light_entities)
         return
 
-    light_groups = []
+    light_groups: list[AreaLightGroup] = []
 
     # Create light groups
     light_entities = [e[ATTR_ENTITY_ID] for e in area.entities[LIGHT_DOMAIN]]
@@ -83,7 +83,7 @@ async def async_setup_entry(
 
     # Create all groups
     async_add_entities(light_groups)
-    group_ids = [e.entity_id for e in light_groups]
+    group_ids: list[str] = [e.entity_id for e in light_groups]
     _cleanup_light_entities(area.hass, group_ids, existing_light_entities)
 
 
@@ -127,17 +127,12 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         delattr(self, "_attr_name")
         self._manual_timeout_cb: CALLBACK_TYPE | None = None
-        self._icon: str = "mdi:ceiling-light"
+        self._attr_icon: str = "mdi:ceiling-light"
 
         # Add static attributes
         self.last_update_from_entity: bool = False
         self._attr_extra_state_attributes["lights"] = self._entity_ids
         self._attr_extra_state_attributes[ATTR_LAST_UPDATE_FROM_ENTITY] = False
-
-    @property
-    def icon(self) -> str:
-        """Return the icon to be used for this entity."""
-        return self._icon
 
     async def async_added_to_hass(self) -> None:
         """Run when this is added into hass."""
@@ -153,9 +148,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._attr_is_on = last_state.state == STATE_ON
 
             if ATTR_LAST_UPDATE_FROM_ENTITY in last_state.attributes:
-                self.last_update_from_entity = last_state.attributes[
-                    ATTR_LAST_UPDATE_FROM_ENTITY
-                ]
+                self.last_update_from_entity = bool(
+                    last_state.attributes[ATTR_LAST_UPDATE_FROM_ENTITY]
+                )
                 self._attr_extra_state_attributes[ATTR_LAST_UPDATE_FROM_ENTITY] = (
                     self.last_update_from_entity
                 )
@@ -169,7 +164,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         await super().async_added_to_hass()
 
-    async def _setup_listeners(self, _=None) -> None:
+    async def _setup_listeners(self) -> None:
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass,
@@ -202,7 +197,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             _LOGGER.debug(
                 "%s: Automatic control for light group is disabled, skipping", self.name
             )
-            return False
+            return
 
         from_state = event.data["old_state"].state
         to_state = event.data["new_state"].state
@@ -214,9 +209,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
             from_state,
         )
 
-        if self.area.has_configured_state(to_state):
+        if to_state is not None and self.area.has_configured_state(to_state):
             conf = self.area.state_config(to_state)
-            self._turn_on_light(conf)
+            if conf is not None:
+                self._turn_on_light(conf)
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
         if self.area.state != AreaState.AREA_STATE_CLEAR:
@@ -242,7 +238,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             )
             if old_state.attributes.get("restored"):
                 # On state restored, also setup the timeout callback.
-                if not self._in_controlled_by_this_entity():
+                if not self._is_controlled_by_this_entity():
                     if self._manual_timeout_cb is not None:
                         self._manual_timeout_cb()
                     self._manual_timeout_cb = call_later(
@@ -264,12 +260,12 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._manual_timeout_cb = None
 
     ####  Light Handling
-    def _turn_on_light(self, conf: ConfigEntry) -> None:
+    def _turn_on_light(self, conf: StateConfigData) -> None:
         """Turn on the light group."""
 
         if not self.area.is_control_enabled():
             _LOGGER.debug("%s: No control enabled", self.name)
-            return False
+            return
 
         self._entity_ids = conf.lights
         self.async_update_group_state()
@@ -285,7 +281,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         brightness = int(conf.dim_level * 255 / 100)
         if self.is_on and self.brightness == brightness:
             _LOGGER.debug("%s: Already on at %s", self.name, brightness)
-            return False
+            return
 
         luminesence = self._get_illuminance()
         min_brightness = self.area.config.get(
@@ -323,7 +319,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         if brightness == 0:
             _LOGGER.debug("%s: Brightness is 0", self.name)
-            return self._turn_off_light()
+            self._turn_off_light()
+            return
 
         _LOGGER.debug("Turning on lights")
         self.last_update_from_entity = True
@@ -333,23 +330,23 @@ class AreaLightGroup(MagicEntity, LightGroup):
         }
         self.hass.services.call(LIGHT_DOMAIN, SERVICE_TURN_ON, service_data)
 
-        return True
+        return
 
     def _turn_off_light(self) -> None:
         """Turn off the light group."""
         if not self.area.is_control_enabled():
-            return False
+            return
 
         if not self.is_on:
             _LOGGER.debug("%s: Light already off", self.name)
-            return False
+            return
 
         self.last_update_from_entity = True
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         # await self.async_turn_off()
         self.hass.services.call(LIGHT_DOMAIN, SERVICE_TURN_OFF, service_data)
 
-        return True
+        return
 
     def _get_illuminance(self) -> float:
         if self.is_on:
@@ -376,13 +373,12 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     #### Control Release
     def _is_controlled_by_this_entity(self) -> bool:
-        entity_id = (
-            self.area.simply_magic_entity_id(
-                SWITCH_DOMAIN, EntityNames.MANUAL_OVERRIDE
-            ),
+        entity_id = self.area.simply_magic_entity_id(
+            SWITCH_DOMAIN, EntityNames.MANUAL_OVERRIDE
         )
+
         switch_entity = self.hass.states.get(entity_id)
-        return switch_entity.state.lower() == STATE_OFF
+        return switch_entity is None or switch_entity.state.lower() == STATE_OFF
 
     def _set_controlled_by_this_entity(self, enabled: bool) -> None:
         if self.hass:

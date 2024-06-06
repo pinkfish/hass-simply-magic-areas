@@ -200,7 +200,15 @@ class AreaLightGroup(MagicEntity, LightGroup):
             return
 
         from_state = event.data["old_state"].state
-        to_state = event.data["new_state"].state
+        if event.data["new_state"].state not in AreaState:
+            _LOGGER.debug(
+                "Light group (invalid to) %s. New state: %s / Last state %s",
+                self.name,
+                event.data["new_state"].state,
+                from_state,
+            )
+            return
+        to_state = AreaState(event.data["new_state"].state)
 
         _LOGGER.debug(
             "Light group %s. New state: %s / Last state %s",

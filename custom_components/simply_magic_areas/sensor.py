@@ -155,8 +155,10 @@ class AreaSensorGroupSensor(MagicEntity, SensorGroup):
             state_class=SensorStateClass.TOTAL
             if device_class in AGGREGATE_MODE_SUM
             else SensorStateClass.MEASUREMENT,
-            unit_of_measurement=UNIT_CONVERTERS[device_class].NORMALIZED_UNIT
-            if device_class in UNIT_CONVERTERS
-            else list(DEVICE_CLASS_UNITS[device_class])[0],
+            unit_of_measurement=str(
+                UNIT_CONVERTERS[device_class].NORMALIZED_UNIT
+                if device_class in UNIT_CONVERTERS
+                else list(DEVICE_CLASS_UNITS[device_class])[0]
+            ),
         )
         delattr(self, "_attr_name")

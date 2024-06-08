@@ -34,7 +34,8 @@ from .base.magic import MagicArea
 from .const import (
     AGGREGATE_MODE_ALL,
     CONF_AGGREGATES_MIN_ENTITIES,
-    CONF_FEATURE_AGGREGATION,
+    CONF_AGGREGATION,
+    CONF_FEATURE_GROUP_CREATION,
     CONF_FEATURE_HEALTH,
     DATA_AREA_OBJECT,
     DISTRESS_SENSOR_CLASSES,
@@ -90,7 +91,7 @@ async def async_setup_entry(
 
     # Create extra sensors
     sensors: list[Entity] = []
-    if area.has_feature(CONF_FEATURE_AGGREGATION):
+    if area.has_feature(CONF_AGGREGATION):
         sensors.extend(create_aggregate_sensors(area, entities_by_device_class))
 
     if area.has_feature(CONF_FEATURE_HEALTH):
@@ -119,7 +120,7 @@ def create_health_sensors(
         for e in entities_by_device_class.get(dc, [])
     ]
 
-    if len(distress_entities) < area.feature_config(CONF_FEATURE_AGGREGATION).get(
+    if len(distress_entities) < area.feature_config(CONF_FEATURE_GROUP_CREATION).get(
         CONF_AGGREGATES_MIN_ENTITIES, 0
     ):
         return []
@@ -141,7 +142,7 @@ def create_aggregate_sensors(
 ) -> list[Entity]:
     """Create the aggregate sensors for the area."""
     # Create aggregates
-    if not area.has_feature(CONF_FEATURE_AGGREGATION):
+    if not area.has_feature(CONF_AGGREGATION):
         return []
 
     # Check BINARY_SENSOR_DOMAIN entities, count by device_class
@@ -150,7 +151,7 @@ def create_aggregate_sensors(
 
     aggregates: list[Entity] = []
     for device_class, entities in entities_by_device_class.items():
-        if len(entities) < area.feature_config(CONF_FEATURE_AGGREGATION).get(
+        if len(entities) < area.feature_config(CONF_FEATURE_GROUP_CREATION).get(
             CONF_AGGREGATES_MIN_ENTITIES, 0
         ):
             continue

@@ -28,19 +28,21 @@ from .const import (
     CONF_AGGREGATES_MIN_ENTITIES,
     CONF_CLEAR_TIMEOUT,
     CONF_CLIMATE_GROUPS_TURN_ON_STATE,
+    CONF_COVER_GROUPS,
     CONF_ENABLED_FEATURES,
     CONF_EXCLUDE_ENTITIES,
     CONF_EXTENDED_TIMEOUT,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
-    CONF_FEATURE_AGGREGATION,
     CONF_FEATURE_AREA_AWARE_MEDIA_PLAYER,
     CONF_FEATURE_CLIMATE_GROUPS,
+    CONF_FEATURE_GROUP_CREATION,
     CONF_FEATURE_LIST,
     CONF_FEATURE_LIST_GLOBAL,
     CONF_FEATURE_LIST_META,
     CONF_ICON,
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
+    CONF_MEDIA_PLAYER_GROUPS,
     CONF_NOTIFICATION_DEVICES,
     CONF_NOTIFY_STATES,
     CONF_ON_STATES,
@@ -58,13 +60,13 @@ from .const import (
     META_AREAS,
     MODULE_DATA,
     NON_CONFIGURABLE_FEATURES_META,
-    OPTIONS_AGGREGATES,
     OPTIONS_AREA,
     OPTIONS_AREA_ADVANCED,
     OPTIONS_AREA_AWARE_MEDIA_PLAYER,
     OPTIONS_AREA_META,
     OPTIONS_CLIMATE_GROUP,
     OPTIONS_CLIMATE_GROUP_META,
+    OPTIONS_GROUP_CREATION,
     REGULAR_AREA_SCHEMA,
 )
 from .util import get_meta_area_object
@@ -611,7 +613,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
             user_input=user_input,
         )
 
-    async def async_step_feature_conf_aggregates(
+    async def async_step_feature_conf_group_creation(
         self, user_input: dict[str, Any] | None = None
     ):
         """Configure the sensor aggregates feature."""
@@ -619,30 +621,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
         selectors = {
             CONF_AGGREGATES_MIN_ENTITIES: self._build_selector_number(
                 unit_of_measurement="entities"
-            )
+            ),
+            CONF_MEDIA_PLAYER_GROUPS: bool,
+            CONF_COVER_GROUPS: bool,
         }
 
         return await self.do_feature_config(
-            name=CONF_FEATURE_AGGREGATION,
-            options=OPTIONS_AGGREGATES,
-            selectors=selectors,
-            user_input=user_input,
-        )
-
-    async def async_step_feature_conf_dim_levels(
-        self, user_input: dict[str, Any] | None = None
-    ):
-        """Configure the dim levels for the lights."""
-
-        selectors = {
-            CONF_AGGREGATES_MIN_ENTITIES: self._build_selector_number(
-                unit_of_measurement="entities"
-            )
-        }
-
-        return await self.do_feature_config(
-            name=CONF_FEATURE_AGGREGATION,
-            options=OPTIONS_AGGREGATES,
+            name=CONF_FEATURE_GROUP_CREATION,
+            options=OPTIONS_GROUP_CREATION,
             selectors=selectors,
             user_input=user_input,
         )

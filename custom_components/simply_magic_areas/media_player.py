@@ -2,7 +2,6 @@
 
 import logging
 
-from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.group.media_player import MediaPlayerGroup
 from homeassistant.components.media_player import (
     ATTR_MEDIA_CONTENT_ID,
@@ -15,17 +14,18 @@ from homeassistant.components.media_player import (
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID, SERVICE_TURN_OFF, STATE_IDLE, STATE_ON
-from homeassistant.core import HomeAssistant, Event, EventStateChangedData
-
+from homeassistant.core import Event, EventStateChangedData, HomeAssistant
 from homeassistant.helpers.area_registry import AreaEntry, async_get as async_get_ar
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
+from .config.area_state import AreaState
+from .config.entity_names import EntityNames
 from .const import (
     CONF_FEATURE_AREA_AWARE_MEDIA_PLAYER,
-    CONF_FEATURE_MEDIA_PLAYER_GROUPS,
+    CONF_MEDIA_PLAYER_GROUPS,
     CONF_NOTIFICATION_DEVICES,
     CONF_NOTIFY_STATES,
     DATA_AREA_OBJECT,
@@ -33,8 +33,6 @@ from .const import (
     DEFAULT_NOTIFY_STATES,
     META_AREA_GLOBAL,
     MODULE_DATA,
-    AreaState,
-    EntityNames,
 )
 
 DEPENDENCIES = ["media_player"]
@@ -58,7 +56,7 @@ async def async_setup_entry(
         return
 
     # Media Player Groups
-    if not area.has_feature(CONF_FEATURE_MEDIA_PLAYER_GROUPS):
+    if not area.has_feature(CONF_MEDIA_PLAYER_GROUPS):
         _LOGGER.debug("%s: No media player features", area.name)
         return
 
@@ -289,7 +287,7 @@ class AreaAwareMediaPlayer(MagicEntity, MediaPlayerEntity):
 class AreaMediaPlayerGroup(MagicEntity, MediaPlayerGroup):
     """Media player for the area."""
 
-    def __init__(self, area, entities):
+    def __init__(self, area, entities) -> None:
         """Initialize the media player for the area."""
         MagicEntity.__init__(self, area=area, translation_key=EntityNames.MEDIA_PLAYER)
         MediaPlayerGroup.__init__(self, self.unique_id, "", entities)
@@ -312,7 +310,7 @@ class AreaMediaPlayerGroup(MagicEntity, MediaPlayerGroup):
             _LOGGER.debug("%s:  Area clear, turning off media players", self.area.name)
             self._turn_off()
 
-    def _turn_off(self):
+    def _turn_off(self) -> None:
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         self.hass.services.call(MEDIA_PLAYER_DOMAIN, SERVICE_TURN_OFF, service_data)
 

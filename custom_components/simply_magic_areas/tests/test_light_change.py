@@ -179,7 +179,7 @@ async def test_light_entity_change(
     )
     assert area_binary_sensor.state == "bright"
 
-    # Set the bright entity on.
+    # Set the accented entity on.
     one_motion[2].turn_off()
     one_motion[3].turn_on()
     await hass.async_block_till_done()

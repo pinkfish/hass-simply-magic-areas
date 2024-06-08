@@ -29,7 +29,7 @@ from .base.magic import MagicArea
 from .const import (
     AGGREGATE_MODE_SUM,
     CONF_AGGREGATES_MIN_ENTITIES,
-    CONF_FEATURE_AGGREGATION,
+    CONF_FEATURE_GROUP_CREATION,
     DATA_AREA_OBJECT,
     DOMAIN,
     MODULE_DATA,
@@ -90,9 +90,9 @@ async def async_setup_entry(
         entities = item[1]
 
         if device_class not in ALWAYS_DEVICE_CLASS:
-            if not area.has_feature(CONF_FEATURE_AGGREGATION):
+            if not area.has_feature(CONF_FEATURE_GROUP_CREATION):
                 continue
-            if len(entities) < area.feature_config(CONF_FEATURE_AGGREGATION).get(
+            if len(entities) < area.feature_config(CONF_FEATURE_GROUP_CREATION).get(
                 CONF_AGGREGATES_MIN_ENTITIES, 2
             ):
                 continue

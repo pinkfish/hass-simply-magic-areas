@@ -28,6 +28,7 @@ from ..const import (
     CONF_ENABLED_FEATURES,
     CONF_EXCLUDE_ENTITIES,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
+    CONF_FEATURE_GROUP_CREATION,
     CONF_INCLUDE_ENTITIES,
     CONF_TYPE,
     DATA_AREA_OBJECT,
@@ -160,7 +161,12 @@ class MagicArea(object):  # noqa: UP004
                 CONF_ENABLED_FEATURES,
             )
 
-        return feature in enabled_features
+        if feature not in enabled_features:
+            enabled_aggregations = self.config.get(CONF_ENABLED_FEATURES, {}).get(
+                CONF_FEATURE_GROUP_CREATION, {}
+            )
+            return feature in enabled_aggregations
+        return False
 
     def feature_config(self, feature: str) -> dict[str, Any]:
         """Get the feature config for the specified feature."""

@@ -23,6 +23,8 @@ from homeassistant.helpers.event import (
 
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
+from .config.area_state import AreaState
+from .config.entity_names import EntityNames
 from .const import (
     ATTR_ACTIVE_AREAS,
     ATTR_ACTIVE_SENSORS,
@@ -49,8 +51,6 @@ from .const import (
     INVALID_STATES,
     MODULE_DATA,
 )
-from .config.area_state import AreaState
-from .config.entity_names import EntityNames
 
 _LOGGER = logging.getLogger(__name__)
 

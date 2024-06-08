@@ -166,7 +166,7 @@ class MagicArea(object):  # noqa: UP004
                 CONF_FEATURE_GROUP_CREATION, {}
             )
             return feature in enabled_aggregations
-        return False
+        return True
 
     def feature_config(self, feature: str) -> dict[str, Any]:
         """Get the feature config for the specified feature."""
@@ -348,6 +348,12 @@ class MagicArea(object):  # noqa: UP004
                 base = self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
             if lg.has_entity:
                 entity_ob = base.get(lg.entity_name())
+                _LOGGER.warning(
+                    "Failed to find %s %s %s",
+                    lg.enable_state,
+                    base.get(lg.entity_name()),
+                    base,
+                )
                 if entity_ob is None:
                     continue
             lights = self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(

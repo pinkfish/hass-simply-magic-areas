@@ -36,9 +36,9 @@ from .const import (
     DEFAULT_MANUAL_TIMEOUT,
     DOMAIN,
     MODULE_DATA,
-    AreaState,
-    EntityNames,
 )
+from .config.area_state import AreaState
+from .config.entity_names import EntityNames
 
 _LOGGER = logging.getLogger(__name__)
 ATTR_HUMIDITY_UP = "humidity_up"

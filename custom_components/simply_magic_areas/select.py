@@ -48,9 +48,9 @@ from .const import (
     DEFAULT_UPDATE_INTERVAL,
     INVALID_STATES,
     MODULE_DATA,
-    AreaState,
-    EntityNames,
 )
+from .config.area_state import AreaState
+from .config.entity_names import EntityNames
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -32,6 +32,8 @@ from homeassistant.helpers.event import async_track_state_change_event, call_lat
 
 from .base.entities import MagicEntity
 from .base.magic import MagicArea, StateConfigData
+from .config.area_state import AreaState
+from .config.entity_names import EntityNames
 from .const import (
     ATTR_LAST_UPDATE_FROM_ENTITY,
     CONF_MANUAL_TIMEOUT,
@@ -43,8 +45,6 @@ from .const import (
     DEFAULT_MIN_BRIGHTNESS_LEVEL,
     DOMAIN,
     MODULE_DATA,
-    AreaState,
-    EntityNames,
 )
 
 _LOGGER = logging.getLogger(__name__)

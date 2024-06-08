@@ -13,12 +13,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
+from .config.entity_names import EntityNames
 from .const import (
     DATA_AREA_OBJECT,
     ICON_LIGHT_CONTROL,
     ICON_MANUAL_OVERRIDE,
     MODULE_DATA,
-    EntityNames,
 )
 
 _LOGGER = logging.getLogger(__name__)

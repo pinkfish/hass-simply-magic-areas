@@ -18,6 +18,8 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.util import slugify
 
+from ..config.area_state import AreaState
+from ..config.entity_names import EntityNames
 from ..const import (
     ALL_LIGHT_ENTITIES,
     AREA_TYPE_EXTERIOR,
@@ -33,13 +35,10 @@ from ..const import (
     EVENT_MAGICAREAS_AREA_READY,
     EVENT_MAGICAREAS_READY,
     MAGIC_AREAS_COMPONENTS,
-    MAGIC_AREAS_COMPONENTS_GLOBAL,
     MAGIC_AREAS_COMPONENTS_META,
     MAGIC_DEVICE_ID_PREFIX,
     META_AREA_GLOBAL,
     MODULE_DATA,
-    AreaState,
-    EntityNames,
 )
 from ..util import is_entity_list
 
@@ -181,14 +180,10 @@ class MagicArea(object):  # noqa: UP004
         """Return the available platforms for this area."""
         available_platforms = []
 
-        if not self.is_meta():
-            available_platforms = MAGIC_AREAS_COMPONENTS
+        if self.is_meta():
+            available_platforms = MAGIC_AREAS_COMPONENTS_META
         else:
-            available_platforms = (
-                MAGIC_AREAS_COMPONENTS_GLOBAL
-                if self.id == META_AREA_GLOBAL.lower()  # type: ignore  # noqa: PGH003
-                else MAGIC_AREAS_COMPONENTS_META
-            )
+            available_platforms = MAGIC_AREAS_COMPONENTS
 
         return available_platforms
 
@@ -406,16 +401,6 @@ class MagicArea(object):  # noqa: UP004
 
 class MagicMetaArea(MagicArea):
     """Class for the meta simply magic areas that contain other areas."""
-
-    def __init__(
-        self, hass: HomeAssistant, area: AreaEntry, config: ConfigEntry
-    ) -> None:
-        """Initialize the meta simply magic area."""
-        super().__init__(
-            hass,
-            area,
-            config,
-        )
 
     def _areas_loaded(self, hass: HomeAssistant | None = None) -> bool:
         hass_object = hass if hass else self.hass

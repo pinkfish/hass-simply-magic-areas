@@ -14,7 +14,9 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 
-from ..const import DOMAIN, AreaState
+from ..const import DOMAIN
+
+from ..config.area_state import AreaState
 from .mocks import MockFan, MockSensor
 
 _LOGGER = logging.getLogger(__name__)

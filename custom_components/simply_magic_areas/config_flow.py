@@ -14,6 +14,8 @@ from homeassistant.helpers.area_registry import async_get as async_get_ar
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import EntitySelectorConfig, Selector, selector
 
+from .config.area_state import AreaState
+from .config.nullable_entity_selector import NullableEntitySelector
 from .const import (
     _DOMAIN_SCHEMA,
     ALL_BINARY_SENSOR_DEVICE_CLASSES,
@@ -64,9 +66,7 @@ from .const import (
     OPTIONS_CLIMATE_GROUP,
     OPTIONS_CLIMATE_GROUP_META,
     REGULAR_AREA_SCHEMA,
-    AreaState,
 )
-from .nullable_entity_selector import NullableEntitySelector
 from .util import get_meta_area_object
 
 _LOGGER = logging.getLogger(__name__)

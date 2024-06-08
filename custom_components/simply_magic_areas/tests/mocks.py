@@ -1,11 +1,12 @@
 """Fake light for testing with."""
 
 import logging
-from typing import Any, Final, Mapping, Self, cast, final, override
+from typing import Any, Final, final
 from unittest.mock import AsyncMock
 
 from homeassistant import loader
 from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 from homeassistant.components.fan import FanEntity
 from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.components.sensor import SensorEntity
@@ -429,6 +430,57 @@ class MockSensor(MockEntity, SensorEntity):
     def suggested_unit_of_measurement(self):
         """Return the state class of this sensor."""
         return self._handle("suggested_unit_of_measurement")
+
+    async def async_added_to_hass(self) -> None:
+        """Call when entity about to be added to hass."""
+
+        await super().async_added_to_hass()
+        self.async_write_ha_state()
+
+
+class MockCover(MockEntity, CoverEntity):
+    """Mock Cover class."""
+
+    @property
+    def device_class(self):
+        """Return the class of this sensor."""
+        return self._handle("device_class")
+
+    @property
+    def current_cover_position(self) -> int | None:
+        """Return current position of cover.
+
+        None is unknown, 0 is closed, 100 is fully open.
+        """
+        return self._handle("current_cover_position")
+
+    @property
+    def current_cover_tilt_position(self) -> int | None:
+        """Return current position of cover tilt.
+
+        None is unknown, 0 is closed, 100 is fully open.
+        """
+        return self._handle("current_cover_tilt_position")
+
+    @property
+    def supported_features(self) -> CoverEntityFeature:
+        """Flag supported features."""
+        return self._handle("supported_features")
+
+    @property
+    def is_opening(self) -> bool | None:
+        """Return if the cover is opening or not."""
+        return self._handle("is_opening")
+
+    @property
+    def is_closing(self) -> bool | None:
+        """Return if the cover is closing or not."""
+        return self._handle("is_closing")
+
+    @property
+    def is_closed(self) -> bool | None:
+        """Return if the cover is closed or not."""
+        return self._handle("is_closed")
 
     async def async_added_to_hass(self) -> None:
         """Call when entity about to be added to hass."""

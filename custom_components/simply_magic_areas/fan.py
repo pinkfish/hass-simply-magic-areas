@@ -29,6 +29,8 @@ from homeassistant.util import slugify
 
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
+from .config.area_state import AreaState
+from .config.entity_names import EntityNames
 from .const import (
     ATTR_LAST_UPDATE_FROM_ENTITY,
     CONF_MANUAL_TIMEOUT,
@@ -37,8 +39,6 @@ from .const import (
     DOMAIN,
     MODULE_DATA,
 )
-from .config.area_state import AreaState
-from .config.entity_names import EntityNames
 
 _LOGGER = logging.getLogger(__name__)
 ATTR_HUMIDITY_UP = "humidity_up"
@@ -172,7 +172,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             async_track_state_change_event(
                 self.hass,
                 [
-                    self.area.simply_magic_entity_id(SELECT_DOMAIN, EntityNames.STATE),
+                    self.area.simply_magic_entity_id(SENSOR_DOMAIN, EntityNames.STATE),
                     self.area.simply_magic_entity_id(
                         SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
                     ),

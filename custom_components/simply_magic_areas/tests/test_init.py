@@ -6,7 +6,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
-from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
+from homeassistant.components.select import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
@@ -33,7 +33,7 @@ async def test_init_no_devices(
         f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     occupied_lights = hass.states.get(
         f"{LIGHT_DOMAIN}.simply_magic_areas_light_kitchen"
@@ -83,7 +83,7 @@ async def test_init_with_lights(
         f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     occupied_lights = hass.states.get(
         f"{LIGHT_DOMAIN}.simply_magic_areas_light_kitchen"
@@ -121,7 +121,7 @@ async def test_init_with_light_sensor(
         f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     occupied_lights = hass.states.get(
         f"{LIGHT_DOMAIN}.simply_magic_areas_light_kitchen"
@@ -163,7 +163,7 @@ async def test_init_with_humidity_sensor(
         f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     occupied_lights = hass.states.get(
         f"{LIGHT_DOMAIN}.simply_magic_areas_light_kitchen"
@@ -215,7 +215,7 @@ async def test_init_with_lights_and_sensor(
         f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     occupied_lights = hass.states.get(
         f"{LIGHT_DOMAIN}.simply_magic_areas_light_kitchen"

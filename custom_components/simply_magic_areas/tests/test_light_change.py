@@ -7,7 +7,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
-from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
+from homeassistant.components.select import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
@@ -48,7 +48,7 @@ async def test_light_on_off(
         f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
 
     calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_on")
@@ -79,7 +79,7 @@ async def test_light_on_off(
 
     # Reload the sensors and they should have changed.
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     if automated:
         assert area_binary_sensor.state == "occupied"
@@ -101,7 +101,7 @@ async def test_light_on_off(
     await asyncio.sleep(4)
     await hass.async_block_till_done()
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     if automated:
         assert area_binary_sensor.state == "extended"
@@ -110,7 +110,7 @@ async def test_light_on_off(
     await asyncio.sleep(3)
     await hass.async_block_till_done()
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     if automated:
         assert area_binary_sensor.state == "clear"
@@ -137,7 +137,7 @@ async def test_light_entity_change(
 
     # Validate the right enties were created.
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     service_data = {
         ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
@@ -151,7 +151,7 @@ async def test_light_entity_change(
     one_motion[0].turn_on()
     await hass.async_block_till_done()
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     assert area_binary_sensor.state == "occupied"
     assert len(calls) == 1
@@ -166,7 +166,7 @@ async def test_light_entity_change(
     one_motion[1].turn_on()
     await hass.async_block_till_done()
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     assert area_binary_sensor.state == "sleep"
 
@@ -175,7 +175,7 @@ async def test_light_entity_change(
     one_motion[2].turn_on()
     await hass.async_block_till_done()
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     assert area_binary_sensor.state == "bright"
 
@@ -184,7 +184,7 @@ async def test_light_entity_change(
     one_motion[3].turn_on()
     await hass.async_block_till_done()
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     assert area_binary_sensor.state == "accented"
 
@@ -222,7 +222,7 @@ async def test_light_on_off_with_light_sensor(
         f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     light_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_illuminance_kitchen"
@@ -255,7 +255,7 @@ async def test_light_on_off_with_light_sensor(
 
     # Reload the sensors and they should have changed.
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     assert area_binary_sensor.state == "occupied"
     assert len(off_calls) == 0

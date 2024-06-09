@@ -14,9 +14,8 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 
-from ..const import DOMAIN
-
 from ..config.area_state import AreaState
+from ..const import DOMAIN
 from .mocks import MockFan, MockSensor
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,7 +29,7 @@ async def test_save_select(
 
     # Validate the right enties were created.
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
 
     assert area_binary_sensor is not None

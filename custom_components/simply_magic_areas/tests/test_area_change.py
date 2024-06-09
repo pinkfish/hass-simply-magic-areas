@@ -5,7 +5,7 @@ import logging
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
+from homeassistant.components.select import DOMAIN as SENSOR_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.area_registry import async_get as async_get_ar
@@ -33,7 +33,7 @@ async def test_area_change(
 
     # Validate the right enties were created.
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
 
     assert area_binary_sensor is not None

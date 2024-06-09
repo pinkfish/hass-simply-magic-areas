@@ -176,7 +176,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             async_track_state_change_event(
                 self.hass,
                 [
-                    self.area.simply_magic_entity_id(SELECT_DOMAIN, EntityNames.STATE),
+                    self.area.simply_magic_entity_id(SENSOR_DOMAIN, EntityNames.STATE),
                     self.area.simply_magic_entity_id(
                         SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
                     ),

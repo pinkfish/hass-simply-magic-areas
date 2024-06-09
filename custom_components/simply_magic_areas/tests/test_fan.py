@@ -9,7 +9,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
-from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
+from homeassistant.components.select import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (
@@ -49,7 +49,7 @@ async def test_fan_on_off(
         f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
 
     calls = async_mock_service(hass, FAN_DOMAIN, "turn_on")
@@ -80,7 +80,7 @@ async def test_fan_on_off(
 
     # Reload the sensors and they should have changed.
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     if automated:
         assert area_binary_sensor.state == "occupied"
@@ -94,7 +94,7 @@ async def test_fan_on_off(
     await asyncio.sleep(4)
     await hass.async_block_till_done()
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     if automated:
         assert area_binary_sensor.state == "extended"
@@ -115,7 +115,7 @@ async def test_fan_on_off(
     await asyncio.sleep(3)
     await hass.async_block_till_done()
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     if automated:
         assert area_binary_sensor.state == "clear"
@@ -149,7 +149,7 @@ async def test_fan_on_off_humidity(
         f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
     )
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     area_humidity_occupied = hass.states.get(
         f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
@@ -198,7 +198,7 @@ async def test_fan_on_off_humidity(
 
     # Reload the sensors and they should have changed.
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     area_humidity_occupied = hass.states.get(
         f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
@@ -242,7 +242,7 @@ async def test_fan_on_off_humidity(
     assert area_humidity_empty.state == STATE_ON
     assert area_humidity_occupied.state == STATE_OFF
     area_binary_sensor = hass.states.get(
-        f"{SELECT_DOMAIN}.simply_magic_areas_state_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     assert area_binary_sensor.state == "occupied"
     assert len(calls) == 1

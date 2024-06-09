@@ -24,6 +24,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
 
+from .base.area_state_sensor import AreaStateSensor
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .const import (
@@ -56,60 +57,60 @@ async def async_setup_entry(
 
     aggregates: list[AreaSensorGroupSensor] = []
 
+    # Create the basic state sensor.
+    aggregates.append(AreaStateSensor(area))
+
     # Check SENSOR_DOMAIN entities, count by device_class
-    if not area.has_entities(SENSOR_DOMAIN):
-        _cleanup_sensor_entities(area.hass, [], existing_sensor_entities)
-        return
+    if area.has_entities(SENSOR_DOMAIN):
+        entities_by_device_class: dict[str, list[str]] = {}
 
-    entities_by_device_class: dict[str, list[str]] = {}
-
-    for entity in area.entities[SENSOR_DOMAIN]:
-        if ATTR_DEVICE_CLASS not in entity:
-            _LOGGER.debug(
-                "Entity %s does not have device_class defined",
-                entity[ATTR_ENTITY_ID],
-            )
-            continue
-
-        if ATTR_UNIT_OF_MEASUREMENT not in entity:
-            _LOGGER.debug(
-                "Entity %s does not have unit_of_measurement defined",
-                entity[ATTR_ENTITY_ID],
-            )
-            continue
-
-        # Dictionary of sensors by device class.
-        device_class = entity[ATTR_DEVICE_CLASS]
-        if device_class not in entities_by_device_class:
-            entities_by_device_class[device_class] = []
-        entities_by_device_class[device_class].append(entity[ATTR_ENTITY_ID])
-
-    # Create aggregates/illuminance sensor or illuminance ones.
-    for item in entities_by_device_class.items():
-        device_class = item[0]
-        entities = item[1]
-
-        if device_class not in ALWAYS_DEVICE_CLASS:
-            if not area.has_feature(CONF_FEATURE_GROUP_CREATION):
-                continue
-            if len(entities) < area.feature_config(CONF_FEATURE_GROUP_CREATION).get(
-                CONF_AGGREGATES_MIN_ENTITIES, 2
-            ):
+        for entity in area.entities[SENSOR_DOMAIN]:
+            if ATTR_DEVICE_CLASS not in entity:
+                _LOGGER.debug(
+                    "Entity %s does not have device_class defined",
+                    entity[ATTR_ENTITY_ID],
+                )
                 continue
 
-        _LOGGER.debug(
-            "Creating aggregate sensor for device_class '%s' with %d entities (%s)",
-            device_class,
-            len(entities),
-            area.slug,
-        )
-        aggregates.append(
-            AreaSensorGroupSensor(
-                area=area,
-                device_class=SensorDeviceClass(device_class),
-                entity_ids=entities,
+            if ATTR_UNIT_OF_MEASUREMENT not in entity:
+                _LOGGER.debug(
+                    "Entity %s does not have unit_of_measurement defined",
+                    entity[ATTR_ENTITY_ID],
+                )
+                continue
+
+            # Dictionary of sensors by device class.
+            device_class = entity[ATTR_DEVICE_CLASS]
+            if device_class not in entities_by_device_class:
+                entities_by_device_class[device_class] = []
+            entities_by_device_class[device_class].append(entity[ATTR_ENTITY_ID])
+
+        # Create aggregates/illuminance sensor or illuminance ones.
+        for item in entities_by_device_class.items():
+            device_class = item[0]
+            entities = item[1]
+
+            if device_class not in ALWAYS_DEVICE_CLASS:
+                if not area.has_feature(CONF_FEATURE_GROUP_CREATION):
+                    continue
+                if len(entities) < area.feature_config(CONF_FEATURE_GROUP_CREATION).get(
+                    CONF_AGGREGATES_MIN_ENTITIES, 2
+                ):
+                    continue
+
+            _LOGGER.debug(
+                "Creating aggregate sensor for device_class '%s' with %d entities (%s)",
+                device_class,
+                len(entities),
+                area.slug,
             )
-        )
+            aggregates.append(
+                AreaSensorGroupSensor(
+                    area=area,
+                    device_class=SensorDeviceClass(device_class),
+                    entity_ids=entities,
+                )
+            )
 
     _cleanup_sensor_entities(
         area.hass, [a.entity_id for a in aggregates], existing_sensor_entities

@@ -1,5 +1,6 @@
 """Fake light for testing with."""
 
+from functools import cached_property
 import logging
 from typing import Any, Final, final
 from unittest.mock import AsyncMock
@@ -466,21 +467,6 @@ class MockCover(MockEntity, CoverEntity):
     def supported_features(self) -> CoverEntityFeature:
         """Flag supported features."""
         return self._handle("supported_features")
-
-    @property
-    def is_opening(self) -> bool | None:
-        """Return if the cover is opening or not."""
-        return self._handle("is_opening")
-
-    @property
-    def is_closing(self) -> bool | None:
-        """Return if the cover is closing or not."""
-        return self._handle("is_closing")
-
-    @property
-    def is_closed(self) -> bool | None:
-        """Return if the cover is closed or not."""
-        return self._handle("is_closed")
 
     async def async_added_to_hass(self) -> None:
         """Call when entity about to be added to hass."""

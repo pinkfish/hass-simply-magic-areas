@@ -10,6 +10,10 @@ from homeassistant.components.binary_sensor import (
     DOMAIN as BINARY_SENSOR_DOMAIN,
     BinarySensorDeviceClass,
 )
+from homeassistant.components.cover import (
+    DOMAIN as COVER_DOMAIN,
+    CoverDeviceClass,
+)
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.light import (
     ATTR_SUPPORTED_COLOR_MODES,
@@ -41,7 +45,7 @@ from ..const import (
     DOMAIN,
 )
 from .common import setup_test_component_platform
-from .mocks import MockBinarySensor, MockFan, MockSensor
+from .mocks import MockBinarySensor, MockCover, MockFan, MockSensor
 
 AREA_NAME = "kitchen"
 _LOGGER = logging.getLogger(__name__)
@@ -171,6 +175,32 @@ async def setup_one_sensor(hass: HomeAssistant) -> list[MockBinarySensor]:
         area_id=AREA_NAME,
     )
     return mock_binary_sensor_entities
+
+
+@pytest.fixture(name="one_cover")
+async def setup_one_cover(hass: HomeAssistant) -> list[MockCover]:
+    """Create one mock cover and setup the system with ti."""
+    mock_cover_entities = [
+        MockCover(
+            name="cover",
+            is_opened=False,
+            is_opening=False,
+            is_closing=False,
+            unique_id="unique_copver",
+            device_class=CoverDeviceClass.AWNING,
+        ),
+    ]
+    setup_test_component_platform(hass, COVER_DOMAIN, mock_cover_entities)
+    assert await async_setup_component(
+        hass, COVER_DOMAIN, {COVER_DOMAIN: {CONF_PLATFORM: "test"}}
+    )
+    await hass.async_block_till_done()
+    entity_registry = async_get_er(hass)
+    entity_registry.async_update_entity(
+        "cover.cover",
+        area_id=AREA_NAME,
+    )
+    return mock_cover_entities
 
 
 @pytest.fixture(name="one_sensor_light")

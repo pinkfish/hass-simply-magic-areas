@@ -133,7 +133,13 @@
         "name": "{area_name} Fans (Simply Magic Areas)"
       }
     },
-    "select": {
+    "sensor": {
+      "humidity": {
+        "name": "{area_name} Humidity Sensor (Simply Magic Areas)"
+      },
+      "illuminance": {
+        "name": "{area_name} Illuminance Sensor (Simply Magic Areas)"
+      },
       "state": {
         "name": "{area_name} State (Simply Magic Areas)",
         "state": {
@@ -144,14 +150,6 @@
           "accented": "Accented",
           "manual": "Manual"
         }
-      }
-    },
-    "sensor": {
-      "humidity": {
-        "name": "{area_name} Humidity Sensor (Simply Magic Areas)"
-      },
-      "illuminance": {
-        "name": "{area_name} Illuminance Sensor (Simply Magic Areas)"
       }
     },
     "switch": {

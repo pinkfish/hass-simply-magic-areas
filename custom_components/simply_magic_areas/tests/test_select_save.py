@@ -37,12 +37,11 @@ async def test_save_select(
     assert area_binary_sensor.attributes == {
         "active_sensors": [],
         "friendly_name": "kitchen kitchen State (Simply Magic Areas)",
-        "icon": "mdi:home-search",
         "last_active_sensors": [],
         "presence_sensors": [],
         "state": AreaState.AREA_STATE_CLEAR,
         "type": "interior",
-        "device_class": "select",
+        "device_class": "enum",
         "options": [
             AreaState.AREA_STATE_CLEAR,
             AreaState.AREA_STATE_OCCUPIED,

@@ -10,10 +10,7 @@ from homeassistant.components.binary_sensor import (
     DOMAIN as BINARY_SENSOR_DOMAIN,
     BinarySensorDeviceClass,
 )
-from homeassistant.components.cover import (
-    DOMAIN as COVER_DOMAIN,
-    CoverDeviceClass,
-)
+from homeassistant.components.cover import DOMAIN as COVER_DOMAIN, CoverDeviceClass
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.light import (
     ATTR_SUPPORTED_COLOR_MODES,
@@ -22,6 +19,7 @@ from homeassistant.components.light import (
 )
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorDeviceClass
+from homeassistant.components.sensor.const import UNIT_CONVERTERS
 from homeassistant.const import CONF_PLATFORM, LIGHT_LUX, PERCENTAGE, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.area_registry import async_get as async_get_ar
@@ -238,7 +236,6 @@ async def setup_one_humidity_sensor(hass: HomeAssistant) -> list[MockSensor]:
             native_value=1.0,
             unique_id="unique_humidity",
             device_class=SensorDeviceClass.HUMIDITY,
-            suggested_unit_of_measurement=PERCENTAGE,
             native_unit_of_measurement=PERCENTAGE,
             unit_of_measurement=PERCENTAGE,
             extra_state_attributes={

@@ -11,7 +11,14 @@ from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 from homeassistant.components.fan import FanEntity
 from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import (
+    STATE_CLOSED,
+    STATE_CLOSING,
+    STATE_OFF,
+    STATE_ON,
+    STATE_OPEN,
+    STATE_OPENING,
+)
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity, EntityCategory, ToggleEntity
 
@@ -443,30 +450,47 @@ class MockCover(MockEntity, CoverEntity):
     """Mock Cover class."""
 
     @property
-    def device_class(self):
-        """Return the class of this sensor."""
-        return self._handle("device_class")
+    def is_closed(self):
+        """Return if the cover is closed or not."""
+        if "state" in self._values and self._values["state"] == STATE_CLOSED:
+            return True
+
+        return self.current_cover_position == 0
 
     @property
-    def current_cover_position(self) -> int | None:
-        """Return current position of cover.
+    def is_opening(self):
+        """Return if the cover is opening or not."""
+        if "state" in self._values:
+            return self._values["state"] == STATE_OPENING
 
-        None is unknown, 0 is closed, 100 is fully open.
-        """
-        return self._handle("current_cover_position")
-
-    @property
-    def current_cover_tilt_position(self) -> int | None:
-        """Return current position of cover tilt.
-
-        None is unknown, 0 is closed, 100 is fully open.
-        """
-        return self._handle("current_cover_tilt_position")
+        return False
 
     @property
-    def supported_features(self) -> CoverEntityFeature:
-        """Flag supported features."""
-        return self._handle("supported_features")
+    def is_closing(self):
+        """Return if the cover is closing or not."""
+        if "state" in self._values:
+            return self._values["state"] == STATE_CLOSING
+
+        return False
+
+    def open_cover(self, **kwargs) -> None:
+        """Open cover."""
+        if self._reports_opening_closing:
+            self._values["state"] = STATE_OPENING
+        else:
+            self._values["state"] = STATE_OPEN
+
+    def close_cover(self, **kwargs) -> None:
+        """Close cover."""
+        if self._reports_opening_closing:
+            self._values["state"] = STATE_CLOSING
+        else:
+            self._values["state"] = STATE_CLOSED
+
+    def stop_cover(self, **kwargs) -> None:
+        """Stop cover."""
+        assert CoverEntityFeature.STOP in self.supported_features
+        self._values["state"] = STATE_CLOSED if self.is_closed else STATE_OPEN
 
     async def async_added_to_hass(self) -> None:
         """Call when entity about to be added to hass."""

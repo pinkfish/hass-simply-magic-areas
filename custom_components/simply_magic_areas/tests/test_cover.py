@@ -6,7 +6,7 @@ from _pytest.monkeypatch import MonkeyPatch
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.components.cover import DOMAIN as COVER_DOMAIN
-from homeassistant.components.select import DOMAIN as SENSOR_DOMAIN
+from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (

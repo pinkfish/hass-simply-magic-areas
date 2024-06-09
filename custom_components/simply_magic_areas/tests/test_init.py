@@ -29,9 +29,6 @@ async def test_init_no_devices(
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
-    manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
-    )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -49,14 +46,12 @@ async def test_init_no_devices(
     )
 
     assert control_entity is not None
-    assert manual_override_entity is not None
     assert area_binary_sensor is not None
     assert occupied_lights is None
     assert humidity_sensor is None
     assert trend_up is None
     assert trend_down is None
     assert control_entity.state == STATE_ON
-    assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
 
     await hass.config_entries.async_unload(config_entry.entry_id)
@@ -79,9 +74,6 @@ async def test_init_with_lights(
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
-    manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
-    )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -90,11 +82,9 @@ async def test_init_with_lights(
     )
 
     assert control_entity is not None
-    assert manual_override_entity is not None
     assert area_binary_sensor is not None
     assert occupied_lights is not None
     assert control_entity.state == STATE_ON
-    assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
 
     await hass.config_entries.async_unload(config_entry.entry_id)
@@ -117,9 +107,6 @@ async def test_init_with_light_sensor(
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
-    manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
-    )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -131,12 +118,10 @@ async def test_init_with_light_sensor(
     )
 
     assert control_entity is not None
-    assert manual_override_entity is not None
     assert area_binary_sensor is not None
     assert occupied_lights is None
     assert light_sensor is not None
     assert control_entity.state == STATE_ON
-    assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
 
     await hass.config_entries.async_unload(config_entry.entry_id)
@@ -159,9 +144,6 @@ async def test_init_with_humidity_sensor(
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
-    manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
-    )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -179,14 +161,12 @@ async def test_init_with_humidity_sensor(
     )
 
     assert control_entity is not None
-    assert manual_override_entity is not None
     assert area_binary_sensor is not None
     assert occupied_lights is None
     assert humidity_sensor is not None
     assert trend_up is not None
     assert trend_down is not None
     assert control_entity.state == STATE_ON
-    assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
     await hass.async_block_till_done()
 
@@ -211,9 +191,6 @@ async def test_init_with_lights_and_sensor(
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
-    manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
-    )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -222,11 +199,9 @@ async def test_init_with_lights_and_sensor(
     )
 
     assert control_entity is not None
-    assert manual_override_entity is not None
     assert area_binary_sensor is not None
     assert occupied_lights is not None
     assert control_entity.state == STATE_ON
-    assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
     await hass.async_block_till_done()
 

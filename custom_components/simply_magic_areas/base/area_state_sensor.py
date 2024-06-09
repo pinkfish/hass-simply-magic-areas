@@ -50,6 +50,8 @@ from .magic import ControlType, MagicArea
 
 _LOGGER = logging.getLogger(__name__)
 
+ATTR_HUMIDITY_ON = "humidity_on"
+
 
 class AreaStateSensor(MagicEntity, SensorEntity):
     """Create an area presence select entity that tracks the current occupied state."""
@@ -589,24 +591,29 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                     str(e),
                 )
 
-        # Track the up/down trend if not already occupied.
-        if len(active_sensors) == 0:
-            trend_up = self.hass.states.get(
-                self.area.simply_magic_entity_id(
-                    BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_OCCUPIED
-                )
+        # Track the up/down trend.
+        trend_up = self.hass.states.get(
+            self.area.simply_magic_entity_id(
+                BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_OCCUPIED
             )
-            trend_down = self.hass.states.get(
-                self.area.simply_magic_entity_id(
-                    BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_EMPTY
-                )
+        )
+        trend_down = self.hass.states.get(
+            self.area.simply_magic_entity_id(
+                BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_EMPTY
             )
-            if trend_up is not None and trend_down is not None:
-                if trend_up.state == STATE_ON and trend_down.state != STATE_ON:
-                    active_sensors.append(trend_up.entity_id)
-                # Make the last off time stay until this is not on any more.
-                if trend_down.state == STATE_ON:
-                    self._last_off_time = datetime.now(UTC)
+        )
+        if trend_up is not None and trend_down is not None:
+            up_state = trend_up.state or self._attr_extra_state_attributes.ge(
+                ATTR_HUMIDITY_ON, False
+            )
+            if up_state == STATE_ON:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = True
+            if up_state == STATE_ON and trend_down.state != STATE_ON:
+                active_sensors.append(trend_up.entity_id)
+            # Make the last off time stay until this is not on any more.
+            if trend_down.state == STATE_ON:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+                self._last_off_time = datetime.now(UTC)
 
         self._attr_extra_state_attributes["active_sensors"] = active_sensors
 

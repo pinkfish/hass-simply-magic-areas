@@ -45,9 +45,6 @@ async def test_fan_on_off(
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
-    manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
-    )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -56,12 +53,10 @@ async def test_fan_on_off(
     calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
 
     assert control_entity is not None
-    assert manual_override_entity is not None
     assert area_binary_sensor is not None
     for fan in one_fan:
         assert not fan.is_on
     assert control_entity.state == STATE_ON
-    assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
 
     # Make the sensor on to make the area occupied and setup automated.
@@ -145,9 +140,6 @@ async def test_fan_on_off_humidity(
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
-    manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
-    )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -161,12 +153,10 @@ async def test_fan_on_off_humidity(
     calls = async_mock_service(hass, FAN_DOMAIN, "turn_on")
 
     assert control_entity is not None
-    assert manual_override_entity is not None
     assert area_binary_sensor is not None
     for fan in one_fan:
         assert not fan.is_on
     assert control_entity.state == STATE_ON
-    assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
     assert area_humidity_occupied.state == STATE_OFF
     assert area_humidity_empty.state == STATE_OFF

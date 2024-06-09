@@ -2,13 +2,16 @@
 
 import logging
 
+from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.switch import (
     DOMAIN as SWITCH_DOMAIN,
     SwitchDeviceClass,
     SwitchEntity,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .base.entities import MagicEntity
@@ -16,10 +19,12 @@ from .base.magic import MagicArea
 from .config.entity_names import EntityNames
 from .const import (
     DATA_AREA_OBJECT,
+    DOMAIN,
+    ICON_FAN_CONTROL,
     ICON_LIGHT_CONTROL,
-    ICON_MANUAL_OVERRIDE,
     MODULE_DATA,
 )
+from .util import cleanup_magic_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,9 +38,18 @@ async def async_setup_entry(
 
     area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
 
-    async_add_entities(
-        [AreaLightControlSwitch(area), AreaLightsManualOverrideActiveSwitch(area)]
-    )
+    existing_switch_entities: list[str] = []
+    if DOMAIN + SWITCH_DOMAIN in area.entities:
+        existing_switch_entities = [
+            e[ATTR_ENTITY_ID] for e in area.entities[DOMAIN + SWITCH_DOMAIN]
+        ]
+
+    switches: list[Entity] = []
+    if area.has_entities(FAN_DOMAIN):
+        switches.append(AreaFanControlSwitch(area))
+    switches.append(AreaLightControlSwitch(area))
+    cleanup_magic_entities(hass, switches, existing_switch_entities)
+    async_add_entities(switches)
 
 
 class SwitchBase(MagicEntity, SwitchEntity):
@@ -83,16 +97,16 @@ class AreaLightControlSwitch(SwitchBase):
         return ICON_LIGHT_CONTROL
 
 
-class AreaLightsManualOverrideActiveSwitch(SwitchBase):
-    """Keeps track of a manual override was enabled due to switch change."""
+class AreaFanControlSwitch(SwitchBase):
+    """Controls if the system is running and watching state."""
 
     def __init__(self, area: MagicArea) -> None:
-        """Initialize the area manual override switch."""
+        """Initialize the area fan control switch."""
 
-        super().__init__(area, translation_key=EntityNames.MANUAL_OVERRIDE)
-        self._attr_is_on = False
+        super().__init__(area, translation_key=EntityNames.FAN_CONTROL)
+        self._attr_is_on = True
 
     @property
     def icon(self):
         """Return the icon to be used for this entity."""
-        return ICON_MANUAL_OVERRIDE
+        return ICON_FAN_CONTROL

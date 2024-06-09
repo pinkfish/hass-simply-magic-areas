@@ -44,9 +44,6 @@ async def test_light_on_off(
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
-    manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
-    )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -54,13 +51,11 @@ async def test_light_on_off(
     calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_on")
 
     assert control_entity is not None
-    assert manual_override_entity is not None
     assert area_binary_sensor is not None
     for light in one_light:
         e = hass.states.get(light)
         assert e.state == STATE_OFF
     assert control_entity.state == STATE_ON
-    assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "clear"
 
     # Make the sensor on to make the area occupied and setup automated.
@@ -218,9 +213,6 @@ async def test_light_on_off_with_light_sensor(
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
     )
-    manual_override_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
-    )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -232,14 +224,12 @@ async def test_light_on_off_with_light_sensor(
     off_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
 
     assert control_entity is not None
-    assert manual_override_entity is not None
     assert area_binary_sensor is not None
     assert light_sensor is not None
     for light in one_light:
         e = hass.states.get(light)
         assert e.state == STATE_OFF
     assert control_entity.state == STATE_OFF
-    assert manual_override_entity.state == STATE_OFF
     assert area_binary_sensor.state == "manual"
 
     # Make the sensor on to make the area occupied and setup automated, leave the light low to get the brightness correct.

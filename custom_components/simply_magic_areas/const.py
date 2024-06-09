@@ -65,7 +65,7 @@ ATTR_LAST_UPDATE_FROM_ENTITY: str = "last_update_from_entity"
 
 # Icons
 ICON_LIGHT_CONTROL = "mdi:head-cog"
-ICON_MANUAL_OVERRIDE = "mdi:lightbulb-auto-outline"
+ICON_FAN_CONTROL = "mdi:head-cog"
 
 # MagicAreas Components
 MAGIC_AREAS_COMPONENTS = [

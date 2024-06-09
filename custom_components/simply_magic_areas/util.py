@@ -2,12 +2,31 @@
 
 from collections.abc import Generator, Iterable
 import inspect
+import logging
 from typing import Any
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_registry import async_get as async_get_er
+from homeassistant.helpers.entity import Entity
 
 from homeassistant.helpers.area_registry import AreaEntry
 from homeassistant.util import slugify
 
 basestring = (str, bytes)
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def cleanup_magic_entities(
+    hass: HomeAssistant, new_ids: list[Entity], old_ids: list[str]
+) -> None:
+    """Clean up a list of magic entities."""
+    entity_registry = async_get_er(hass)
+    new_entity_ids = [e.entity_id for e in new_ids]
+    for ent_id in old_ids:
+        if ent_id in new_entity_ids:
+            continue
+        _LOGGER.warning("Deleting old entity %s", ent_id)
+        entity_registry.async_remove(ent_id)
 
 
 def is_entity_list(item: Any) -> bool:

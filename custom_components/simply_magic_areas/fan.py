@@ -41,8 +41,9 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-ATTR_HUMIDITY_UP = "humidity_up"
-ATTR_FANS = "fans"
+ATTR_HUMIDITY_UP: str = "humidity_up"
+ATTR_FANS: str = "fans"
+ATTR_MANUAL_CONTROL: str = "manual_control"
 
 
 async def async_setup_entry(
@@ -351,12 +352,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
     #### Control Release
     def _is_controlled_by_this_entity(self) -> bool:
-        return self._controled_by_entity
+        return self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, True)
 
     def _set_controlled_by_this_entity(self, enabled: bool) -> None:
-        _controled_by_entity = enabled
-        if not enabled:
-            self._manual_timeout_cb = call_later(self.hass, 60, self._reset_control)
+        self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, enabled)
 
     def _reset_control(self, time: datetime) -> None:
         self._set_controlled_by_this_entity(True)

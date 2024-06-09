@@ -9,7 +9,6 @@ from homeassistant.components.light import (
     DOMAIN as LIGHT_DOMAIN,
     LightEntityDescription,
 )
-from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntry
@@ -49,6 +48,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 ATTR_LAST_ON_ILLUMINANCE: str = "last_on_illuminance"
+ATTR_MANUAL_CONTROL: str = "manual_control"
 
 
 async def async_setup_entry(
@@ -381,39 +381,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     #### Control Release
     def _is_controlled_by_this_entity(self) -> bool:
-        entity_id = self.area.simply_magic_entity_id(
-            SWITCH_DOMAIN, EntityNames.MANUAL_OVERRIDE
-        )
-
-        switch_entity = self.hass.states.get(entity_id)
-        return switch_entity is None or switch_entity.state.lower() == STATE_OFF
+        return self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, False)
 
     def _set_controlled_by_this_entity(self, enabled: bool) -> None:
-        if self.hass:
-            entity_id = (
-                self.area.simply_magic_entity_id(
-                    SWITCH_DOMAIN, EntityNames.MANUAL_OVERRIDE
-                ),
-            )
-            service_data = {
-                ATTR_ENTITY_ID: entity_id,
-            }
-            if enabled:
-                self.hass.services.call(
-                    SWITCH_DOMAIN,
-                    SERVICE_TURN_OFF,
-                    service_data,
-                    blocking=False,
-                    context=self._context,
-                )
-            else:
-                self.hass.services.call(
-                    SWITCH_DOMAIN,
-                    SERVICE_TURN_ON,
-                    service_data,
-                    blocking=False,
-                    context=self._context,
-                )
+        self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, enabled)
 
     def _reset_control(self) -> None:
         self._set_controlled_by_this_entity(True)

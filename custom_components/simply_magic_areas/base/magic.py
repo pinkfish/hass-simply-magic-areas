@@ -63,7 +63,6 @@ class StateConfigData:
     dim_level: int
     for_state: AreaState
     icon: str
-    manual_entity: str
     control_entity: str
     lights: list[str]
 
@@ -370,9 +369,6 @@ class MagicArea(object):  # noqa: UP004
                 icon=lg.icon,
                 control_entity=self.simply_magic_entity_id(
                     SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
-                ),
-                manual_entity=self.simply_magic_entity_id(
-                    SWITCH_DOMAIN, EntityNames.MANUAL_OVERRIDE
                 ),
                 lights=lights,
             )

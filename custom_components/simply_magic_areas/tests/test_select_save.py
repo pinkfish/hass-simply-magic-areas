@@ -86,32 +86,6 @@ async def test_save_light_control(
     assert config_entry.state is ConfigEntryState.NOT_LOADED
 
 
-async def test_save_manual_control(
-    hass: HomeAssistant, config_entry: MockConfigEntry, _setup_integration: None
-) -> None:
-    """Test loading the integration."""
-    assert config_entry.state is ConfigEntryState.LOADED
-
-    # Validate the right enties were created.
-    area_binary_sensor = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_manual_override_kitchen"
-    )
-
-    assert area_binary_sensor is not None
-    assert area_binary_sensor.state == STATE_OFF
-    assert area_binary_sensor.attributes == {
-        "friendly_name": "kitchen kitchen Manual Override (Simply Magic Areas)",
-        "icon": "mdi:lightbulb-auto-outline",
-        "device_class": "switch",
-    }
-
-    await hass.config_entries.async_unload(config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not hass.data.get(DOMAIN)
-    assert config_entry.state is ConfigEntryState.NOT_LOADED
-
-
 async def test_sensor_humdity(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,

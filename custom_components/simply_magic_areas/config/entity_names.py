@@ -9,7 +9,7 @@ class EntityNames(StrEnum):
     STATE = "state"
     HUMIDITY_OCCUPIED = "humidity_occupancy"
     HUMIDITY_EMPTY = "humidity_empty"
-    MANUAL_OVERRIDE = "manual_override"
+    FAN_CONTROL = "fan_control"
     LIGHT_CONTROL = "light_control"
     LIGHT = "light"
     FAN = "fan"

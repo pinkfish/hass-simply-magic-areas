@@ -46,7 +46,7 @@ from ..const import (
     INVALID_STATES,
 )
 from .entities import MagicEntity
-from .magic import MagicArea
+from .magic import ControlType, MagicArea
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -251,7 +251,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
     def get_current_area_state(self) -> AreaState:
         """Get the current state for the area based on the various entities and controls."""
         # If it is in manual mode, set the state to manual.
-        if not self.area.is_control_enabled():
+        if not self.area.is_control_enabled(ControlType.Light):
             return AreaState.AREA_STATE_MANUAL
 
         # Get Main occupancy state

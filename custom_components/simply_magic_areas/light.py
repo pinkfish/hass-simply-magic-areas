@@ -30,7 +30,7 @@ from homeassistant.helpers.entity_registry import async_get as async_get_er
 from homeassistant.helpers.event import async_track_state_change_event, call_later
 
 from .base.entities import MagicEntity
-from .base.magic import MagicArea, StateConfigData
+from .base.magic import ControlType, MagicArea, StateConfigData
 from .config.area_state import AreaState
 from .config.entity_names import EntityNames
 from .const import (
@@ -191,7 +191,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             return
         if event.data["old_state"] is None or event.data["new_state"] is None:
             return
-        automatic_control = self.area.is_control_enabled()
+        automatic_control = self.area.is_control_enabled(ControlType.Light)
 
         if not automatic_control:
             _LOGGER.debug(
@@ -271,7 +271,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
     def _turn_on_light(self, conf: StateConfigData) -> None:
         """Turn on the light group."""
 
-        if not self.area.is_control_enabled():
+        if not self.area.is_control_enabled(ControlType.Light):
             _LOGGER.debug("%s: No control enabled", self.name)
             return
 
@@ -342,7 +342,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     def _turn_off_light(self) -> None:
         """Turn off the light group."""
-        if not self.area.is_control_enabled():
+        if not self.area.is_control_enabled(ControlType.Light):
             return
 
         if not self.is_on:

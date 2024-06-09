@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import logging
 from typing import Any
+from enum import StrEnum
 
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
@@ -44,6 +45,13 @@ from ..const import (
 from ..util import is_entity_list
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class ControlType(StrEnum):
+    """The control type to check."""
+
+    Light = "light"
+    Fan = "fan"
 
 
 @dataclass
@@ -373,11 +381,17 @@ class MagicArea(object):  # noqa: UP004
                 lights=lights,
             )
 
-    def is_control_enabled(self) -> bool:
+    def is_control_enabled(self, control_type: ControlType) -> bool:
         """If the area has controled turned on for simply magic areas."""
-        entity_id = self.simply_magic_entity_id(
-            SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
-        )
+        entity_id = ""
+        if control_type == ControlType.Fan:
+            entity_id = self.simply_magic_entity_id(
+                SWITCH_DOMAIN, EntityNames.FAN_CONTROL
+            )
+        else:
+            entity_id = self.simply_magic_entity_id(
+                SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
+            )
 
         switch_entity = self.hass.states.get(entity_id)
         if switch_entity:

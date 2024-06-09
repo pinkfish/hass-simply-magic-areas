@@ -28,7 +28,7 @@ from homeassistant.helpers.event import async_track_state_change_event, call_lat
 from homeassistant.util import slugify
 
 from .base.entities import MagicEntity
-from .base.magic import MagicArea
+from .base.magic import ControlType, MagicArea
 from .config.area_state import AreaState
 from .config.entity_names import EntityNames
 from .const import (
@@ -175,7 +175,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 [
                     self.area.simply_magic_entity_id(SENSOR_DOMAIN, EntityNames.STATE),
                     self.area.simply_magic_entity_id(
-                        SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
+                        SWITCH_DOMAIN, EntityNames.FAN_CONTROL
                     ),
                 ],
                 self._area_state_change,
@@ -208,7 +208,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
     def _area_state_change(self, event: Event[EventStateChangedData]) -> None:
         if event.data["old_state"] is None or event.data["new_state"] is None:
             return
-        automatic_control = self.area.is_control_enabled()
+        automatic_control = self.area.is_control_enabled(ControlType.Fan)
 
         if not automatic_control:
             _LOGGER.debug(
@@ -320,7 +320,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
     def _turn_on_fan(self) -> None:
         """Turn on the fan group."""
 
-        if not self.area.is_control_enabled():
+        if not self.area.is_control_enabled(ControlType.Fan):
             _LOGGER.debug("%s: No control enabled", self.name)
             return
 
@@ -335,7 +335,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
     def _turn_off_fan(self) -> None:
         """Turn off the fan group."""
-        if not self.area.is_control_enabled():
+        if not self.area.is_control_enabled(ControlType.Fan):
             _LOGGER.debug("%s: Fan control is off", self.name)
             return
 

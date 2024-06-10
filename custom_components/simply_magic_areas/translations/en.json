@@ -96,10 +96,9 @@
           "update_interval": "Interval for checking missed events",
           "type": "Area type (interior/exterior)",
           "bright_entity": "Entity used to put area into bright when occupied",
-          "bright_state_dim": "Dim level to use when the area is bright (0 for off)",
           "sleep_entity": "Entity used to put area into sleep when occupied",
-          "sleep_state_dim": "Dim level to use when the area is sleep (0 for off)",
-          "occupied_state_dim": "Dim level to use when the area is occupied (0 for off)"
+          "light_control": "Control the lights",
+          "fan_control": "Control the fans"
         }
       }
     },

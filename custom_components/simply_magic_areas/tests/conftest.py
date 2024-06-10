@@ -36,6 +36,8 @@ from ..const import (
     CONF_INCLUDE_ENTITIES,
     CONF_NAME,
     CONF_ON_STATES,
+    CONF_LIGHT_CONTROL,
+    CONF_FAN_CONTROL,
     CONF_PRESENCE_DEVICE_PLATFORMS,
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
     CONF_TYPE,
@@ -47,6 +49,53 @@ from .mocks import MockBinarySensor, MockCover, MockFan, MockSensor
 
 AREA_NAME = "kitchen"
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_ENTRY_DATA = {
+    CONF_NAME: AREA_NAME,
+    CONF_ID: AREA_NAME,
+    CONF_CLEAR_TIMEOUT: 3,
+    CONF_EXTENDED_TIMEOUT: 2,
+    CONF_TYPE: AREA_TYPE_INTERIOR,
+    CONF_LIGHT_CONTROL: True,
+    CONF_FAN_CONTROL: True,
+    "bright_entity": "",
+    "bright_state_dim": 0,
+    "sleep_entity": "",
+    "sleep_state_dim": 30,
+    "occupied_state_dim": 100,
+    CONF_ENABLED_FEATURES: {
+        CONF_FEATURE_ADVANCED_LIGHT_GROUPS: {
+            CONF_INCLUDE_ENTITIES: [],
+            CONF_ON_STATES: [STATE_ON],
+            CONF_UPDATE_INTERVAL: 60,
+            CONF_PRESENCE_DEVICE_PLATFORMS: [
+                MEDIA_PLAYER_DOMAIN,
+                BINARY_SENSOR_DOMAIN,
+            ],
+            CONF_PRESENCE_SENSOR_DEVICE_CLASS: [
+                BinarySensorDeviceClass.MOTION,
+                BinarySensorDeviceClass.OCCUPANCY,
+                BinarySensorDeviceClass.PRESENCE,
+            ],
+            "extended_state_dim": 0,
+            "clear_state_dim": 0,
+            "accented_entity": "",
+            "accented_state_dim": 0,
+            "accented_lights": [],
+            "accented_state_check": STATE_ON,
+            "bright_lights": [],
+            "bright_state_check": STATE_ON,
+            "clear_lights": [],
+            "clear_state_check": STATE_ON,
+            "sleep_lights": [],
+            "sleep_state_check": STATE_ON,
+            "extended_lights": [],
+            "extended_state_check": STATE_ON,
+            "occupied_lights": [],
+            "occupied_state_check": STATE_ON,
+        },
+    },
+}
 
 
 @pytest.fixture(autouse=True)
@@ -61,50 +110,16 @@ def auto_enable_custom_integrations(
 @pytest.fixture(name="config_entry")
 def mock_config_entry() -> MockConfigEntry:
     """Fixture for mock configuration entry."""
-    data = {
-        CONF_NAME: AREA_NAME,
-        CONF_ID: AREA_NAME,
-        CONF_CLEAR_TIMEOUT: 3,
-        CONF_EXTENDED_TIMEOUT: 2,
-        CONF_TYPE: AREA_TYPE_INTERIOR,
-        "bright_entity": "",
-        "bright_state_dim": 0,
-        "sleep_entity": "",
-        "sleep_state_dim": 30,
-        "occupied_state_dim": 100,
-        CONF_ENABLED_FEATURES: {
-            CONF_FEATURE_ADVANCED_LIGHT_GROUPS: {
-                CONF_INCLUDE_ENTITIES: [],
-                CONF_ON_STATES: [STATE_ON],
-                CONF_UPDATE_INTERVAL: 60,
-                CONF_PRESENCE_DEVICE_PLATFORMS: [
-                    MEDIA_PLAYER_DOMAIN,
-                    BINARY_SENSOR_DOMAIN,
-                ],
-                CONF_PRESENCE_SENSOR_DEVICE_CLASS: [
-                    BinarySensorDeviceClass.MOTION,
-                    BinarySensorDeviceClass.OCCUPANCY,
-                    BinarySensorDeviceClass.PRESENCE,
-                ],
-                "extended_state_dim": 0,
-                "clear_state_dim": 0,
-                "accented_entity": "",
-                "accented_state_dim": 0,
-                "accented_lights": [],
-                "accented_state_check": STATE_ON,
-                "bright_lights": [],
-                "bright_state_check": STATE_ON,
-                "clear_lights": [],
-                "clear_state_check": STATE_ON,
-                "sleep_lights": [],
-                "sleep_state_check": STATE_ON,
-                "extended_lights": [],
-                "extended_state_check": STATE_ON,
-                "occupied_lights": [],
-                "occupied_state_check": STATE_ON,
-            },
-        },
-    }
+    data = dict(CONFIG_ENTRY_DATA)
+    return MockConfigEntry(domain=DOMAIN, data=data)
+
+
+@pytest.fixture(name="disable_config_entry")
+def mock_disable_config_entry() -> MockConfigEntry:
+    """Fixture for mock configuration entry."""
+    data = dict(CONFIG_ENTRY_DATA)
+    data[CONF_LIGHT_CONTROL] = False
+    data[CONF_FAN_CONTROL] = False
     return MockConfigEntry(domain=DOMAIN, data=data)
 
 
@@ -117,6 +132,8 @@ def mock_config_entry_entities() -> MockConfigEntry:
         CONF_CLEAR_TIMEOUT: 30,
         CONF_EXTENDED_TIMEOUT: 20,
         CONF_TYPE: AREA_TYPE_INTERIOR,
+        CONF_LIGHT_CONTROL: True,
+        CONF_FAN_CONTROL: True,
         "sleep_entity": "binary_sensor.sleep",
         "bright_entity": "binary_sensor.bright",
         CONF_ENABLED_FEATURES: {
@@ -337,6 +354,19 @@ async def setup_integration(
     await hass.async_block_till_done()
 
 
+@pytest.fixture(name="_setup_integration_disable_control")
+async def setup_integration_disable_control(
+    hass: HomeAssistant,
+    disable_config_entry: MockConfigEntry,
+) -> None:
+    """Set up the integration."""
+    registry = async_get_ar(hass)
+    registry.async_get_or_create(AREA_NAME)
+    disable_config_entry.add_to_hass(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+
 @pytest.fixture(name="_setup_integration_entities")
 async def setup_entities_integration(
     hass: HomeAssistant,
@@ -345,7 +375,6 @@ async def setup_entities_integration(
     """Set up the integration."""
     registry = async_get_ar(hass)
     registry.async_get_or_create(AREA_NAME)
-
     config_entry_entities.add_to_hass(hass)
     assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()

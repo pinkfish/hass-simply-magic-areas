@@ -243,3 +243,87 @@ async def test_fan_on_off_humidity(
     assert not hass.data.get(DOMAIN)
     assert config_entry.state is ConfigEntryState.NOT_LOADED
     await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_fan_control_disables(
+    hass: HomeAssistant,
+    disable_config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_motion: list[MockBinarySensor],
+    one_sensor_humidity: list[MockSensor],
+    _setup_integration_disable_control: None,
+) -> None:
+    """Test loading the integration."""
+    # Validate the right enties were created.
+    control_entity = hass.states.get(
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
+    )
+    area_binary_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    area_humidity_occupied = hass.states.get(
+        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
+    )
+    area_humidity_empty = hass.states.get(
+        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
+    )
+
+    calls = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+
+    assert control_entity is not None
+    assert area_binary_sensor is not None
+    for fan in one_fan:
+        assert not fan.is_on
+    assert control_entity.state == STATE_ON
+    assert area_binary_sensor.state == "clear"
+    assert area_humidity_occupied.state == STATE_OFF
+    assert area_humidity_empty.state == STATE_OFF
+
+    # Make the sensor on to make the area occupied and setup automated.
+    service_data = {
+        ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen",
+    }
+    await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_ON, service_data)
+    await hass.async_block_till_done()
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        str(10.0),
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        str(20.0),
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        str(30.0),
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+
+    # Reload the sensors and they should have changed.
+    area_binary_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    area_humidity_occupied = hass.states.get(
+        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
+    )
+    area_humidity_empty = hass.states.get(
+        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
+    )
+    assert area_humidity_occupied.state == STATE_ON
+    assert area_humidity_empty.state == STATE_OFF
+    assert area_binary_sensor.state == "occupied"
+    # Fans should not have changed, since they are disabled.
+    assert len(calls) == 0
+
+    await hass.config_entries.async_unload(disable_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert not hass.data.get(DOMAIN)
+    assert disable_config_entry.state is ConfigEntryState.NOT_LOADED
+    await hass.async_block_till_done()

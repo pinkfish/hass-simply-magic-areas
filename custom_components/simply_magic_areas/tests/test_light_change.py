@@ -268,3 +268,41 @@ async def test_light_on_off_with_light_sensor(
     assert not hass.data.get(DOMAIN)
     assert config_entry.state is ConfigEntryState.NOT_LOADED
     await hass.async_block_till_done()
+
+
+async def test_light_disabled(
+    hass: HomeAssistant,
+    disable_config_entry: MockConfigEntry,
+    one_light: list[str],
+    one_motion: list[MockBinarySensor],
+    _setup_integration_disable_control: None,
+) -> None:
+    """Test loading the integration."""
+    assert disable_config_entry.state is ConfigEntryState.LOADED
+
+    # Validate the right enties were created.
+    area_binary_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    service_data = {
+        ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen",
+    }
+    await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_ON, service_data)
+
+    calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_on")
+    await hass.async_block_till_done()
+
+    # Reload the sensors and they should have changed.
+    one_motion[0].turn_on()
+    await hass.async_block_till_done()
+    area_binary_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_binary_sensor.state == "occupied"
+    assert len(calls) == 0
+
+    await hass.config_entries.async_unload(disable_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert not hass.data.get(DOMAIN)
+    assert disable_config_entry.state is ConfigEntryState.NOT_LOADED

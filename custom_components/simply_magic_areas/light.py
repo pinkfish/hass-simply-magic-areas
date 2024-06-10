@@ -68,6 +68,10 @@ async def async_setup_entry(
         _LOGGER.debug("No %s entities for area %s ", LIGHT_DOMAIN, area.name)
         _cleanup_light_entities(area.hass, [], existing_light_entities)
         return
+    if not area.is_control_enabled(ControlType.Light):
+        _LOGGER.info("%s: Lights disabled for area (%s) ", area.name, LIGHT_DOMAIN)
+        _cleanup_light_entities(area.hass, [], existing_light_entities)
+        return
 
     light_groups: list[AreaLightGroup] = []
 
@@ -191,13 +195,6 @@ class AreaLightGroup(MagicEntity, LightGroup):
             return
         if event.data["old_state"] is None or event.data["new_state"] is None:
             return
-        automatic_control = self.area.is_control_enabled(ControlType.Light)
-
-        if not automatic_control:
-            _LOGGER.debug(
-                "%s: Automatic control for light group is disabled, skipping", self.name
-            )
-            return
 
         from_state = event.data["old_state"].state
         if event.data["new_state"].state not in AreaState:
@@ -271,10 +268,6 @@ class AreaLightGroup(MagicEntity, LightGroup):
     def _turn_on_light(self, conf: StateConfigData) -> None:
         """Turn on the light group."""
 
-        if not self.area.is_control_enabled(ControlType.Light):
-            _LOGGER.debug("%s: No control enabled", self.name)
-            return
-
         self._entity_ids = conf.lights
         self.async_update_group_state()
         _LOGGER.debug(
@@ -324,6 +317,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
                     diff,
                     (max_brightness - min_brightness),
                 )
+        if not self.area.is_control_enabled(ControlType.System):
+            return
 
         if brightness == 0:
             _LOGGER.debug("%s: Brightness is 0", self.name)
@@ -342,11 +337,11 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     def _turn_off_light(self) -> None:
         """Turn off the light group."""
-        if not self.area.is_control_enabled(ControlType.Light):
-            return
-
         if not self.is_on:
             _LOGGER.debug("%s: Light already off", self.name)
+            return
+
+        if not self.area.is_control_enabled(ControlType.System):
             return
 
         self.last_update_from_entity = True

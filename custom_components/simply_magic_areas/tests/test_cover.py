@@ -44,10 +44,3 @@ async def test_cover_no_aggregation(
         assert not fan.is_closed
     assert control_entity.state == STATE_ON
     assert area_binary_sensor.state == "clear"
-
-    await hass.config_entries.async_unload(config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not hass.data.get(DOMAIN)
-    assert config_entry.state is ConfigEntryState.NOT_LOADED
-    await hass.async_block_till_done()

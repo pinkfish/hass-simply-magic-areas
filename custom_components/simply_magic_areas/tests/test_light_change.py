@@ -7,7 +7,6 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
-from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
@@ -21,7 +20,6 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 
-from ..const import DOMAIN
 from .common import async_mock_service
 from .mocks import MockBinarySensor, MockSensor
 
@@ -112,13 +110,6 @@ async def test_light_on_off(
     else:
         assert area_binary_sensor.state == "manual"
 
-    await hass.config_entries.async_unload(config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not hass.data.get(DOMAIN)
-    assert config_entry.state is ConfigEntryState.NOT_LOADED
-    await hass.async_block_till_done()
-
 
 async def test_light_entity_change(
     hass: HomeAssistant,
@@ -182,12 +173,6 @@ async def test_light_entity_change(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     assert area_binary_sensor.state == "accented"
-
-    await hass.config_entries.async_unload(config_entry_entities.entry_id)
-    await hass.async_block_till_done()
-
-    assert not hass.data.get(DOMAIN)
-    assert config_entry_entities.state is ConfigEntryState.NOT_LOADED
 
 
 @pytest.mark.parametrize(
@@ -262,13 +247,6 @@ async def test_light_on_off_with_light_sensor(
             STATE_ON,
         )
 
-    await hass.config_entries.async_unload(config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not hass.data.get(DOMAIN)
-    assert config_entry.state is ConfigEntryState.NOT_LOADED
-    await hass.async_block_till_done()
-
 
 async def test_light_disabled(
     hass: HomeAssistant,
@@ -300,9 +278,3 @@ async def test_light_disabled(
     )
     assert area_binary_sensor.state == "occupied"
     assert len(calls) == 0
-
-    await hass.config_entries.async_unload(disable_config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not hass.data.get(DOMAIN)
-    assert disable_config_entry.state is ConfigEntryState.NOT_LOADED

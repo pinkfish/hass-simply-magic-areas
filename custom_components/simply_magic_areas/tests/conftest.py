@@ -19,7 +19,7 @@ from homeassistant.components.light import (
 )
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorDeviceClass
-from homeassistant.components.sensor.const import UNIT_CONVERTERS
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_PLATFORM, LIGHT_LUX, PERCENTAGE, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.area_registry import async_get as async_get_ar
@@ -31,13 +31,13 @@ from ..const import (
     CONF_CLEAR_TIMEOUT,
     CONF_ENABLED_FEATURES,
     CONF_EXTENDED_TIMEOUT,
+    CONF_FAN_CONTROL,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
+    CONF_LIGHT_CONTROL,
     CONF_NAME,
     CONF_ON_STATES,
-    CONF_LIGHT_CONTROL,
-    CONF_FAN_CONTROL,
     CONF_PRESENCE_DEVICE_PLATFORMS,
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
     CONF_TYPE,
@@ -352,6 +352,14 @@ async def setup_integration(
     config_entry.add_to_hass(hass)
     assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
+    yield
+
+    await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert not hass.data.get(DOMAIN)
+    assert config_entry.state is ConfigEntryState.NOT_LOADED
+    _LOGGER.info("Unloading integration ")
 
 
 @pytest.fixture(name="_setup_integration_disable_control")
@@ -365,6 +373,14 @@ async def setup_integration_disable_control(
     disable_config_entry.add_to_hass(hass)
     assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
+    yield
+
+    await hass.config_entries.async_unload(disable_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert not hass.data.get(DOMAIN)
+    assert disable_config_entry.state is ConfigEntryState.NOT_LOADED
+    _LOGGER.info("Unloading disable integration ")
 
 
 @pytest.fixture(name="_setup_integration_entities")
@@ -378,3 +394,11 @@ async def setup_entities_integration(
     config_entry_entities.add_to_hass(hass)
     assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
+    yield
+
+    await hass.config_entries.async_unload(config_entry_entities.entry_id)
+    await hass.async_block_till_done()
+
+    assert not hass.data.get(DOMAIN)
+    assert config_entry_entities.state is ConfigEntryState.NOT_LOADED
+    _LOGGER.info("Unloading entities integration ")

@@ -118,13 +118,6 @@ async def test_fan_on_off(
     else:
         assert area_binary_sensor.state == "manual"
 
-    await hass.config_entries.async_unload(config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not hass.data.get(DOMAIN)
-    assert config_entry.state is ConfigEntryState.NOT_LOADED
-    await hass.async_block_till_done()
-
 
 @pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_fan_on_off_humidity(
@@ -237,16 +230,9 @@ async def test_fan_on_off_humidity(
     assert area_binary_sensor.state == "occupied"
     assert len(calls) == 1
 
-    await hass.config_entries.async_unload(config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not hass.data.get(DOMAIN)
-    assert config_entry.state is ConfigEntryState.NOT_LOADED
-    await hass.async_block_till_done()
-
 
 @pytest.mark.parametrize("expected_lingering_timers", [True])
-async def test_fan_control_disables(
+async def test_fan_control_disabled(
     hass: HomeAssistant,
     disable_config_entry: MockConfigEntry,
     one_fan: list[MockFan],
@@ -320,10 +306,3 @@ async def test_fan_control_disables(
     assert area_binary_sensor.state == "occupied"
     # Fans should not have changed, since they are disabled.
     assert len(calls) == 0
-
-    await hass.config_entries.async_unload(disable_config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not hass.data.get(DOMAIN)
-    assert disable_config_entry.state is ConfigEntryState.NOT_LOADED
-    await hass.async_block_till_done()

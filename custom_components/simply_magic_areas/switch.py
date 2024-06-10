@@ -17,13 +17,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .config.entity_names import EntityNames
-from .const import (
-    DATA_AREA_OBJECT,
-    DOMAIN,
-    ICON_FAN_CONTROL,
-    ICON_LIGHT_CONTROL,
-    MODULE_DATA,
-)
+from .const import DATA_AREA_OBJECT, DOMAIN, ICON_SYSTEM_CONTROL, MODULE_DATA
 from .util import cleanup_magic_entities
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,9 +39,7 @@ async def async_setup_entry(
         ]
 
     switches: list[Entity] = []
-    if area.has_entities(FAN_DOMAIN):
-        switches.append(AreaFanControlSwitch(area))
-    switches.append(AreaLightControlSwitch(area))
+    switches.append(AreaSystemControlSwitch(area))
     cleanup_magic_entities(hass, switches, existing_switch_entities)
     async_add_entities(switches)
 
@@ -82,31 +74,16 @@ class SwitchBase(MagicEntity, SwitchEntity):
         self.schedule_update_ha_state()
 
 
-class AreaLightControlSwitch(SwitchBase):
+class AreaSystemControlSwitch(SwitchBase):
     """Controls if the system is running and watching state."""
 
     def __init__(self, area: MagicArea) -> None:
         """Initialize the area light control switch."""
 
-        super().__init__(area, translation_key=EntityNames.LIGHT_CONTROL)
+        super().__init__(area, translation_key=EntityNames.SYSTEM_CONTROL)
         self._attr_is_on = True
 
     @property
     def icon(self):
         """Return the icon to be used for this entity."""
-        return ICON_LIGHT_CONTROL
-
-
-class AreaFanControlSwitch(SwitchBase):
-    """Controls if the system is running and watching state."""
-
-    def __init__(self, area: MagicArea) -> None:
-        """Initialize the area fan control switch."""
-
-        super().__init__(area, translation_key=EntityNames.FAN_CONTROL)
-        self._attr_is_on = True
-
-    @property
-    def icon(self):
-        """Return the icon to be used for this entity."""
-        return ICON_FAN_CONTROL
+        return ICON_SYSTEM_CONTROL

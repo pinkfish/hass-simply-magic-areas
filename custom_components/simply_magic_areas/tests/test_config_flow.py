@@ -20,10 +20,12 @@ from ..const import (
     CONF_ENABLED_FEATURES,
     CONF_EXCLUDE_ENTITIES,
     CONF_EXTENDED_TIMEOUT,
+    CONF_FAN_CONTROL,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_ICON,
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
+    CONF_LIGHT_CONTROL,
     CONF_NAME,
     CONF_ON_STATES,
     CONF_PRESENCE_DEVICE_PLATFORMS,
@@ -64,6 +66,8 @@ async def test_form(hass: HomeAssistant) -> None:
         CONF_EXTENDED_TIMEOUT: 360,
         "bright_entity": "",
         "sleep_entity": "",
+        CONF_LIGHT_CONTROL: True,
+        CONF_FAN_CONTROL: True,
     }
     # assert len(mock_setup_entry.mock_calls) == 1
     await hass.async_block_till_done()
@@ -99,6 +103,8 @@ async def test_options(hass: HomeAssistant, config_entry: MockConfigEntry) -> No
     assert result["type"] == FlowResultType.CREATE_ENTRY
     # assert result["title"] == "kitchen"
     assert result["data"] == {
+        CONF_LIGHT_CONTROL: True,
+        CONF_FAN_CONTROL: True,
         CONF_CLEAR_TIMEOUT: 12,
         CONF_EXTENDED_TIMEOUT: 60,
         CONF_ENABLED_FEATURES: {},
@@ -138,6 +144,8 @@ async def test_options_enable_advanced_lights(
         CONF_CLEAR_TIMEOUT: 360.0,
         "sleep_entity": "",
         CONF_TYPE: "interior",
+        CONF_LIGHT_CONTROL: True,
+        CONF_FAN_CONTROL: True,
     }
 
     # submit form with options
@@ -168,6 +176,8 @@ async def test_options_enable_advanced_lights(
     assert result["data"] == {
         CONF_CLEAR_TIMEOUT: 12,
         CONF_EXTENDED_TIMEOUT: 360,
+        CONF_LIGHT_CONTROL: True,
+        CONF_FAN_CONTROL: True,
         CONF_ENABLED_FEATURES: {
             CONF_FEATURE_ADVANCED_LIGHT_GROUPS: {
                 "accented_entity": "",

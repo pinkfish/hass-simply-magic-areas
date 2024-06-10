@@ -153,14 +153,8 @@
       }
     },
     "switch": {
-      "light_control": {
-        "name": "{area_name} Light Control (Simply Magic Areas)"
-      },
-      "manual_override": {
-        "name": "{area_name} Manual Override (Simply Magic Areas)"
-      },
-      "presence_hold": {
-        "name": "{area_name} Presence Hold (Simply Magic Areas)"
+      "system_control": {
+        "name": "{area_name} System Control (Simply Magic Areas)"
       }
     }
   }

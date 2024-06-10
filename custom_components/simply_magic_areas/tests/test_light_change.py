@@ -42,7 +42,7 @@ async def test_light_on_off(
     """Test loading the integration."""
     # Validate the right enties were created.
     control_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
     )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
@@ -61,12 +61,12 @@ async def test_light_on_off(
     # Make the sensor on to make the area occupied and setup automated.
     if automated:
         service_data = {
-            ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
+            ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen",
         }
         await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_ON, service_data)
     else:
         service_data = {
-            ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
+            ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen",
         }
         await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_OFF, service_data)
     one_motion[0].turn_on()
@@ -135,7 +135,7 @@ async def test_light_entity_change(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     service_data = {
-        ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
+        ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen",
     }
     await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_ON, service_data)
 
@@ -205,13 +205,13 @@ async def test_light_on_off_with_light_sensor(
 ) -> None:
     """Test loading the integration."""
     service_data = {
-        ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
+        ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen",
     }
     await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_OFF, service_data)
     await hass.async_block_till_done()
     # Validate the right enties were created.
     control_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
     )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
@@ -234,7 +234,7 @@ async def test_light_on_off_with_light_sensor(
 
     # Make the sensor on to make the area occupied and setup automated, leave the light low to get the brightness correct.
     service_data = {
-        ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen",
+        ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen",
     }
     await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_ON, service_data)
     one_motion[0].turn_on()

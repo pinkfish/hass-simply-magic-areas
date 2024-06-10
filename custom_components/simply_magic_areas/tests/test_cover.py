@@ -28,7 +28,7 @@ async def test_cover_no_aggregation(
     """Test loading the integration."""
     # Validate the right enties were created.
     control_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
     )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"

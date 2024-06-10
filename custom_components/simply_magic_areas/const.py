@@ -15,7 +15,6 @@ from homeassistant.components.input_boolean import DOMAIN as INPUT_BOOLEAN_DOMAI
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.components.remote import DOMAIN as REMOTE_DOMAIN
-from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorDeviceClass
 from homeassistant.components.sun import DOMAIN as SUN_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
@@ -64,16 +63,14 @@ ATTR_PRESENCE_SENSORS = "presence_sensors"
 ATTR_LAST_UPDATE_FROM_ENTITY: str = "last_update_from_entity"
 
 # Icons
-ICON_LIGHT_CONTROL = "mdi:head-cog"
-ICON_FAN_CONTROL = "mdi:head-cog"
+ICON_SYSTEM_CONTROL = "mdi:head-cog"
 
 # MagicAreas Components
 MAGIC_AREAS_COMPONENTS = [
-    SELECT_DOMAIN,
+    SWITCH_DOMAIN,
     BINARY_SENSOR_DOMAIN,
     SENSOR_DOMAIN,
     COVER_DOMAIN,
-    SWITCH_DOMAIN,
     LIGHT_DOMAIN,
     FAN_DOMAIN,
 ]
@@ -184,7 +181,9 @@ CONF_NOTIFY_STATES, DEFAULT_NOTIFY_STATES = (
 CONF_MIN_BRIGHTNESS_LEVEL, DEFAULT_MIN_BRIGHTNESS_LEVEL = ("min_brightness_level", 100)
 # When to turn the lights off entirely.
 CONF_MAX_BRIGHTNESS_LEVEL, DEFAULT_MAX_BRIGHTNESS_LEVEL = ("max_brightness_level", 200)
-
+# Controlling the lights and the fan.
+CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL = ("light_control", True)
+CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL = ("fan_control", True)
 
 # Setups to control all the lights, items to create
 clear_lights = LightEntityConf(
@@ -419,6 +418,8 @@ REGULAR_AREA_SCHEMA = vol.Schema(
             CONF_EXTENDED_TIMEOUT, default=DEFAULT_EXTENDED_TIMEOUT
         ): cv.positive_int,
         vol.Optional(CONF_ICON, default=DEFAULT_ICON): cv.string,
+        vol.Optional(CONF_LIGHT_CONTROL, default=DEFAULT_LIGHT_CONTROL): bool,
+        vol.Optional(CONF_FAN_CONTROL, default=DEFAULT_FAN_CONTROL): bool,
     }
 ).extend(
     {k: v for lg in ALL_LIGHT_ENTITIES for k, v in lg.config_flow_schema().items()}
@@ -444,6 +445,8 @@ OPTIONS_AREA = [
     (CONF_CLEAR_TIMEOUT, DEFAULT_CLEAR_TIMEOUT, int),
     (CONF_EXTENDED_TIMEOUT, DEFAULT_EXTENDED_TIMEOUT, int),
     (CONF_ICON, DEFAULT_ICON, str),
+    (CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL, bool),
+    (CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL, bool),
 ]
 for item in ALL_LIGHT_ENTITIES:
     OPTIONS_AREA.extend(item.config_flow_options())

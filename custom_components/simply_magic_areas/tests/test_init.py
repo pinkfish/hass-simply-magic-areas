@@ -27,7 +27,7 @@ async def test_init_no_devices(
 
     # Validate the right enties were created.
     control_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
     )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
@@ -72,7 +72,7 @@ async def test_init_with_lights(
 
     # Validate the right enties were created.
     control_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
     )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
@@ -105,7 +105,7 @@ async def test_init_with_light_sensor(
 
     # Validate the right enties were created.
     control_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
     )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
@@ -142,7 +142,7 @@ async def test_init_with_humidity_sensor(
 
     # Validate the right enties were created.
     control_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
     )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
@@ -189,7 +189,7 @@ async def test_init_with_lights_and_sensor(
 
     # Validate the right enties were created.
     control_entity = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
     )
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"

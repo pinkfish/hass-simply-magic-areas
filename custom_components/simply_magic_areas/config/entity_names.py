@@ -11,6 +11,7 @@ class EntityNames(StrEnum):
     HUMIDITY_EMPTY = "humidity_empty"
     FAN_CONTROL = "fan_control"
     LIGHT_CONTROL = "light_control"
+    SYSTEM_CONTROL = "system_control"
     LIGHT = "light"
     FAN = "fan"
     ILLUMINANCE = "illuminance"

@@ -60,7 +60,7 @@ async def test_save_select(
     assert config_entry.state is ConfigEntryState.NOT_LOADED
 
 
-async def test_save_light_control(
+async def test_save_system_control(
     hass: HomeAssistant, config_entry: MockConfigEntry, _setup_integration: None
 ) -> None:
     """Test loading the integration."""
@@ -68,13 +68,13 @@ async def test_save_light_control(
 
     # Validate the right enties were created.
     area_binary_sensor = hass.states.get(
-        f"{SWITCH_DOMAIN}.simply_magic_areas_light_control_kitchen"
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
     )
 
     assert area_binary_sensor is not None
     assert area_binary_sensor.state == STATE_ON
     assert area_binary_sensor.attributes == {
-        "friendly_name": "kitchen kitchen Light Control (Simply Magic Areas)",
+        "friendly_name": "kitchen kitchen System Control (Simply Magic Areas)",
         "icon": "mdi:head-cog",
         "device_class": "switch",
     }

@@ -2,9 +2,9 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 import logging
 from typing import Any
-from enum import StrEnum
 
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
@@ -28,11 +28,15 @@ from ..const import (
     AREA_TYPE_META,
     CONF_ENABLED_FEATURES,
     CONF_EXCLUDE_ENTITIES,
+    CONF_FAN_CONTROL,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_GROUP_CREATION,
     CONF_INCLUDE_ENTITIES,
+    CONF_LIGHT_CONTROL,
     CONF_TYPE,
     DATA_AREA_OBJECT,
+    DEFAULT_FAN_CONTROL,
+    DEFAULT_LIGHT_CONTROL,
     DOMAIN,
     EVENT_MAGICAREAS_AREA_READY,
     EVENT_MAGICAREAS_READY,
@@ -52,6 +56,7 @@ class ControlType(StrEnum):
 
     Light = "light"
     Fan = "fan"
+    System = "system"
 
 
 @dataclass
@@ -385,14 +390,13 @@ class MagicArea(object):  # noqa: UP004
         """If the area has controled turned on for simply magic areas."""
         entity_id = ""
         if control_type == ControlType.Fan:
-            entity_id = self.simply_magic_entity_id(
-                SWITCH_DOMAIN, EntityNames.FAN_CONTROL
-            )
-        else:
-            entity_id = self.simply_magic_entity_id(
-                SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
-            )
+            return self.config.get(CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL)
+        if control_type == ControlType.Light:
+            return self.config.get(CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL)
 
+        entity_id = self.simply_magic_entity_id(
+            SWITCH_DOMAIN, EntityNames.SYSTEM_CONTROL
+        )
         switch_entity = self.hass.states.get(entity_id)
         if switch_entity:
             return switch_entity.state.lower() == STATE_ON  # type: ignore  # noqa: PGH003

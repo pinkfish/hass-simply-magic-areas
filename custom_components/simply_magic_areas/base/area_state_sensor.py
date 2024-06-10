@@ -127,10 +127,10 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         # Track humidity sensors
         trend_up = self.area.simply_magic_entity_id(
-            BINARY_SENSOR_DOMAIN, "humidity_occupancy"
+            BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_OCCUPIED
         )
         trend_down = self.area.simply_magic_entity_id(
-            BINARY_SENSOR_DOMAIN, "humidity_empty"
+            BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_EMPTY
         )
         if (
             self.hass.states.get(trend_up) is not None
@@ -160,9 +160,11 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass,
-                self.area.simply_magic_entity_id(
-                    SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
-                ),
+                [
+                    self.area.simply_magic_entity_id(
+                        SWITCH_DOMAIN, EntityNames.SYSTEM_CONTROL
+                    )
+                ],
                 self._group_entity_state_change,
             )
         )
@@ -253,7 +255,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
     def get_current_area_state(self) -> AreaState:
         """Get the current state for the area based on the various entities and controls."""
         # If it is in manual mode, set the state to manual.
-        if not self.area.is_control_enabled(ControlType.Light):
+        if not self.area.is_control_enabled(ControlType.System):
             return AreaState.AREA_STATE_MANUAL
 
         # Get Main occupancy state
@@ -354,7 +356,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         to_state: str = str(event.data["new_state"].state)
         entity_id: str = str(event.data["entity_id"])
 
-        _LOGGER.debug(
+        _LOGGER.warning(
             "%s: Secondary state change: entity '%s' changed to %s",
             self.area.name,
             entity_id,

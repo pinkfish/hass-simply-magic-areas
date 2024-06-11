@@ -21,6 +21,7 @@ from homeassistant.const import (
     ATTR_UNIT_OF_MEASUREMENT,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
 
@@ -55,10 +56,7 @@ async def async_setup_entry(
             e[ATTR_ENTITY_ID] for e in area.entities[DOMAIN + SENSOR_DOMAIN]
         ]
 
-    aggregates: list[AreaSensorGroupSensor] = []
-
-    # Create the basic state sensor.
-    aggregates.append(AreaStateSensor(area))
+    aggregates: list[Entity] = []
 
     # Check SENSOR_DOMAIN entities, count by device_class
     if area.has_entities(SENSOR_DOMAIN):
@@ -67,14 +65,16 @@ async def async_setup_entry(
         for entity in area.entities[SENSOR_DOMAIN]:
             if ATTR_DEVICE_CLASS not in entity:
                 _LOGGER.debug(
-                    "Entity %s does not have device_class defined",
+                    "%s: Entity %s does not have device_class defined",
+                    area.name,
                     entity[ATTR_ENTITY_ID],
                 )
                 continue
 
             if ATTR_UNIT_OF_MEASUREMENT not in entity:
                 _LOGGER.debug(
-                    "Entity %s does not have unit_of_measurement defined",
+                    "%s: Entity %s does not have unit_of_measurement defined",
+                    area.name,
                     entity[ATTR_ENTITY_ID],
                 )
                 continue
@@ -99,10 +99,10 @@ async def async_setup_entry(
                     continue
 
             _LOGGER.debug(
-                "Creating aggregate sensor for device_class '%s' with %d entities (%s)",
+                "%s: reating aggregate sensor for device_class '%s' with %d entities ",
+                area.slug,
                 device_class,
                 len(entities),
-                area.slug,
             )
             aggregates.append(
                 AreaSensorGroupSensor(
@@ -111,6 +111,14 @@ async def async_setup_entry(
                     entity_ids=entities,
                 )
             )
+
+    # Create the basic state sensor.
+    _LOGGER.debug(
+        "%s: Creating state sensor",
+        area.slug,
+    )
+
+    aggregates.append(AreaStateSensor(area))
 
     _cleanup_sensor_entities(
         area.hass, [a.entity_id for a in aggregates], existing_sensor_entities

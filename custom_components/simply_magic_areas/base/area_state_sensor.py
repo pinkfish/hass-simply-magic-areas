@@ -77,6 +77,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Call to add the system to hass."""
+        _LOGGER.info("%s: added to hass", self.area.name)
         await super().async_added_to_hass()
         await self._restore_state()
         await self._load_attributes()
@@ -111,6 +112,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self.area.state = AreaState(last_state.state)
             self._attr_native_value = last_state.state
             self._attr_extra_state_attributes = dict(last_state.attributes)  # type: ignore  # noqa: PGH003
+        self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
 
     async def _setup_listeners(self) -> None:
         _LOGGER.debug("%s: Called '_setup_listeners'", self.name)  # type: ignore  # noqa: PGH003
@@ -323,6 +325,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         new_state = self.get_current_area_state()
 
         if last_state == new_state:
+            self._update_attributes()
             return
 
         # Calculate what's new
@@ -384,6 +387,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self._remove_clear_timeout()
 
         _LOGGER.debug("%s: Scheduling clear in %s seconds", self.area.name, timeout)  # type: ignore  # noqa: PGH003
+        self._attr_extra_state_attributes["clear"] = True
         self._clear_timeout_callback = call_later(
             self.hass,
             timeout,
@@ -403,6 +407,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self.area.name,
         )
 
+        self._attr_extra_state_attributes["clear"] = False
         self._clear_timeout_callback()
         self._clear_timeout_callback = None
 
@@ -424,6 +429,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self._remove_extended_timeout()
 
         _LOGGER.debug("%s: Scheduling extended in %s seconds", self.area.name, timeout)  # type: ignore  # noqa: PGH003
+        self._attr_extra_state_attributes["extended"] = True
         self._extended_timeout_callback = call_later(
             self.hass,
             timeout,
@@ -434,6 +440,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         if not self._extended_timeout_callback:
             return
 
+        self._attr_extra_state_attributes["extended"] = False
         self._extended_timeout_callback()
         self._extended_timeout_callback = None
 
@@ -605,13 +612,14 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             )
         )
         if trend_up is not None and trend_down is not None:
-            up_state = trend_up.state or self._attr_extra_state_attributes.ge(
-                ATTR_HUMIDITY_ON, False
+            up_state = (
+                trend_up.state == STATE_ON
+                or self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
             )
-            if up_state == STATE_ON:
+            if up_state:
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = True
-            if up_state == STATE_ON and trend_down.state != STATE_ON:
-                active_sensors.append(trend_up.entity_id)
+                if trend_down.state != STATE_ON:
+                    active_sensors.append(trend_up.entity_id)
             # Make the last off time stay until this is not on any more.
             if trend_down.state == STATE_ON:
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False

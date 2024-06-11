@@ -4,11 +4,11 @@ from collections.abc import Generator, Iterable
 import inspect
 import logging
 from typing import Any
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_registry import async_get as async_get_er
-from homeassistant.helpers.entity import Entity
 
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.area_registry import AreaEntry
+from homeassistant.helpers.entity import Entity
+from homeassistant.helpers.entity_registry import async_get as async_get_er
 from homeassistant.util import slugify
 
 basestring = (str, bytes)

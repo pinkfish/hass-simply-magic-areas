@@ -1,5 +1,6 @@
 """Select control for magic areas, tracks the state as an enum."""
 
+import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 import logging
@@ -14,6 +15,7 @@ from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.const import ATTR_DEVICE_CLASS, ATTR_ENTITY_ID, STATE_ON
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers.event import (
+    async_call_later,
     async_track_state_change_event,
     async_track_time_interval,
     call_later,
@@ -359,7 +361,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         to_state: str = str(event.data["new_state"].state)
         entity_id: str = str(event.data["entity_id"])
 
-        _LOGGER.warning(
+        _LOGGER.debug(
             "%s: Secondary state change: entity '%s' changed to %s",
             self.area.name,
             entity_id,
@@ -394,10 +396,6 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self._update_state,
         )
 
-    async def _async_my_update_state(self):
-        if self.hass.is_running and not self.hass.loop.is_closed():
-            self.hass.loop.call_soon_threadsafe(self._update_state)  # type: ignore  # noqa: PGH003
-
     def _remove_clear_timeout(self) -> None:
         if not self._clear_timeout_callback:
             return
@@ -428,7 +426,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         if self._extended_timeout_callback:
             self._remove_extended_timeout()
 
-        _LOGGER.debug("%s: Scheduling extended in %s seconds", self.area.name, timeout)  # type: ignore  # noqa: PGH003
+        _LOGGER.info("%s: Scheduling extended in %s seconds", self.area.name, timeout)  # type: ignore  # noqa: PGH003
         self._attr_extra_state_attributes["extended"] = True
         self._extended_timeout_callback = call_later(
             self.hass,
@@ -448,38 +446,6 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         return self._extended_timeout_callback is not None
 
     #### Sensor controls.
-
-    def _clear_timeout_exceeded(self) -> bool:
-        if self.area.state == AreaState.AREA_STATE_CLEAR:
-            return False
-
-        clear_delta = timedelta(seconds=self._get_clear_timeout())
-
-        clear_time: datetime = self._last_off_time + clear_delta
-        time_now: datetime = datetime.now(UTC)
-
-        if time_now >= clear_time:
-            _LOGGER.debug("%s: Clear Timeout exceeded", self.area.name)
-            self._remove_clear_timeout()
-            return True
-
-        return False
-
-    def _extended_timeout_exceeded(self) -> bool:
-        if self.area.state == AreaState.AREA_STATE_CLEAR:
-            return False
-
-        extended_delta = timedelta(seconds=self._get_extended_timeout())
-
-        extended_time = self._last_off_time + extended_delta
-        time_now = datetime.now(UTC)
-
-        if time_now >= extended_time:
-            _LOGGER.debug("%s: Extended Timeout exceeded", self.area.name)
-            self._remove_extended_timeout()
-            return True
-
-        return False
 
     def _humidity_sensor_change(self, event: Event[EventStateChangedData]) -> None:
         if event.data["new_state"] is None:

@@ -1,16 +1,24 @@
 """Fake light for testing with."""
 
+from collections.abc import Awaitable, Callable
+from datetime import datetime
 from functools import cached_property
 import logging
-from typing import Any, Final, final
+from typing import Any, Final, Literal
 from unittest.mock import AsyncMock
 
-from homeassistant import loader
-from homeassistant.components.binary_sensor import BinarySensorEntity
+import voluptuous as vol
+
+from homeassistant import data_entry_flow, loader
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 from homeassistant.components.fan import FanEntity
 from homeassistant.components.light import ColorMode, LightEntity
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     STATE_CLOSED,
     STATE_CLOSING,
@@ -19,8 +27,11 @@ from homeassistant.const import (
     STATE_OPEN,
     STATE_OPENING,
 )
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceEntry, DeviceInfo
 from homeassistant.helpers.entity import Entity, EntityCategory, ToggleEntity
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,82 +58,82 @@ class MockEntity(Entity):
         if "entity_id" in values:
             self.entity_id = values["entity_id"]
 
-    @property
+    @cached_property
     def available(self) -> bool:
         """Return True if entity is available."""
         return self._handle("available")
 
     @property
-    def capability_attributes(self) -> dict[str, Any] | None:
+    def capability_attributes(self) -> dict[str, Any] | None:  # type: ignore
         """Info about capabilities."""
         return self._handle("capability_attributes")
 
-    @property
+    @cached_property
     def device_class(self) -> str | None:
         """Info how device should be classified."""
         return self._handle("device_class")
 
-    @property
+    @cached_property
     def device_info(self) -> DeviceInfo | None:
         """Info how it links to a device."""
         return self._handle("device_info")
 
-    @property
+    @cached_property
     def entity_category(self) -> EntityCategory | None:
         """Return the entity category."""
         return self._handle("entity_category")
 
-    @property
+    @cached_property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return entity specific state attributes."""
         return self._handle("extra_state_attributes")
 
-    @property
+    @cached_property
     def has_entity_name(self) -> bool:
         """Return the has_entity_name name flag."""
         return self._handle("has_entity_name")
 
-    @property
+    @cached_property
     def entity_registry_enabled_default(self) -> bool:
         """Return if the entity should be enabled when first added to the entity registry."""
         return self._handle("entity_registry_enabled_default")
 
-    @property
+    @cached_property
     def entity_registry_visible_default(self) -> bool:
         """Return if the entity should be visible when first added to the entity registry."""
         return self._handle("entity_registry_visible_default")
 
-    @property
+    @cached_property
     def icon(self) -> str | None:
         """Return the suggested icon."""
         return self._handle("icon")
 
-    @property
+    @cached_property
     def name(self) -> str | None:
         """Return the name of the entity."""
         return self._handle("name")
 
-    @property
+    @cached_property
     def should_poll(self) -> bool:
         """Return the ste of the polling."""
         return self._handle("should_poll")
 
-    @property
+    @cached_property
     def supported_features(self) -> int | None:
         """Info about supported features."""
         return self._handle("supported_features")
 
-    @property
+    @cached_property
     def translation_key(self) -> str | None:
         """Return the translation key."""
         return self._handle("translation_key")
 
-    @property
+    @cached_property
     def unique_id(self) -> str | None:
         """Return the unique ID of the entity."""
         return self._handle("unique_id")
 
-    @property
+    @cached_property
     def unit_of_measurement(self) -> str | None:
         """Info on the units the entity state is in."""
         return self._handle("unit_of_measurement")
@@ -134,131 +145,34 @@ class MockEntity(Entity):
         return getattr(super(), attr)
 
 
-class MockToggleEntity(MockEntity, ToggleEntity):
-    """Provide a mock toggle device."""
-
-    def __init__(self, name: str, state: str, unique_id: str | None = None) -> None:
-        """Initialize the mock entity."""
-        MockEntity.__init__(self)
-        ToggleEntity.__init__(self, name, state, unique_id)
-        self._name = name or DEVICE_DEFAULT_NAME
-        self._state = state
-        self.calls = []
-
-    @property
-    def name(self):
-        """Return the name of the entity if any."""
-        self.calls.append(("name", {}))
-        return self._name
-
-    @property
-    def state(self):
-        """Return the state of the entity if any."""
-        self.calls.append(("state", {}))
-        return self._state
-
-    @property
-    def is_on(self):
-        """Return true if entity is on."""
-        self.calls.append(("is_on", {}))
-        return self._state == STATE_ON
-
-    def turn_on(self, **kwargs):
-        """Turn the entity on."""
-        self.calls.append(("turn_on", kwargs))
-        self._state = STATE_ON
-
-    def turn_off(self, **kwargs):
-        """Turn the entity off."""
-        self.calls.append(("turn_off", kwargs))
-        self._state = STATE_OFF
-
-    def last_call(self, method=None):
-        """Return the last call."""
-        if not self.calls:
-            return None
-        if method is None:
-            return self.calls[-1]
-        try:
-            return next(call for call in reversed(self.calls) if call[0] == method)
-        except StopIteration:
-            return None
-
-
-class MockLight(MockToggleEntity, LightEntity):
-    """Mock light class."""
-
-    _attr_max_color_temp_kelvin = 6500
-    _attr_min_color_temp_kelvin = 2000
-    supported_features = 0
-
-    brightness: int | None = None
-    color_temp_kelvin = None
-    hs_color = None
-    rgb_color = None
-    rgbw_color = None
-    rgbww_color = None
-    xy_color = None
-
-    def __init__(
-        self,
-        name: str,
-        state: str,
-        unique_id: str | None = None,
-        dimmable: bool | None = None,
-    ) -> None:
-        """Initialize the mock light."""
-        super().__init__(name, state, unique_id)
-        if dimmable:
-            self.color_mode = ColorMode.RGBWW
-            self.hs_color = "Invalid"  # Should be ignored
-            self.rgb_color = "Invalid"  # Should be ignored
-            self.rgbw_color = "Invalid"  # Should be ignored
-            self.rgbww_color = (1, 2, 3, 4, 5)
-            self.xy_color = "Invalid"  # Should be ignored
-            self.brightness = 255
-        else:
-            self.color_mode = {ColorMode.ONOFF}
-
-    def turn_on(self, **kwargs):
-        """Turn the entity on."""
-        super().turn_on(**kwargs)
-        for key, value in kwargs.items():
-            if key in [
-                "brightness",
-                "hs_color",
-                "xy_color",
-                "rgb_color",
-                "rgbw_color",
-                "rgbww_color",
-                "color_temp_kelvin",
-            ]:
-                setattr(self, key, value)
-            if key == "white":
-                setattr(self, "brightness", value)
-            if key in TURN_ON_ARG_TO_COLOR_MODE:
-                self._attr_color_mode = TURN_ON_ARG_TO_COLOR_MODE[key]
-
-
 class MockModule:
     """Representation of a fake module."""
 
     def __init__(
         self,
-        domain=None,
-        dependencies=None,
-        setup=None,
-        requirements=None,
-        config_schema=None,
-        platform_schema=None,
-        platform_schema_base=None,
-        async_setup=None,
-        async_setup_entry=None,
-        async_unload_entry=None,
-        async_migrate_entry=None,
-        async_remove_entry=None,
-        partial_manifest=None,
-        async_remove_config_entry_device=None,
+        domain: str,
+        dependencies: list[str] | None = None,
+        setup: Callable[[], data_entry_flow.FlowHandler] | None = None,
+        requirements: list[str] | None = None,
+        config_schema: vol.Schema | None = None,
+        platform_schema: vol.Schema | None = None,
+        platform_schema_base: vol.Schema | None = None,
+        async_setup: Callable[[], Awaitable[data_entry_flow.FlowHandler]] | None = None,
+        async_setup_entry: Callable[
+            [HomeAssistant, ConfigEntry, AddEntitiesCallback], Awaitable[None]
+        ]
+        | None = None,
+        async_unload_entry: Callable[[HomeAssistant, ConfigEntry], Awaitable[bool]]
+        | None = None,
+        async_migrate_entry: Callable[[HomeAssistant, ConfigEntry], Awaitable[bool]]
+        | None = None,
+        async_remove_entry: Callable[[HomeAssistant, ConfigEntry], Awaitable[bool]]
+        | None = None,
+        partial_manifest: dict[str, str] | None = None,
+        async_remove_config_entry_device: Callable[
+            [HomeAssistant, ConfigEntry, DeviceEntry], Awaitable[bool]
+        ]
+        | None = None,
     ) -> None:
         """Initialize the mock module."""
         self.__name__ = f"homeassistant.components.{domain}"
@@ -280,7 +194,7 @@ class MockModule:
 
         if setup:
             # We run this in executor, wrap it in function
-            self.setup = lambda *args: setup(*args)
+            self.setup: Callable[[], data_entry_flow.FlowHandler] = lambda: setup()
 
         if async_setup is not None:
             self.async_setup = async_setup
@@ -319,12 +233,23 @@ class MockPlatform:
 
     def __init__(
         self,
-        setup_platform=None,
-        dependencies=None,
-        platform_schema=None,
-        async_setup_platform=None,
-        async_setup_entry=None,
-        scan_interval=None,
+        setup_platform: Callable[
+            [HomeAssistant, ConfigType, AddEntitiesCallback, DiscoveryInfoType | None],
+            None,
+        ]
+        | None = None,
+        dependencies: list[str] | None = None,
+        platform_schema: vol.Schema | None = None,
+        async_setup_platform: Callable[
+            [HomeAssistant, ConfigType, AddEntitiesCallback, DiscoveryInfoType | None],
+            Awaitable[None],
+        ]
+        | None = None,
+        async_setup_entry: Callable[
+            [HomeAssistant, ConfigEntry, AddEntitiesCallback], Awaitable[None]
+        ]
+        | None = None,
+        scan_interval: int | None = None,
     ) -> None:
         """Initialize the platform."""
         self.DEPENDENCIES = dependencies or []
@@ -337,7 +262,7 @@ class MockPlatform:
 
         if setup_platform is not None:
             # We run this in executor, wrap it in function
-            self.setup_platform = lambda *args: setup_platform(*args)
+            self.setup_platform = setup_platform
 
         if async_setup_platform is not None:
             self.async_setup_platform = async_setup_platform
@@ -349,28 +274,126 @@ class MockPlatform:
             self.async_setup_platform = AsyncMock(return_value=None)
 
 
+class MockToggleEntity(MockEntity, ToggleEntity):
+    """Provide a mock toggle device."""
+
+    def __init__(self, name: str, state: str, unique_id: str | None = None) -> None:
+        """Initialize the mock entity."""
+        MockEntity.__init__(self)
+        ToggleEntity.__init__(self)
+        self._name = name or DEVICE_DEFAULT_NAME
+        self._state = state
+        self._attr_unique_id = unique_id
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    @cached_property
+    def name(self) -> str:
+        """Return the name of the entity if any."""
+        self.calls.append(("name", {}))
+        return self._name
+
+    @property
+    def state(self) -> Literal["on", "off"] | None:  # type: ignore  # noqa: PGH003
+        """Return the state of the entity if any."""
+        self.calls.append(("state", {}))
+        return self._state  # type: ignore  # noqa: PGH003
+
+    @property
+    def is_on(self) -> bool:  # type: ignore  # noqa: PGH003
+        """Return true if entity is on."""
+        self.calls.append(("is_on", {}))
+        return self._state == STATE_ON
+
+    def turn_on(self, **kwargs: Any) -> None:
+        """Turn the entity on."""
+        self.calls.append(("turn_on", kwargs))
+        self._state = STATE_ON
+
+    def turn_off(self, **kwargs: Any) -> None:
+        """Turn the entity off."""
+        self.calls.append(("turn_off", kwargs))
+        self._state = STATE_OFF
+
+    def last_call(self, method: str | None = None) -> tuple[str, dict[str, Any]] | None:
+        """Return the last call."""
+        if not self.calls:
+            return None
+        if method is None:
+            return self.calls[-1]
+        try:
+            return next(call for call in reversed(self.calls) if call[0] == method)
+        except StopIteration:
+            return None
+
+
+class MockLight(MockToggleEntity, LightEntity):
+    """Mock light class."""
+
+    _attr_max_color_temp_kelvin = 6500
+    _attr_min_color_temp_kelvin = 2000
+
+    def __init__(
+        self,
+        name: str,
+        state: str,
+        unique_id: str | None = None,
+        dimmable: bool | None = None,
+    ) -> None:
+        """Initialize the mock light."""
+        super().__init__(name, state, unique_id)
+        if dimmable:
+            self.color_mode = ColorMode.RGBWW
+            self.hs_color = None  # Should be ignored
+            self.rgb_color = None  # Should be ignored
+            self.rgbw_color = None  # Should be ignored
+            self.rgbww_color = (1, 2, 3, 4, 5)
+            self.xy_color = None  # Should be ignored
+            self.brightness = 255
+        else:
+            self.color_mode = ColorMode.ONOFF
+
+    def turn_on(self, **kwargs: Any) -> None:
+        """Turn the entity on."""
+        super().turn_on(**kwargs)
+        for key, value in kwargs.items():
+            if key in [
+                "brightness",
+                "hs_color",
+                "xy_color",
+                "rgb_color",
+                "rgbw_color",
+                "rgbww_color",
+                "color_temp_kelvin",
+            ]:
+                setattr(self, key, value)
+            if key == "white":
+                setattr(self, "brightness", value)
+            if key in TURN_ON_ARG_TO_COLOR_MODE:
+                self._attr_color_mode = TURN_ON_ARG_TO_COLOR_MODE[key]
+
+
 class MockBinarySensor(MockEntity, BinarySensorEntity):
     """Mock Binary Sensor class."""
 
     _state = STATE_OFF
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool:  # type: ignore  # noqa: PGH003
         """Return true if the binary sensor is on."""
         return self._state == STATE_ON
 
-    def turn_on(self, **kwargs):
+    def turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""
         self._state = STATE_ON
         self.schedule_update_ha_state()
 
-    def turn_off(self, **kwargs):
+    def turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
         self._state = STATE_OFF
         self.schedule_update_ha_state()
 
-    @property
-    def device_class(self):
+    @cached_property
+    def device_class(self) -> BinarySensorDeviceClass:
         """Return the class of this sensor."""
         return self._handle("device_class")
 
@@ -381,16 +404,16 @@ class MockFan(MockEntity, FanEntity):
     _state = STATE_OFF
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool:
         """Return true if the binary sensor is on."""
         return self._state == STATE_ON
 
-    def turn_on(self, **kwargs):
+    def turn_on(self, **kwargs: Any) -> None:
         """Turn the entity on."""
         self._state = STATE_ON
         self.schedule_update_ha_state()
 
-    def turn_off(self, **kwargs):
+    def turn_off(self, **kwargs: Any) -> None:
         """Turn the entity off."""
         self._state = STATE_OFF
         self.schedule_update_ha_state()
@@ -399,43 +422,43 @@ class MockFan(MockEntity, FanEntity):
 class MockSensor(MockEntity, SensorEntity):
     """Mock Sensor class."""
 
-    @property
-    def device_class(self):
+    @cached_property
+    def device_class(self) -> SensorDeviceClass:
         """Return the class of this sensor."""
         return self._handle("device_class")
 
-    @property
-    def last_reset(self):
+    @cached_property
+    def last_reset(self) -> datetime:
         """Return the last_reset of this sensor."""
         return self._handle("last_reset")
 
-    @property
-    def suggested_display_precision(self):
+    @cached_property
+    def suggested_display_precision(self) -> int:
         """Return the number of digits after the decimal point."""
         return self._handle("suggested_display_precision")
 
-    @property
-    def native_unit_of_measurement(self):
+    @cached_property
+    def native_unit_of_measurement(self) -> str:
         """Return the native unit_of_measurement of this sensor."""
         return self._handle("native_unit_of_measurement")
 
-    @property
-    def native_value(self):
+    @cached_property
+    def native_value(self) -> Any:
         """Return the native value of this sensor."""
         return self._handle("native_value")
 
-    @property
-    def options(self):
+    @cached_property
+    def options(self) -> list[str]:
         """Return the options for this sensor."""
         return self._handle("options")
 
-    @property
-    def state_class(self):
+    @cached_property
+    def state_class(self) -> str:
         """Return the state class of this sensor."""
         return self._handle("state_class")
 
-    @property
-    def suggested_unit_of_measurement(self):
+    @cached_property
+    def suggested_unit_of_measurement(self) -> str:
         """Return the state class of this sensor."""
         return self._handle("suggested_unit_of_measurement")
 
@@ -449,45 +472,54 @@ class MockSensor(MockEntity, SensorEntity):
 class MockCover(MockEntity, CoverEntity):
     """Mock Cover class."""
 
+    _reports_opening_closing = False
+
     @property
-    def is_closed(self):
+    def supported_features(self) -> CoverEntityFeature:  # type: ignore  # noqa: PGH003
+        """Return the supported features of the cover."""
+        if "supported_feautes" in self._values:
+            return self._values["supported_features"]
+        return CoverEntity.supported_features.fget(self)  # type: ignore  # noqa: PGH003
+
+    @cached_property
+    def is_closed(self) -> bool:
         """Return if the cover is closed or not."""
         if "state" in self._values and self._values["state"] == STATE_CLOSED:
             return True
 
         return self.current_cover_position == 0
 
-    @property
-    def is_opening(self):
+    @cached_property
+    def is_opening(self) -> bool:
         """Return if the cover is opening or not."""
         if "state" in self._values:
             return self._values["state"] == STATE_OPENING
 
         return False
 
-    @property
-    def is_closing(self):
+    @cached_property
+    def is_closing(self) -> bool:
         """Return if the cover is closing or not."""
         if "state" in self._values:
             return self._values["state"] == STATE_CLOSING
 
         return False
 
-    def open_cover(self, **kwargs) -> None:
+    def open_cover(self, **kwargs: Any) -> None:
         """Open cover."""
         if self._reports_opening_closing:
             self._values["state"] = STATE_OPENING
         else:
             self._values["state"] = STATE_OPEN
 
-    def close_cover(self, **kwargs) -> None:
+    def close_cover(self, **kwargs: Any) -> None:
         """Close cover."""
         if self._reports_opening_closing:
             self._values["state"] = STATE_CLOSING
         else:
             self._values["state"] = STATE_CLOSED
 
-    def stop_cover(self, **kwargs) -> None:
+    def stop_cover(self, **kwargs: Any) -> None:
         """Stop cover."""
         assert CoverEntityFeature.STOP in self.supported_features
         self._values["state"] = STATE_CLOSED if self.is_closed else STATE_OPEN

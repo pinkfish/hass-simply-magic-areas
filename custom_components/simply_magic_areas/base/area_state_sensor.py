@@ -322,6 +322,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         return new_state
 
+    @callback
     def _update_state(self, extra: datetime) -> None:
         last_state = self.area.state
         new_state = self.get_current_area_state()
@@ -377,9 +378,13 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             )
             return None
 
-        self._update_state(datetime.now(UTC))
+        self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
 
     ###       Clearing
+
+    async def _async_update_state(self, timeout: int) -> None:
+        await asyncio.sleep(timeout)
+        self._update_state()
 
     def _get_clear_timeout(self) -> int:
         return int(self.area.config.get(CONF_CLEAR_TIMEOUT, 60))
@@ -390,7 +395,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         _LOGGER.debug("%s: Scheduling clear in %s seconds", self.area.name, timeout)  # type: ignore  # noqa: PGH003
         self._attr_extra_state_attributes["clear"] = True
-        self._clear_timeout_callback = call_later(
+        self._clear_timeout_callback = async_call_later(
             self.hass,
             timeout,
             self._update_state,
@@ -428,7 +433,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         _LOGGER.info("%s: Scheduling extended in %s seconds", self.area.name, timeout)  # type: ignore  # noqa: PGH003
         self._attr_extra_state_attributes["extended"] = True
-        self._extended_timeout_callback = call_later(
+        self._extended_timeout_callback = async_call_later(
             self.hass,
             timeout,
             self._update_state,
@@ -460,7 +465,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 to_state,
             )
             return
-        self._update_state(datetime.now(UTC))
+        self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
 
     def _sensor_state_change(self, event: Event[EventStateChangedData]) -> None:
         """Actions when the sensor state has changed."""
@@ -497,7 +502,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             # Clear the timeout
             self._remove_clear_timeout()
 
-        self._update_state(datetime.now(UTC))
+        self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
 
     def _get_sensors_state(self) -> bool:
         """Get the current state of the sensor."""

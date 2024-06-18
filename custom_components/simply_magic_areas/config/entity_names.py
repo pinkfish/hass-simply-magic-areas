@@ -17,3 +17,4 @@ class EntityNames(StrEnum):
     ILLUMINANCE = "illuminance"
     HUMIDITY = "humidity"
     MEDIA_PLAYER = "media"
+    HUMIDITY_STATISTICS = "humidity_statistics"

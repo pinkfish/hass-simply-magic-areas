@@ -103,7 +103,11 @@ async def async_setup_entry(
 
         # Setup platforms
         for platform in magic_area.available_platforms():
-            _LOGGER.debug("Area %s: Loading platform '%s'", magic_area.name, platform)
+            _LOGGER.info(
+                "Area %s: Loading platform '%s'",
+                magic_area.name,
+                platform,
+            )
             hass.async_create_task(
                 hass.config_entries.async_forward_entry_setup(config_entry, platform)
             )

@@ -140,11 +140,15 @@ async def test_fan_on_off_humidity(
     area_humidity_empty = hass.states.get(
         f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
     )
+    statistics_humidity_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+    )
 
     calls = async_mock_service(hass, FAN_DOMAIN, "turn_on")
 
     assert control_entity is not None
     assert area_binary_sensor is not None
+    assert statistics_humidity_sensor is not None
     for fan in one_fan:
         assert not fan.is_on
     assert control_entity.state == STATE_ON

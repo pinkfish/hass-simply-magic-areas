@@ -1,5 +1,6 @@
 """Sensor controls for magic areas."""
 
+from datetime import timedelta
 import logging
 
 from homeassistant.components.group.sensor import (
@@ -14,13 +15,14 @@ from homeassistant.components.sensor import (
     UNIT_CONVERTERS,
     SensorDeviceClass,
 )
+from homeassistant.components.statistics.sensor import StatisticsSensor
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
     ATTR_UNIT_OF_MEASUREMENT,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
@@ -28,6 +30,7 @@ from homeassistant.helpers.entity_registry import async_get as async_get_er
 from .base.area_state_sensor import AreaStateSensor
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
+from .config.entity_names import EntityNames
 from .const import (
     AGGREGATE_MODE_SUM,
     CONF_AGGREGATES_MIN_ENTITIES,
@@ -36,6 +39,7 @@ from .const import (
     DOMAIN,
     MODULE_DATA,
 )
+from .util import cleanup_magic_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,7 +50,7 @@ async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
-):
+) -> None:
     """Set up the magic area sensor config entry."""
 
     area: MagicArea = hass.data[MODULE_DATA][config_entry.entry_id][DATA_AREA_OBJECT]
@@ -112,30 +116,34 @@ async def async_setup_entry(
                 )
             )
 
-    # Create the basic state sensor.
+    if (
+        len(
+            [
+                entity[ATTR_ENTITY_ID]
+                for entity in area.entities.get(SENSOR_DOMAIN, [])
+                if entity.get(ATTR_DEVICE_CLASS, "") == SensorDeviceClass.HUMIDITY
+                and ATTR_UNIT_OF_MEASUREMENT in entity
+            ]
+        )
+        > 0
+    ):
+        # Create the humidity stats sensor.
+        _LOGGER.debug(
+            "%s: Creating humidity stats sensor",
+            area.slug,
+        )
+        aggregates.append(MagicStatisticsSensor(area))
+
+    # Make the basic area state sensor.
     _LOGGER.debug(
-        "%s: Creating state sensor",
+        "%s: Creating basic area sensor",
         area.slug,
     )
-
     aggregates.append(AreaStateSensor(area))
 
-    _cleanup_sensor_entities(
-        area.hass, [a.entity_id for a in aggregates], existing_sensor_entities
-    )
+    cleanup_magic_entities(area.hass, aggregates, existing_sensor_entities)
 
     async_add_entities(aggregates)
-
-
-def _cleanup_sensor_entities(
-    hass: HomeAssistant, new_ids: list[str], old_ids: list[str]
-) -> None:
-    entity_registry = async_get_er(hass)
-    for ent_id in old_ids:
-        if ent_id in new_ids:
-            continue
-        _LOGGER.warning("Deleting old entity %s", ent_id)
-        entity_registry.async_remove(ent_id)
 
 
 class AreaSensorGroupSensor(MagicEntity, SensorGroup):
@@ -171,3 +179,36 @@ class AreaSensorGroupSensor(MagicEntity, SensorGroup):
             ),
         )
         delattr(self, "_attr_name")
+
+
+class MagicStatisticsSensor(MagicEntity, StatisticsSensor):
+    """Statistics sensor to track the change in the humidity."""
+
+    def __init__(self, area: MagicArea) -> None:
+        """Create the sensor to track the change in humidity."""
+        StatisticsSensor.__init__(
+            self,
+            source_entity_id=area.simply_magic_entity_id(
+                SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
+            ),
+            name="",
+            unique_id=None,
+            state_characteristic="change_second",
+            samples_max_buffer_size=5,
+            samples_max_age=timedelta(minutes=5),
+            samples_keep_last=True,
+            precision=2,
+            percentile=50,
+        )
+        MagicEntity.__init__(
+            self,
+            area=area,
+            domain=SENSOR_DOMAIN,
+            translation_key=EntityNames.HUMIDITY_STATISTICS,
+        )
+        delattr(self, "_attr_name")
+        self.async_on_remove(self._cleanup_timers)
+
+    @callback
+    def _cleanup_timers(self) -> None:
+        self._async_cancel_update_listener()

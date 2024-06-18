@@ -1,6 +1,6 @@
 """Sensor controls for magic areas."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 
 from homeassistant.components.group.sensor import (
@@ -25,7 +25,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity_registry import async_get as async_get_er
+from homeassistant.helpers.event import async_track_utc_time_change
 
 from .base.area_state_sensor import AreaStateSensor
 from .base.entities import MagicEntity
@@ -208,7 +208,18 @@ class MagicStatisticsSensor(MagicEntity, StatisticsSensor):
         )
         delattr(self, "_attr_name")
         self.async_on_remove(self._cleanup_timers)
+        self._update_periodically = async_track_utc_time_change(
+            area.hass, self._update_state, hour="*", minute="*", second="0"
+        )
+
+    @callback
+    async def _update_state(self, d: datetime):
+        entity = self.hass.states.get(self._source_entity_id)
+        if entity and entity.state:
+            self._add_state_to_queue(entity)
+        await self.async_update()
 
     @callback
     def _cleanup_timers(self) -> None:
         self._async_cancel_update_listener()
+        self._update_periodically()

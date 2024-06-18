@@ -18,7 +18,6 @@ from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
     async_track_time_interval,
-    call_later,
 )
 
 from ..config.area_state import AreaState

@@ -149,6 +149,9 @@
           "accented": "Accented",
           "manual": "Manual"
         }
+      },
+      "humidity_statistics": {
+        "name": "{area_name} Humidity Trend (Simply Magic Areas)"
       }
     },
     "switch": {

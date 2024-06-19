@@ -74,6 +74,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self._clear_timeout_callback: Callable[[], None] | None = None
         self._extended_timeout_callback: Callable[[], None] | None = None
         self._sensors: list[str] = []
+        self._mqqt_room_sensors: list[str] = []
         self._mode: str = "one"
 
     async def async_added_to_hass(self) -> None:
@@ -125,6 +126,13 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass, self._sensors, self._sensor_state_change
+            )
+        )
+
+        # Track room presence.
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, self._mqqt_room_sensors, self._group_entity_state_change
             )
         )
 
@@ -196,6 +204,13 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         ).get(CONF_PRESENCE_DEVICE_PLATFORMS, DEFAULT_PRESENCE_DEVICE_PLATFORMS)
 
         for component, entities in self.area.entities.items():
+            if component == "mqtt_room" + SENSOR_DOMAIN:
+                # Handle the mqtt_room entities
+                self._mqqt_room_sensors.extend(
+                    [entity[ATTR_ENTITY_ID] for entity in entities]
+                )
+                continue
+
             if component not in valid_presence_platforms:
                 continue
 
@@ -567,6 +582,20 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                     "[%s] Error getting entity state for '%s': %s",
                     self.area.slug,
                     sensor,
+                    str(e),
+                )
+
+        # Track the mqtt room stuff.
+        for mqtt_room_sensor in self._mqqt_room_sensors:
+            try:
+                entity = self.hass.states.get(mqtt_room_sensor)
+                if entity and entity.state == self.area.name.lower():
+                    active_sensors.append(mqtt_room_sensor)
+            except Exception as e:  # noqa: BLE001
+                _LOGGER.error(  # type: ignore  # noqa: PGH003
+                    "[%s] Error getting entity state for '%s': %s",
+                    self.area.slug,
+                    mqtt_room_sensor,
                     str(e),
                 )
 

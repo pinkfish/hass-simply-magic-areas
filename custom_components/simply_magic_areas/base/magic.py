@@ -240,7 +240,6 @@ class MagicArea(object):  # noqa: UP004
     async def _load_entities(self) -> None:
         """Load entities that belong to this area."""
         entity_list: list[str] = []
-        magic_area_entities: list[str] = []
         include_entities: list[str] = self.feature_config(
             CONF_FEATURE_ADVANCED_LIGHT_GROUPS
         ).get(CONF_INCLUDE_ENTITIES, [])
@@ -272,15 +271,21 @@ class MagicArea(object):  # noqa: UP004
             ]
         )
 
-        # Add magic are entities
-        entities_for_config_id = (
-            entity_registry.entities.get_entries_for_config_entry_id(
+        # Add magic area entities
+        magic_area_entities: list[str] = [
+            entity.entity_id
+            for entity in entity_registry.entities.get_entries_for_config_entry_id(
                 self.hass_config.entry_id
             )
-        )
-        magic_area_entities.extend(  # type: ignore  # noqa: PGH003
-            [entity.entity_id for entity in entities_for_config_id]
-        )
+        ]
+
+        # Add mqtt room items
+        mqtt_room_entities: list[str] = [
+            entity.entity_id
+            for entity in entity_registry.entities.get_entries_for_config_entry_id(
+                "mqtt_room"
+            )
+        ]
 
         _LOGGER.debug(  # type: ignore  # noqa: PGH003
             "Area ID - %s, Entities - %s",
@@ -293,6 +298,7 @@ class MagicArea(object):  # noqa: UP004
 
         self._load_entity_list("", entity_list)
         self._load_entity_list(DOMAIN, magic_area_entities)
+        self._load_entity_list("mqtt_room", mqtt_room_entities)
 
         _LOGGER.debug("%s: Loaded entities for area  %s", self.slug, self.entities)  # type: ignore  # noqa: PGH003
 

@@ -31,6 +31,7 @@ from ..const import (
     CONF_FAN_CONTROL,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_GROUP_CREATION,
+    CONF_FEATURE_HUMIDITY,
     CONF_INCLUDE_ENTITIES,
     CONF_LIGHT_CONTROL,
     CONF_TYPE,
@@ -183,7 +184,10 @@ class MagicArea(object):  # noqa: UP004
     def feature_config(self, feature: str) -> dict[str, Any]:
         """Get the feature config for the specified feature."""
         if not self.has_feature(feature):
-            if feature != CONF_FEATURE_ADVANCED_LIGHT_GROUPS:
+            if feature not in (
+                CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
+                CONF_FEATURE_HUMIDITY,
+            ):
                 _LOGGER.debug("%s: Feature %s not enabled", self.name, feature)  # type: ignore  # noqa: PGH003
             return {}
 

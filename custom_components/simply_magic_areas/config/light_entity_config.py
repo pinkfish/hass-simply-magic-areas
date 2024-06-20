@@ -97,7 +97,7 @@ class LightEntityConf:
             self.state_dim_level(): selector(self.number_selector()),
         }
 
-    def advanced_config_flow_schema(self) -> vol.Schema:
+    def advanced_config_flow_schema(self) -> dict[any, any]:
         """Return the options for the schema for the simply magic areas."""
         ret = {
             vol.Optional(self.advanced_lights_to_control(), default=[]): cv.entity_ids,

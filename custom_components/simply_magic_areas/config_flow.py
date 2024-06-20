@@ -37,9 +37,13 @@ from .const import (
     CONF_FEATURE_AREA_AWARE_MEDIA_PLAYER,
     CONF_FEATURE_CLIMATE_GROUPS,
     CONF_FEATURE_GROUP_CREATION,
+    CONF_FEATURE_HUMIDITY,
     CONF_FEATURE_LIST,
     CONF_FEATURE_LIST_GLOBAL,
     CONF_FEATURE_LIST_META,
+    CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
+    CONF_HUMIDITY_TREND_UP_CUT_OFF,
+    CONF_HUMIDITY_ZERO_WAIT_TIME,
     CONF_ICON,
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
@@ -69,6 +73,7 @@ from .const import (
     OPTIONS_CLIMATE_GROUP,
     OPTIONS_CLIMATE_GROUP_META,
     OPTIONS_GROUP_CREATION,
+    OPTIONS_HUMIDITY,
     REGULAR_AREA_SCHEMA,
 )
 from .util import get_meta_area_object
@@ -637,10 +642,31 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
             user_input=user_input,
         )
 
+    async def async_step_feature_conf_humidity(
+        self, user_input: dict[str, Any] | None = None
+    ):
+        """Configure the climate groups feature."""
+
+        return await self.do_feature_config(
+            name=CONF_FEATURE_HUMIDITY,
+            options=OPTIONS_HUMIDITY,
+            dynamic_validators={
+                CONF_HUMIDITY_TREND_UP_CUT_OFF: float,
+                CONF_HUMIDITY_TREND_DOWN_CUT_OFF: float,
+                CONF_HUMIDITY_ZERO_WAIT_TIME: int,
+            },
+            selectors={
+                CONF_HUMIDITY_TREND_UP_CUT_OFF: float,
+                CONF_HUMIDITY_TREND_DOWN_CUT_OFF: float,
+                CONF_HUMIDITY_ZERO_WAIT_TIME: int,
+            },
+            user_input=user_input,
+        )
+
     async def do_feature_config(
         self,
         name: str,
-        options: list[str, any, any],
+        options: list[str, Any, Any],
         dynamic_validators: dict[str, Any] | None = None,
         selectors: dict[str, Selector] | None = None,
         user_input: dict[str, Any] | None = None,

@@ -184,6 +184,19 @@ CONF_MAX_BRIGHTNESS_LEVEL, DEFAULT_MAX_BRIGHTNESS_LEVEL = ("max_brightness_level
 # Controlling the lights and the fan.
 CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL = ("light_control", True)
 CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL = ("fan_control", True)
+# Controls for the humidity stats sensor.
+CONF_HUMIDITY_TREND_DOWN_CUT_OFF, DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF = (
+    "humidity_down",
+    -0.015,
+)
+CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF = (
+    "humidity_up",
+    0.03,
+)
+CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME = (
+    "humidity_wait_s",
+    20 * 60,
+)
 
 # Setups to control all the lights, items to create
 clear_lights = LightEntityConf(
@@ -251,6 +264,7 @@ CONF_FEATURE_GROUP_CREATION = "group_creation"
 CONF_FEATURE_ADVANCED_LIGHT_GROUPS = "advanced_light_groups"
 CONF_FEATURE_AREA_AWARE_MEDIA_PLAYER = "area_aware_media_player"
 CONF_FEATURE_HEALTH = "health"
+CONF_FEATURE_HUMIDITY = "humidity"
 
 # Features of the group type
 CONF_MEDIA_PLAYER_GROUPS = "media_player_groups"
@@ -259,6 +273,7 @@ CONF_AGGREGATION = "aggregates"
 
 CONF_FEATURE_LIST_META = [
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
+    CONF_FEATURE_HUMIDITY,
     CONF_FEATURE_GROUP_CREATION,
     CONF_FEATURE_CLIMATE_GROUPS,
     CONF_FEATURE_HEALTH,
@@ -322,7 +337,6 @@ AGGREGATE_MODE_SUM = [
 ]
 
 # Config Schema
-
 GROUP_CREATION_FEATURE_SCHEMA = vol.Schema(
     {
         vol.Optional(
@@ -344,7 +358,25 @@ CLIMATE_GROUP_FEATURE_SCHEMA = vol.Schema(
     }
 )
 
-ADVANCED_LIGHT_GROUP_FEATURE_SCHEMA = vol.Schema(
+HUMIDITY_GROUP_FEATURE_SCHEMA = vol.Schema(
+    {
+        vol.Optional(
+            CONF_HUMIDITY_TREND_UP_CUT_OFF,
+            default=DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
+        ): float,
+        vol.Optional(
+            CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
+            default=DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
+        ): float,
+        vol.Optional(
+            CONF_HUMIDITY_ZERO_WAIT_TIME,
+            default=DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
+        ): int,
+    }
+)
+
+
+ADVANCED_LIGHT_GROUP_FEATURE_SCHEMA: vol.Schema = vol.Schema(
     {
         k: v
         for lg in ALL_LIGHT_ENTITIES
@@ -370,7 +402,7 @@ ADVANCED_LIGHT_GROUP_FEATURE_SCHEMA = vol.Schema(
 )
 
 
-AREA_AWARE_MEDIA_PLAYER_FEATURE_SCHEMA = vol.Schema(
+AREA_AWARE_MEDIA_PLAYER_FEATURE_SCHEMA: vol.Schema = vol.Schema(
     {
         vol.Optional(CONF_NOTIFICATION_DEVICES, default=[]): cv.entity_ids,
         vol.Optional(CONF_NOTIFY_STATES, default=DEFAULT_NOTIFY_STATES): cv.ensure_list,
@@ -379,11 +411,12 @@ AREA_AWARE_MEDIA_PLAYER_FEATURE_SCHEMA = vol.Schema(
 
 ALL_FEATURES = set(CONF_FEATURE_LIST) | set(CONF_FEATURE_LIST_GLOBAL)
 
-CONFIGURABLE_FEATURES = {
+CONFIGURABLE_FEATURES: dict[str, vol.Schema] = {
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS: ADVANCED_LIGHT_GROUP_FEATURE_SCHEMA,
     CONF_FEATURE_CLIMATE_GROUPS: CLIMATE_GROUP_FEATURE_SCHEMA,
     CONF_FEATURE_GROUP_CREATION: GROUP_CREATION_FEATURE_SCHEMA,
     CONF_FEATURE_AREA_AWARE_MEDIA_PLAYER: AREA_AWARE_MEDIA_PLAYER_FEATURE_SCHEMA,
+    CONF_FEATURE_HUMIDITY: HUMIDITY_GROUP_FEATURE_SCHEMA,
 }
 
 NON_CONFIGURABLE_FEATURES_META = [
@@ -391,11 +424,13 @@ NON_CONFIGURABLE_FEATURES_META = [
     CONF_FEATURE_CLIMATE_GROUPS,
 ]
 
-NON_CONFIGURABLE_FEATURES = {
-    feature: {} for feature in ALL_FEATURES if feature not in CONFIGURABLE_FEATURES
+NON_CONFIGURABLE_FEATURES: dict[str, vol.Schema] = {
+    feature: vol.Schema({})
+    for feature in ALL_FEATURES
+    if feature not in CONFIGURABLE_FEATURES
 }
 
-FEATURES_SCHEMA = vol.Schema(
+FEATURES_SCHEMA: vol.Schema = vol.Schema(
     {
         vol.Optional(feature): feature_schema
         for feature, feature_schema in chain(
@@ -496,6 +531,17 @@ OPTIONS_AREA_AWARE_MEDIA_PLAYER = [
     (CONF_NOTIFICATION_DEVICES, [], cv.entity_ids),
     (CONF_NOTIFY_STATES, DEFAULT_NOTIFY_STATES, cv.ensure_list),
 ]
+
+OPTIONS_HUMIDITY = [
+    (
+        CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
+        DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
+        float,
+    ),
+    (CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF, float),
+    (CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME, int),
+]
+
 
 # Config Flow filters
 CONFIG_FLOW_ENTITY_FILTER = [

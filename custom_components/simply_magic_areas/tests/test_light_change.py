@@ -277,3 +277,36 @@ async def test_light_disabled(
     )
     assert area_binary_sensor.state == "occupied"
     assert len(calls) == 0
+
+
+async def test_light_on_off_with_mqtt_room(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    one_light: list[str],
+    one_motion: list[MockBinarySensor],
+    _setup_integration: None,
+    one_mqtt_room_sensor: list[MockSensor],
+) -> None:
+    """Test loading the integration."""
+    await hass.async_block_till_done()
+    # Validate the right enties were created.
+    control_entity = hass.states.get(
+        f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
+    )
+    area_binary_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+
+    assert control_entity is not None
+    assert area_binary_sensor is not None
+    assert area_binary_sensor.state == "clear"
+
+    # Make the sensor on to make the area occupied and setup automated, leave the light low to get the brightness correct.
+    hass.states.async_set(one_mqtt_room_sensor[0].entity_id, "kitchen")
+    await hass.async_block_till_done()
+
+    # Reload the sensors and they should have changed.
+    area_binary_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_binary_sensor.state == "occupied"

@@ -12,8 +12,14 @@ from homeassistant.components.sensor import (
     SensorEntity,
 )
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
-from homeassistant.const import ATTR_DEVICE_CLASS, ATTR_ENTITY_ID, STATE_ON
-from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
+    ATTR_ENTITY_ID,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
+from homeassistant.core import Event, EventStateChangedData, callback
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -35,6 +41,13 @@ from ..const import (
     CONF_CLEAR_TIMEOUT,
     CONF_EXTENDED_TIMEOUT,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
+    CONF_FEATURE_HUMIDITY,
+    CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
+    CONF_HUMIDITY_TREND_UP_CUT_OFF,
+    CONF_HUMIDITY_ZERO_WAIT_TIME,
+    DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
+    DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
+    DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
     CONF_ON_STATES,
     CONF_PRESENCE_DEVICE_PLATFORMS,
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
@@ -52,6 +65,7 @@ from .magic import ControlType, MagicArea
 _LOGGER = logging.getLogger(__name__)
 
 ATTR_HUMIDITY_ON = "humidity_on"
+ATTR_HUMIDITY_ZERO_TS = "humidity_zero_ts"
 
 
 class AreaStateSensor(MagicEntity, SensorEntity):
@@ -600,27 +614,52 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 )
 
         # Track the up/down trend.
-        trend_up = self.hass.states.get(
+        humidity_trend = self.hass.states.get(
             self.area.simply_magic_entity_id(
-                BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_OCCUPIED
+                SENSOR_DOMAIN,
+                EntityNames.HUMIDITY_STATISTICS,
             )
         )
-        trend_down = self.hass.states.get(
-            self.area.simply_magic_entity_id(
-                BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_EMPTY
-            )
-        )
-        if trend_up is not None and trend_down is not None:
-            up_state = (
-                trend_up.state == STATE_ON
-                or self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
-            )
-            if up_state:
+        if (
+            humidity_trend is not None
+            and humidity_trend.state != STATE_UNAVAILABLE
+            and humidity_trend.state != STATE_UNKNOWN
+        ):
+            humidity_feature_config = self.area.feature_config(CONF_FEATURE_HUMIDITY)
+            # Handle the 0.0 state and how long it has been zero for.
+            if float(humidity_trend.state) != 0.0:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = None
+            elif self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] is None:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = datetime.now(
+                    UTC
+                ).total_seconds()
+            if self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] is not None:
+                zero_time: int = int(
+                    (
+                        datetime.now(UTC)
+                        - int(self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS])
+                    ).total_seconds()
+                )
+                if zero_time > humidity_feature_config.get(
+                    CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME
+                ):
+                    self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+            # Work out if it is trending up.
+            trending_up = float(humidity_trend.state) >= humidity_feature_config.get(
+                CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF
+            ) or self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            if trending_up:
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = True
-                if trend_down.state != STATE_ON:
-                    active_sensors.append(trend_up.entity_id)
+                if float(humidity_trend.state) > humidity_feature_config.get(
+                    CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
+                    DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
+                ):
+                    active_sensors.append(humidity_trend.entity_id)
             # Make the last off time stay until this is not on any more.
-            if trend_down.state == STATE_ON:
+            if float(humidity_trend.state) > humidity_feature_config.get(
+                CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
+                DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
+            ):
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
                 self._last_off_time = datetime.now(UTC)
 

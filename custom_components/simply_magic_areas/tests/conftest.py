@@ -44,7 +44,7 @@ from ..const import (
     CONF_UPDATE_INTERVAL,
     DOMAIN,
 )
-from .common import setup_test_component_platform
+from .common import setup_mqtt_room_component_platform, setup_test_component_platform
 from .mocks import MockBinarySensor, MockCover, MockFan, MockSensor
 
 AREA_NAME = "kitchen"
@@ -241,6 +241,24 @@ async def setup_one_light_sensor(hass: HomeAssistant) -> list[MockSensor]:
         "sensor.light_sensor",
         area_id=AREA_NAME,
     )
+    return mock_binary_sensor_entities
+
+
+@pytest.fixture(name="one_mqtt_room_sensor")
+async def setup_one_mqtt_room_sensor(hass: HomeAssistant) -> list[MockSensor]:
+    """Create one mock sensor and setup the system with ti."""
+    mock_binary_sensor_entities = [
+        MockSensor(
+            name="mqqt room sensor",
+            native_value=1.0,
+            unique_id="unique_mqtt_room",
+        ),
+    ]
+    setup_mqtt_room_component_platform(hass, SENSOR_DOMAIN, mock_binary_sensor_entities)
+    assert await async_setup_component(
+        hass, SENSOR_DOMAIN, {SENSOR_DOMAIN: {CONF_PLATFORM: "mqtt_room"}}
+    )
+    await hass.async_block_till_done()
     return mock_binary_sensor_entities
 
 

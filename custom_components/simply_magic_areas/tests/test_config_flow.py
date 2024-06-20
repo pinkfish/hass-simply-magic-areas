@@ -30,6 +30,7 @@ from ..const import (
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
     CONF_LIGHT_CONTROL,
+    CONF_MQTT_ROOM_PRESENCE,
     CONF_NAME,
     CONF_ON_STATES,
     CONF_PRESENCE_DEVICE_PLATFORMS,
@@ -68,6 +69,7 @@ async def test_form(hass: HomeAssistant) -> None:
         CONF_ID: "kitchen",
         CONF_TYPE: AREA_TYPE_INTERIOR,
         CONF_EXTENDED_TIMEOUT: 360,
+        CONF_MQTT_ROOM_PRESENCE: False,
         "bright_entity": "",
         "sleep_entity": "",
         CONF_LIGHT_CONTROL: True,
@@ -114,6 +116,7 @@ async def test_options(hass: HomeAssistant, config_entry: MockConfigEntry) -> No
         CONF_ENABLED_FEATURES: {},
         CONF_ICON: "mdi:texture-box",
         CONF_TYPE: AREA_TYPE_INTERIOR,
+        CONF_MQTT_ROOM_PRESENCE: False,
         "bright_entity": "",
         "sleep_entity": "",
     }
@@ -143,6 +146,7 @@ async def test_options_enable_advanced_lights(
     assert result["step_id"] == "area_config"
     assert result["data_schema"]({}) == {
         "bright_entity": "",
+        CONF_MQTT_ROOM_PRESENCE: False,
         CONF_EXTENDED_TIMEOUT: 360.0,
         CONF_ICON: "mdi:texture-box",
         CONF_CLEAR_TIMEOUT: 360.0,
@@ -220,6 +224,7 @@ async def test_options_enable_advanced_lights(
         },
         CONF_ICON: "mdi:texture-box",
         CONF_TYPE: AREA_TYPE_INTERIOR,
+        CONF_MQTT_ROOM_PRESENCE: False,
         "bright_entity": "",
         "sleep_entity": "",
     }
@@ -248,6 +253,7 @@ async def test_options_enable_humidity(
     assert result["step_id"] == "area_config"
     assert result["data_schema"]({}) == {
         "bright_entity": "",
+        CONF_MQTT_ROOM_PRESENCE: False,
         CONF_EXTENDED_TIMEOUT: 360.0,
         CONF_ICON: "mdi:texture-box",
         CONF_CLEAR_TIMEOUT: 360.0,
@@ -296,6 +302,7 @@ async def test_options_enable_humidity(
         },
         CONF_ICON: "mdi:texture-box",
         CONF_TYPE: AREA_TYPE_INTERIOR,
+        CONF_MQTT_ROOM_PRESENCE: False,
         "bright_entity": "",
         "sleep_entity": "",
     }

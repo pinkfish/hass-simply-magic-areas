@@ -197,6 +197,8 @@ CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME = (
     "humidity_wait_s",
     20 * 60,
 )
+# Mqtt room control
+CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE = ("mqqt_room", False)
 
 # Setups to control all the lights, items to create
 clear_lights = LightEntityConf(
@@ -455,6 +457,7 @@ REGULAR_AREA_SCHEMA = vol.Schema(
         vol.Optional(CONF_ICON, default=DEFAULT_ICON): cv.string,
         vol.Optional(CONF_LIGHT_CONTROL, default=DEFAULT_LIGHT_CONTROL): bool,
         vol.Optional(CONF_FAN_CONTROL, default=DEFAULT_FAN_CONTROL): bool,
+        vol.Optional(CONF_MQTT_ROOM_PRESENCE, default=DEFAULT_MQTT_ROOM_PRESENCE): bool,
     }
 ).extend(
     {k: v for lg in ALL_LIGHT_ENTITIES for k, v in lg.config_flow_schema().items()}
@@ -482,6 +485,7 @@ OPTIONS_AREA = [
     (CONF_ICON, DEFAULT_ICON, str),
     (CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL, bool),
     (CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL, bool),
+    (CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE, bool),
 ]
 for item in ALL_LIGHT_ENTITIES:
     OPTIONS_AREA.extend(item.config_flow_options())

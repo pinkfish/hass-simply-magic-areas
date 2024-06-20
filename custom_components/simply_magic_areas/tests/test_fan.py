@@ -7,7 +7,6 @@ from _pytest.monkeypatch import MonkeyPatch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
@@ -18,6 +17,7 @@ from homeassistant.const import (
     SERVICE_TURN_ON,
     STATE_OFF,
     STATE_ON,
+    STATE_UNAVAILABLE,
 )
 from homeassistant.core import HomeAssistant
 
@@ -134,13 +134,7 @@ async def test_fan_on_off_humidity(
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    area_humidity_occupied = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
-    )
-    area_humidity_empty = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
-    )
-    statistics_humidity_sensor = hass.states.get(
+    area_humidity_statistics = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
     )
 
@@ -148,13 +142,12 @@ async def test_fan_on_off_humidity(
 
     assert control_entity is not None
     assert area_binary_sensor is not None
-    assert statistics_humidity_sensor is not None
+    assert area_humidity_statistics is not None
     for fan in one_fan:
         assert not fan.is_on
     assert control_entity.state == STATE_ON
     assert area_binary_sensor.state == "clear"
-    assert area_humidity_occupied.state == STATE_OFF
-    assert area_humidity_empty.state == STATE_OFF
+    assert area_humidity_statistics.state == STATE_UNAVAILABLE
 
     # Make the sensor on to make the area occupied and setup automated.
     service_data = {
@@ -170,12 +163,6 @@ async def test_fan_on_off_humidity(
     await hass.async_block_till_done()
     hass.states.async_set(
         one_sensor_humidity[0].entity_id,
-        str(20.0),
-        attributes={"unit_of_measurement": "%"},
-    )
-    await hass.async_block_till_done()
-    hass.states.async_set(
-        one_sensor_humidity[0].entity_id,
         str(30.0),
         attributes={"unit_of_measurement": "%"},
     )
@@ -185,14 +172,10 @@ async def test_fan_on_off_humidity(
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    area_humidity_occupied = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
+    area_humidity_statistics = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
     )
-    area_humidity_empty = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
-    )
-    assert area_humidity_occupied.state == STATE_ON
-    assert area_humidity_empty.state == STATE_OFF
+    assert float(area_humidity_statistics.state) > 100.0
     assert area_binary_sensor.state == "occupied"
     assert len(calls) == 1
     assert calls[0].data == {
@@ -202,30 +185,14 @@ async def test_fan_on_off_humidity(
     # Push events down, should turn on the down trending sensor.
     hass.states.async_set(
         one_sensor_humidity[0].entity_id,
-        str(25),
-        attributes={"unit_of_measurement": "%"},
-    )
-    await hass.async_block_till_done()
-    hass.states.async_set(
-        one_sensor_humidity[0].entity_id,
-        str(20),
-        attributes={"unit_of_measurement": "%"},
-    )
-    await hass.async_block_till_done()
-    hass.states.async_set(
-        one_sensor_humidity[0].entity_id,
         str(5),
         attributes={"unit_of_measurement": "%"},
     )
     await hass.async_block_till_done()
-    area_humidity_occupied = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
+    area_humidity_statistics = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
     )
-    area_humidity_empty = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
-    )
-    assert area_humidity_empty.state == STATE_ON
-    assert area_humidity_occupied.state == STATE_OFF
+    assert float(area_humidity_statistics.state) < -10
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -249,11 +216,8 @@ async def test_fan_control_disabled(
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    area_humidity_occupied = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
-    )
-    area_humidity_empty = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
+    area_humidity_statistics = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
     )
 
     calls = async_mock_service(hass, FAN_DOMAIN, "turn_on")
@@ -264,8 +228,7 @@ async def test_fan_control_disabled(
         assert not fan.is_on
     assert control_entity.state == STATE_ON
     assert area_binary_sensor.state == "clear"
-    assert area_humidity_occupied.state == STATE_OFF
-    assert area_humidity_empty.state == STATE_OFF
+    assert area_humidity_statistics.state == STATE_UNAVAILABLE
 
     # Make the sensor on to make the area occupied and setup automated.
     service_data = {
@@ -296,14 +259,10 @@ async def test_fan_control_disabled(
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    area_humidity_occupied = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
+    area_humidity_statistics = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
     )
-    area_humidity_empty = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
-    )
-    assert area_humidity_occupied.state == STATE_ON
-    assert area_humidity_empty.state == STATE_OFF
+    assert float(area_humidity_statistics.state) > 1000.0
     assert area_binary_sensor.state == "occupied"
     # Fans should not have changed, since they are disabled.
     assert len(calls) == 0

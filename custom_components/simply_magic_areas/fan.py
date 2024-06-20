@@ -245,7 +245,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             return
         to_state = event.data["new_state"].state
         from_state = event.data["old_state"].state
-        _LOGGER.debug(
+        _LOGGER.warning(
             "%s: Trend down New state: %s / Last state %s",
             self.name,
             to_state,
@@ -255,7 +255,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self._humidity_fan_control()
 
     def _humidity_fan_control(self) -> None:
-        fans_on = False
+        fans_on: bool = False
         # Track the up/down trend.
         humidity_trend = self.hass.states.get(
             self.area.simply_magic_entity_id(
@@ -299,15 +299,16 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 ):
                     fans_on = True
             # Make the last off time stay until this is not on any more.
-            if float(humidity_trend.state) > humidity_feature_config.get(
+            if float(humidity_trend.state) < humidity_feature_config.get(
                 CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
                 DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
             ):
                 fans_on = False
-            if fans_on:
-                self._turn_on_fan()
-            else:
-                self._turn_off_fan()
+        _LOGGER.warning("Fans on %s", fans_on)
+        if fans_on:
+            self._turn_on_fan()
+        else:
+            self._turn_off_fan()
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
         if self.area.state == AreaState.AREA_STATE_CLEAR:

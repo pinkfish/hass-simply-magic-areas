@@ -45,14 +45,16 @@ from ..const import (
     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
-    DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
-    DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
-    DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
+    CONF_MQTT_ROOM_PRESENCE,
     CONF_ON_STATES,
     CONF_PRESENCE_DEVICE_PLATFORMS,
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
     CONF_TYPE,
     CONF_UPDATE_INTERVAL,
+    DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
+    DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
+    DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
+    DEFAULT_MQTT_ROOM_PRESENCE,
     DEFAULT_ON_STATES,
     DEFAULT_PRESENCE_DEVICE_PLATFORMS,
     DEFAULT_PRESENCE_DEVICE_SENSOR_CLASS,
@@ -150,20 +152,14 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             )
         )
 
-        # Track humidity sensors
-        trend_up = self.area.simply_magic_entity_id(
-            BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_OCCUPIED
+        # Track humidity trend sensor
+        humidity_trend = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.HUMIDITY_STATISTICS
         )
-        trend_down = self.area.simply_magic_entity_id(
-            BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_EMPTY
-        )
-        if (
-            self.hass.states.get(trend_up) is not None
-            and self.hass.states.get(trend_down) is not None
-        ):
+        if self.hass.states.get(humidity_trend) is not None:
             self.async_on_remove(
                 async_track_state_change_event(
-                    self.hass, [trend_up, trend_down], self._humidity_sensor_change
+                    self.hass, [humidity_trend], self._humidity_sensor_change
                 )
             )
 
@@ -600,18 +596,19 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 )
 
         # Track the mqtt room stuff.
-        for mqtt_room_sensor in self._mqqt_room_sensors:
-            try:
-                entity = self.hass.states.get(mqtt_room_sensor)
-                if entity and entity.state == self.area.name.lower():
-                    active_sensors.append(mqtt_room_sensor)
-            except Exception as e:  # noqa: BLE001
-                _LOGGER.error(  # type: ignore  # noqa: PGH003
-                    "[%s] Error getting entity state for '%s': %s",
-                    self.area.slug,
-                    mqtt_room_sensor,
-                    str(e),
-                )
+        if self.area.config.get(CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE):
+            for mqtt_room_sensor in self._mqqt_room_sensors:
+                try:
+                    entity = self.hass.states.get(mqtt_room_sensor)
+                    if entity and entity.state == self.area.name.lower():
+                        active_sensors.append(mqtt_room_sensor)
+                except Exception as e:  # noqa: BLE001
+                    _LOGGER.error(  # type: ignore  # noqa: PGH003
+                        "[%s] Error getting entity state for '%s': %s",
+                        self.area.slug,
+                        mqtt_room_sensor,
+                        str(e),
+                    )
 
         # Track the up/down trend.
         humidity_trend = self.hass.states.get(
@@ -656,7 +653,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 ):
                     active_sensors.append(humidity_trend.entity_id)
             # Make the last off time stay until this is not on any more.
-            if float(humidity_trend.state) > humidity_feature_config.get(
+            if float(humidity_trend.state) < humidity_feature_config.get(
                 CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
                 DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
             ):

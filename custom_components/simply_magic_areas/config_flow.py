@@ -33,6 +33,7 @@ from .const import (
     CONF_EXCLUDE_ENTITIES,
     CONF_EXTENDED_TIMEOUT,
     CONF_FAN_CONTROL,
+    CONF_MQTT_ROOM_PRESENCE,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_AREA_AWARE_MEDIA_PLAYER,
     CONF_FEATURE_CLIMATE_GROUPS,
@@ -417,6 +418,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
             CONF_EXTENDED_TIMEOUT: self._build_selector_number(),
             CONF_LIGHT_CONTROL: selector({"boolean": {}}),
             CONF_FAN_CONTROL: selector({"boolean": {}}),
+            CONF_MQTT_ROOM_PRESENCE: selector({"boolean": {}}),
         }
 
         for item in ALL_LIGHT_ENTITIES:

@@ -7,8 +7,6 @@ class EntityNames(StrEnum):
     """The names of the fixed entities to use."""
 
     STATE = "state"
-    HUMIDITY_OCCUPIED = "humidity_occupancy"
-    HUMIDITY_EMPTY = "humidity_empty"
     FAN_CONTROL = "fan_control"
     LIGHT_CONTROL = "light_control"
     SYSTEM_CONTROL = "system_control"

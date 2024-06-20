@@ -4,13 +4,12 @@ import logging
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN, ColorMode
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorStateClass
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 
 from ..config.area_state import AreaState
@@ -85,7 +84,7 @@ async def test_save_system_control(
     assert config_entry.state is ConfigEntryState.NOT_LOADED
 
 
-async def test_sensor_humdity(
+async def test_sensor_humidity_statistics(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     one_fan: list[MockFan],
@@ -97,46 +96,15 @@ async def test_sensor_humdity(
 
     # Validate the right enties were created.
     area_binary_sensor = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
+        f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
     )
 
     assert area_binary_sensor is not None
-    assert area_binary_sensor.state == STATE_OFF
+    assert area_binary_sensor.state == STATE_UNAVAILABLE
     assert area_binary_sensor.attributes == {
-        "friendly_name": "kitchen kitchen Humidity Occupancy (Simply Magic Areas)",
-        "device_class": "moisture",
-        "icon": "mdi:trending-up",
-    }
-
-    await hass.async_block_till_done()
-    await hass.config_entries.async_unload(config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not hass.data.get(DOMAIN)
-    assert config_entry.state is ConfigEntryState.NOT_LOADED
-
-
-async def test_sensor_humdity_empty(
-    hass: HomeAssistant,
-    config_entry: MockConfigEntry,
-    one_fan: list[MockFan],
-    one_sensor_humidity: list[MockSensor],
-    _setup_integration: None,
-) -> None:
-    """Test loading the integration."""
-    assert config_entry.state is ConfigEntryState.LOADED
-
-    # Validate the right enties were created.
-    area_binary_sensor = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
-    )
-
-    assert area_binary_sensor is not None
-    assert area_binary_sensor.state == STATE_OFF
-    assert area_binary_sensor.attributes == {
-        "friendly_name": "kitchen kitchen Humidity Empty (Simply Magic Areas)",
-        "device_class": "moisture",
-        "icon": "mdi:trending-down",
+        "friendly_name": "kitchen kitchen Humidity Trend (Simply Magic Areas)",
+        "state_class": SensorStateClass.MEASUREMENT,
+        "icon": "mdi:calculator",
     }
 
     await hass.async_block_till_done()

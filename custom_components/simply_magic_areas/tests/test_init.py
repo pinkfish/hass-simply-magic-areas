@@ -38,19 +38,15 @@ async def test_init_no_devices(
     humidity_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_kitchen"
     )
-    trend_up = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
-    )
-    trend_down = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
+    humidity_statistics = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
     )
 
     assert control_entity is not None
     assert area_binary_sensor is not None
     assert occupied_lights is None
     assert humidity_sensor is None
-    assert trend_up is None
-    assert trend_down is None
+    assert humidity_statistics is None
     assert control_entity.state == STATE_ON
     assert area_binary_sensor.state == "clear"
 
@@ -153,19 +149,15 @@ async def test_init_with_humidity_sensor(
     humidity_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_kitchen"
     )
-    trend_up = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_occupancy_kitchen"
-    )
-    trend_down = hass.states.get(
-        f"{BINARY_SENSOR_DOMAIN}.simply_magic_areas_humidity_empty_kitchen"
+    humidity_statistics = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
     )
 
     assert control_entity is not None
     assert area_binary_sensor is not None
     assert occupied_lights is None
     assert humidity_sensor is not None
-    assert trend_up is not None
-    assert trend_down is not None
+    assert humidity_statistics is not None
     assert control_entity.state == STATE_ON
     assert area_binary_sensor.state == "clear"
     await hass.async_block_till_done()

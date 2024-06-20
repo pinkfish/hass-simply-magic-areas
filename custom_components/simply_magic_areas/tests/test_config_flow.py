@@ -22,6 +22,10 @@ from ..const import (
     CONF_EXTENDED_TIMEOUT,
     CONF_FAN_CONTROL,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
+    CONF_FEATURE_HUMIDITY,
+    CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
+    CONF_HUMIDITY_TREND_UP_CUT_OFF,
+    CONF_HUMIDITY_ZERO_WAIT_TIME,
     CONF_ICON,
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
@@ -212,6 +216,82 @@ async def test_options_enable_advanced_lights(
                 ],
                 CONF_ON_STATES: [STATE_ON, STATE_OPEN],
                 CONF_INCLUDE_ENTITIES: [],
+            },
+        },
+        CONF_ICON: "mdi:texture-box",
+        CONF_TYPE: AREA_TYPE_INTERIOR,
+        "bright_entity": "",
+        "sleep_entity": "",
+    }
+    await hass.async_block_till_done()
+    await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_options_enable_humidity(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    """Test we get the form."""
+    # Create an area in the registry.
+    registry = async_get_ar(hass)
+    registry.async_get_or_create("kitchen")
+    config_entry.add_to_hass(hass)
+
+    # Load the integration
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert config_entry.state is ConfigEntryState.LOADED
+
+    # show initial form
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "area_config"
+    assert result["data_schema"]({}) == {
+        "bright_entity": "",
+        CONF_EXTENDED_TIMEOUT: 360.0,
+        CONF_ICON: "mdi:texture-box",
+        CONF_CLEAR_TIMEOUT: 360.0,
+        "sleep_entity": "",
+        CONF_TYPE: "interior",
+        CONF_LIGHT_CONTROL: True,
+        CONF_FAN_CONTROL: True,
+    }
+
+    # submit form with options
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_CLEAR_TIMEOUT: 12}
+    )
+    await hass.async_block_till_done()
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "select_features"
+    assert result["errors"] is None
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_FEATURE_HUMIDITY: True},
+    )
+    await hass.async_block_till_done()
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "feature_conf_humidity"
+    assert result["errors"] == {}
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_HUMIDITY_ZERO_WAIT_TIME: 50},
+    )
+    await hass.async_block_till_done()
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    # assert result["title"] == "kitchen"
+    assert result["data"] == {
+        CONF_CLEAR_TIMEOUT: 12,
+        CONF_EXTENDED_TIMEOUT: 360,
+        CONF_LIGHT_CONTROL: True,
+        CONF_FAN_CONTROL: True,
+        CONF_ENABLED_FEATURES: {
+            CONF_FEATURE_HUMIDITY: {
+                CONF_HUMIDITY_ZERO_WAIT_TIME: 50,
+                CONF_HUMIDITY_TREND_UP_CUT_OFF: 0.03,
+                CONF_HUMIDITY_TREND_DOWN_CUT_OFF: -0.015,
             },
         },
         CONF_ICON: "mdi:texture-box",

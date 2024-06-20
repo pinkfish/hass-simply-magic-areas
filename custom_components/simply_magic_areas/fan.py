@@ -2,8 +2,8 @@
 
 from datetime import UTC, datetime
 import logging
+from typing import Any
 
-from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.group.fan import FanGroup
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
@@ -15,12 +15,15 @@ from homeassistant.const import (
     SERVICE_TURN_ON,
     STATE_OFF,
     STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
 )
 from homeassistant.core import (
     CALLBACK_TYPE,
     Event,
     EventStateChangedData,
     HomeAssistant,
+    State,
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
@@ -33,8 +36,15 @@ from .config.area_state import AreaState
 from .config.entity_names import EntityNames
 from .const import (
     ATTR_LAST_UPDATE_FROM_ENTITY,
+    CONF_FEATURE_HUMIDITY,
+    CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
+    CONF_HUMIDITY_TREND_UP_CUT_OFF,
+    CONF_HUMIDITY_ZERO_WAIT_TIME,
     CONF_MANUAL_TIMEOUT,
     DATA_AREA_OBJECT,
+    DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
+    DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
+    DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
     DEFAULT_MANUAL_TIMEOUT,
     DOMAIN,
     MODULE_DATA,
@@ -44,6 +54,8 @@ _LOGGER = logging.getLogger(__name__)
 ATTR_HUMIDITY_UP: str = "humidity_up"
 ATTR_FANS: str = "fans"
 ATTR_MANUAL_CONTROL: str = "manual_control"
+ATTR_HUMIDITY_ON: str = "humidity_on"
+ATTR_HUMIDITY_ZERO_TS: str = "humidity_zero_ts"
 
 
 async def async_setup_entry(
@@ -161,11 +173,11 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self.schedule_update_ha_state()
 
         # Setup state change listeners
-        await self._setup_listeners()
+        await self._setup_listeners("ignore")
 
         await super().async_added_to_hass()
 
-    async def _setup_listeners(self, _=None) -> None:
+    async def _setup_listeners(self, _: Any = None) -> None:
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass,
@@ -186,25 +198,14 @@ class AreaFanGroup(MagicEntity, FanGroup):
             )
         )
         # If the trend entities exist, listen to them
-        trend_up = self.area.simply_magic_entity_id(
-            BINARY_SENSOR_DOMAIN, EntityNames.HUMIDITY_OCCUPIED
+        trend_statistics = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN,
+            EntityNames.HUMIDITY_STATISTICS,
         )
-        trend_down = self.area.simply_magic_entity_id(
-            BINARY_SENSOR_DOMAIN,
-            EntityNames.HUMIDITY_EMPTY,
-        )
-        if (
-            self.hass.states.get(trend_up) is not None
-            and self.hass.states.get(trend_down) is not None
-        ):
+        if self.hass.states.get(trend_statistics) is not None:
             self.async_on_remove(
                 async_track_state_change_event(
-                    self.hass, [trend_up], self._trend_up_state_change
-                )
-            )
-            self.async_on_remove(
-                async_track_state_change_event(
-                    self.hass, [trend_down], self._trend_down_state_change
+                    self.hass, [trend_statistics], self._trend_state_change
                 )
             )
 
@@ -239,7 +240,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         else:
             _LOGGER.debug("Ignoring state change")
 
-    def _trend_down_state_change(self, event: Event[EventStateChangedData]):
+    def _trend_state_change(self, event: Event[EventStateChangedData]):
         if event.data["old_state"] is None or event.data["new_state"] is None:
             return
         to_state = event.data["new_state"].state
@@ -250,28 +251,63 @@ class AreaFanGroup(MagicEntity, FanGroup):
             to_state,
             from_state,
         )
-        if to_state == STATE_ON and from_state != STATE_ON:
-            # We have stuff going down.
-            self._attr_extra_state_attributes[ATTR_HUMIDITY_UP] = False
-            self._turn_off_fan()
+        if to_state != STATE_UNAVAILABLE:
+            self._humidity_fan_control()
 
-    def _trend_up_state_change(self, event: Event[EventStateChangedData]):
-        if event.event_type != "state_changed":
-            return
-        if event.data["old_state"] is None or event.data["new_state"] is None:
-            return
-        to_state = event.data["new_state"].state
-        from_state = event.data["old_state"].state
-        _LOGGER.debug(
-            "%s: Trend up New state: %s / Last state %s",
-            self.name,
-            to_state,
-            from_state,
+    def _humidity_fan_control(self) -> None:
+        fans_on = False
+        # Track the up/down trend.
+        humidity_trend = self.hass.states.get(
+            self.area.simply_magic_entity_id(
+                SENSOR_DOMAIN,
+                EntityNames.HUMIDITY_STATISTICS,
+            )
         )
-        if to_state == STATE_ON and from_state != STATE_ON:
-            # We have stuff going up.
-            self._attr_extra_state_attributes[ATTR_HUMIDITY_UP] = True
-            self._turn_on_fan()
+        if (
+            humidity_trend is not None
+            and humidity_trend.state != STATE_UNAVAILABLE
+            and humidity_trend.state != STATE_UNKNOWN
+        ):
+            humidity_feature_config = self.area.feature_config(CONF_FEATURE_HUMIDITY)
+            # Handle the 0.0 state and how long it has been zero for.
+            if float(humidity_trend.state) != 0.0:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = None
+            elif self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] is None:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = datetime.now(
+                    UTC
+                ).total_seconds()
+            if self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] is not None:
+                zero_time: int = int(
+                    (
+                        datetime.now(UTC)
+                        - int(self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS])
+                    ).total_seconds()
+                )
+                if zero_time > humidity_feature_config.get(
+                    CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME
+                ):
+                    self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+            # Work out if it is trending up.
+            trending_up = float(humidity_trend.state) >= humidity_feature_config.get(
+                CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF
+            ) or self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            if trending_up:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = True
+                if float(humidity_trend.state) > humidity_feature_config.get(
+                    CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
+                    DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
+                ):
+                    fans_on = True
+            # Make the last off time stay until this is not on any more.
+            if float(humidity_trend.state) > humidity_feature_config.get(
+                CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
+                DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
+            ):
+                fans_on = False
+            if fans_on:
+                self._turn_on_fan()
+            else:
+                self._turn_off_fan()
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
         if self.area.state == AreaState.AREA_STATE_CLEAR:
@@ -320,6 +356,9 @@ class AreaFanGroup(MagicEntity, FanGroup):
     ####  Fan Handling
     def _turn_on_fan(self) -> None:
         """Turn on the fan group."""
+        if self.is_on:
+            _LOGGER.debug("%s: Fan already on", self.name)
+            return
 
         if not self.area.is_control_enabled(ControlType.System):
             return

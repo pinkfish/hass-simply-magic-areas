@@ -629,13 +629,13 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             elif self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] is None:
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = datetime.now(
                     UTC
-                ).total_seconds()
+                ).timestamp()
             if self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] is not None:
                 zero_time: int = int(
                     (
                         datetime.now(UTC)
                         - int(self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS])
-                    ).total_seconds()
+                    ).timestamp()
                 )
                 if zero_time > humidity_feature_config.get(
                     CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME

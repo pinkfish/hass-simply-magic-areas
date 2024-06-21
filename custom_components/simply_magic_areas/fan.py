@@ -280,8 +280,12 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 zero_time: int = int(
                     (
                         datetime.now(UTC)
-                        - int(self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS])
-                    ).timestamp()
+                        - datetime.fromtimestamp(
+                            int(
+                                self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS]
+                            )
+                        )
+                    ).total_seconds()
                 )
                 if zero_time > humidity_feature_config.get(
                     CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME

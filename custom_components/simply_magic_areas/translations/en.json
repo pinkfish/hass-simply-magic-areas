@@ -87,9 +87,11 @@
         }
       },
       "feature_conf_humidity": {
-        "humidity_down": "Humidity trend level below which room is not occupied",
-        "humidity_up": "Humidity trend level above which room is occupied",
-        "humidity_wait_s": "How long to wait at 0 change in humidity to mark the room as unoccupied"
+        "data": {
+          "humidity_down": "Humidity trend level below which room is not occupied",
+          "humidity_up": "Humidity trend level above which room is occupied",
+          "humidity_wait_s": "How long to wait at 0 change in humidity to mark the room as unoccupied"
+        }
       },
       "area_config": {
         "title": "Area options",

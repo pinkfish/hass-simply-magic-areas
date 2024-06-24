@@ -272,11 +272,17 @@ class AreaFanGroup(MagicEntity, FanGroup):
             # Handle the 0.0 state and how long it has been zero for.
             if float(humidity_trend.state) != 0.0:
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = None
-            elif self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] is None:
+            elif (
+                self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ZERO_TS, None)
+                is None
+            ):
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = datetime.now(
                     UTC
                 ).timestamp()
-            if self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] is not None:
+            if (
+                self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ZERO_TS, None)
+                is not None
+            ):
                 zero_time: int = int(
                     (
                         datetime.now(UTC)

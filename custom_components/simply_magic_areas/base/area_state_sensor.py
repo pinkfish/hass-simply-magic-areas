@@ -637,7 +637,8 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                         - datetime.fromtimestamp(
                             int(
                                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS]
-                            )
+                            ),
+                            UTC,
                         )
                     ).total_seconds()
                 )

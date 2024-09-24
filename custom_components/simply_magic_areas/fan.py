@@ -23,7 +23,6 @@ from homeassistant.core import (
     Event,
     EventStateChangedData,
     HomeAssistant,
-    State,
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er

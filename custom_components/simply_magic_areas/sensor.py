@@ -188,7 +188,7 @@ class MagicStatisticsSensor(MagicEntity, StatisticsSensor):
         """Create the sensor to track the change in humidity."""
         StatisticsSensor.__init__(
             self,
-            area.hass,
+            hass=area.hass,
             source_entity_id=area.simply_magic_entity_id(
                 SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
             ),

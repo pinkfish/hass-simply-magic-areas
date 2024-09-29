@@ -462,6 +462,9 @@ class MockSensor(MockEntity, SensorEntity):
         """Return the state class of this sensor."""
         return self._handle("suggested_unit_of_measurement")
 
+    def _is_valid_suggested_unit(self, suggested_unit_of_measurement: str) -> bool:
+        return True
+
     async def async_added_to_hass(self) -> None:
         """Call when entity about to be added to hass."""
 

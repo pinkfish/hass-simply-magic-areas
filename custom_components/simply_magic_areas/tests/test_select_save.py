@@ -9,7 +9,7 @@ from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN, ColorMode
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorStateClass
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 
 from ..config.area_state import AreaState
@@ -103,7 +103,6 @@ async def test_sensor_humidity_statistics(
     assert area_binary_sensor.state == STATE_UNAVAILABLE
     assert area_binary_sensor.attributes == {
         "friendly_name": "kitchen kitchen Humidity Trend (Simply Magic Areas)",
-        "state_class": SensorStateClass.MEASUREMENT,
         "icon": "mdi:calculator",
     }
 

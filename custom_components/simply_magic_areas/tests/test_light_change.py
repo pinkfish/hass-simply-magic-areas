@@ -68,6 +68,7 @@ async def test_light_on_off(
         await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_OFF, service_data)
     one_motion[0].turn_on()
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
 
     # Reload the sensors and they should have changed.
     area_binary_sensor = hass.states.get(
@@ -135,6 +136,7 @@ async def test_light_entity_change(
     # Reload the sensors and they should have changed.
     one_motion[0].turn_on()
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -146,10 +148,12 @@ async def test_light_entity_change(
     }
     assert calls[0].service == SERVICE_TURN_ON
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
 
     # Set the sleep entity on.
     one_motion[1].turn_on()
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -159,6 +163,7 @@ async def test_light_entity_change(
     one_motion[1].turn_off()
     one_motion[2].turn_on()
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -168,6 +173,7 @@ async def test_light_entity_change(
     one_motion[2].turn_off()
     one_motion[3].turn_on()
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -193,6 +199,8 @@ async def test_light_on_off_with_light_sensor(
     }
     await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_OFF, service_data)
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
+
     # Validate the right enties were created.
     control_entity = hass.states.get(
         f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen"
@@ -226,6 +234,7 @@ async def test_light_on_off_with_light_sensor(
         one_sensor_light[0].entity_id, luminesnce, {"unit_of_measurement": LIGHT_LUX}
     )
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
 
     # Reload the sensors and they should have changed.
     area_binary_sensor = hass.states.get(
@@ -272,6 +281,7 @@ async def test_light_disabled(
     # Reload the sensors and they should have changed.
     one_motion[0].turn_on()
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
@@ -304,6 +314,7 @@ async def test_light_on_off_with_mqtt_room(
     # Make the sensor on to make the area occupied and setup automated, leave the light low to get the brightness correct.
     # hass.states.async_set(one_mqtt_room_sensor[0].entity_id, "kitchen")
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
 
     # Reload the sensors and they should have changed.
     area_binary_sensor = hass.states.get(

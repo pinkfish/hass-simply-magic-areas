@@ -18,6 +18,7 @@ from homeassistant.const import (
     STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
+    STATE_UNKNOWN
 )
 from homeassistant.core import HomeAssistant
 
@@ -71,6 +72,7 @@ async def test_fan_on_off(
         await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_OFF, service_data)
     one_motion[0].turn_on()
     await hass.async_block_till_done()
+    await asyncio.sleep(1)
 
     # Reload the sensors and they should have changed.
     area_binary_sensor = hass.states.get(
@@ -167,6 +169,7 @@ async def test_fan_on_off_humidity(
         attributes={"unit_of_measurement": "%"},
     )
     await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
 
     # Reload the sensors and they should have changed.
     area_binary_sensor = hass.states.get(

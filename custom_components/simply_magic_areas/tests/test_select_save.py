@@ -103,7 +103,6 @@ async def test_sensor_humidity_statistics(
     assert area_binary_sensor.state == STATE_UNAVAILABLE
     assert area_binary_sensor.attributes == {
         "friendly_name": "kitchen kitchen Humidity Trend (Simply Magic Areas)",
-        "state_class": SensorStateClass.MEASUREMENT,
         "icon": "mdi:calculator",
     }
 

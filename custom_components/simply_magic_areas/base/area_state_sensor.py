@@ -386,7 +386,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         to_state: str = str(event.data["new_state"].state)
         entity_id: str = str(event.data["entity_id"])
 
-        _LOGGER.debug(
+        _LOGGER.info(
             "%s: Secondary state change: entity '%s' changed to %s",
             self.area.name,
             entity_id,

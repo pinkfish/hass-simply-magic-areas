@@ -192,6 +192,7 @@ async def test_fan_on_off_humidity(
         attributes={"unit_of_measurement": "%"},
     )
     await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
     area_humidity_statistics = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
     )

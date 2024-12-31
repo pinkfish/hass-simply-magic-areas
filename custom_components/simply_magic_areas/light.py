@@ -219,7 +219,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             if conf is not None:
                 self._entity_ids = conf.lights
                 self.async_update_group_state()
-                if conf.dim_level > 0:
+                if conf.dim_level > 0 or from_state == AreaState.AREA_STATE_CLEAR or from_state == AreaState.AREA_STATE_MANUAL:
                     if self.is_on:
                         self._turn_on_light(conf)
                 else:

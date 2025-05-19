@@ -458,8 +458,8 @@ REGULAR_AREA_SCHEMA = vol.Schema(
         vol.Optional(CONF_LIGHT_CONTROL, default=DEFAULT_LIGHT_CONTROL): bool,
         vol.Optional(CONF_FAN_CONTROL, default=DEFAULT_FAN_CONTROL): bool,
         vol.Optional(CONF_MQTT_ROOM_PRESENCE, default=DEFAULT_MQTT_ROOM_PRESENCE): bool,
-        vol.Optional(CONF_MIN_BRIGHTNESS_LEVEL, default=DEFAULT_MIN_BRIGHTNESS_LEVEL): val.positive_int,
-        vol.Optional(CONF_MAX_BRIGHTNESS_LEVEL, default=DEFAULT_MAX_BRIGHTNESS_LEVEL): val,positive_int,
+        vol.Optional(CONF_MIN_BRIGHTNESS_LEVEL, default=DEFAULT_MIN_BRIGHTNESS_LEVEL): cv.positive_int,
+        vol.Optional(CONF_MAX_BRIGHTNESS_LEVEL, default=DEFAULT_MAX_BRIGHTNESS_LEVEL): cv.positive_int,
     }
 ).extend(
     {k: v for lg in ALL_LIGHT_ENTITIES for k, v in lg.config_flow_schema().items()}

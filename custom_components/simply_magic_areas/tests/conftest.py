@@ -6,6 +6,9 @@ import logging
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from pytest_homeassistant_custom_component.syrupy import HomeAssistantSnapshotExtension
+from syrupy.assertion import SnapshotAssertion
+
 from homeassistant.components.binary_sensor import (
     DOMAIN as BINARY_SENSOR_DOMAIN,
     BinarySensorDeviceClass,
@@ -105,6 +108,12 @@ def auto_enable_custom_integrations(
     """Enable custom integration."""
     _ = enable_custom_integrations  # unused
     yield
+
+
+@pytest.fixture
+def snapshot(snapshot: SnapshotAssertion) -> SnapshotAssertion:
+    """Return snapshot assertion fixture with the Home Assistant extension."""
+    return snapshot.use_extension(HomeAssistantSnapshotExtension)
 
 
 @pytest.fixture(name="config_entry")

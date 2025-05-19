@@ -225,6 +225,8 @@ async def test_options_enable_advanced_lights(
         CONF_ICON: "mdi:texture-box",
         CONF_TYPE: AREA_TYPE_INTERIOR,
         CONF_MQTT_ROOM_PRESENCE: False,
+        CONF_MIN_BRIGHTNESS_LEVEL: 100,
+        CONF_MAX_BRIGHTNESS_LEVEL: 200,
         "bright_entity": "",
         "sleep_entity": "",
     }

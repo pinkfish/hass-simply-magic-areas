@@ -1,6 +1,6 @@
 # Generic python dependencies
 black==24.4.2
-mypy-dev==1.11.a3
+mypy-dev==1.11.0b1
 pip==24.2.0
 pre-commit==3.7.1
 pytest==8.3.4

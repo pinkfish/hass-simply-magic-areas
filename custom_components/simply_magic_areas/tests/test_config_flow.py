@@ -160,8 +160,6 @@ async def test_options_enable_advanced_lights(
         CONF_TYPE: "interior",
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
-        CONF_MAX_BRIGHTNESS_LEVEL: 200,
-        CONF_MIN_BRIGHTNESS_LEVEL: 100,
     }
 
     # submit form with options
@@ -273,8 +271,6 @@ async def test_options_enable_humidity(
         CONF_TYPE: "interior",
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
-        CONF_MAX_BRIGHTNESS_LEVEL: 200,
-        CONF_MIN_BRIGHTNESS_LEVEL: 100,
     }
 
     # submit form with options

@@ -30,6 +30,8 @@ from ..const import (
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
     CONF_LIGHT_CONTROL,
+    CONF_MAX_BRIGHTNESS_LEVEL,
+    CONF_MIN_BRIGHTNESS_LEVEL,
     CONF_MQTT_ROOM_PRESENCE,
     CONF_NAME,
     CONF_ON_STATES,
@@ -74,6 +76,8 @@ async def test_form(hass: HomeAssistant) -> None:
         "sleep_entity": "",
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
+        CONF_MAX_BRIGHTNESS_LEVEL: 200,
+        CONF_MIN_BRIGHTNESS_LEVEL: 100,
     }
     # assert len(mock_setup_entry.mock_calls) == 1
     await hass.async_block_till_done()
@@ -117,6 +121,8 @@ async def test_options(hass: HomeAssistant, config_entry: MockConfigEntry) -> No
         CONF_ICON: "mdi:texture-box",
         CONF_TYPE: AREA_TYPE_INTERIOR,
         CONF_MQTT_ROOM_PRESENCE: False,
+        CONF_MAX_BRIGHTNESS_LEVEL: 200,
+        CONF_MIN_BRIGHTNESS_LEVEL: 100,
         "bright_entity": "",
         "sleep_entity": "",
     }
@@ -154,6 +160,8 @@ async def test_options_enable_advanced_lights(
         CONF_TYPE: "interior",
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
+        CONF_MAX_BRIGHTNESS_LEVEL: 200,
+        CONF_MIN_BRIGHTNESS_LEVEL: 100,
     }
 
     # submit form with options
@@ -229,6 +237,8 @@ async def test_options_enable_advanced_lights(
         CONF_MAX_BRIGHTNESS_LEVEL: 200,
         "bright_entity": "",
         "sleep_entity": "",
+        CONF_MAX_BRIGHTNESS_LEVEL: 200,
+        CONF_MIN_BRIGHTNESS_LEVEL: 100,
     }
     await hass.async_block_till_done()
     await hass.config_entries.async_unload(config_entry.entry_id)
@@ -263,6 +273,8 @@ async def test_options_enable_humidity(
         CONF_TYPE: "interior",
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
+        CONF_MAX_BRIGHTNESS_LEVEL: 200,
+        CONF_MIN_BRIGHTNESS_LEVEL: 100,
     }
 
     # submit form with options
@@ -307,6 +319,8 @@ async def test_options_enable_humidity(
         CONF_MQTT_ROOM_PRESENCE: False,
         "bright_entity": "",
         "sleep_entity": "",
+        CONF_MAX_BRIGHTNESS_LEVEL: 200,
+        CONF_MIN_BRIGHTNESS_LEVEL: 100,
     }
     await hass.async_block_till_done()
     await hass.config_entries.async_unload(config_entry.entry_id)

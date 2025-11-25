@@ -19,12 +19,10 @@ from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorDevic
 from homeassistant.components.sun import DOMAIN as SUN_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.const import (
-    STATE_ALARM_TRIGGERED,
     STATE_HOME,
     STATE_ON,
     STATE_OPEN,
     STATE_PLAYING,
-    STATE_PROBLEM,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
@@ -320,7 +318,6 @@ DISTRESS_SENSOR_CLASSES = [
     BinarySensorDeviceClass.SAFETY,
     BinarySensorDeviceClass.GAS,
 ]  # @todo make configurable
-DISTRESS_STATES = [STATE_ALARM_TRIGGERED, STATE_ON, STATE_PROBLEM]
 
 # Aggregates
 AGGREGATE_SENSOR_CLASSES = (

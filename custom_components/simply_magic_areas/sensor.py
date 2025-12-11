@@ -218,7 +218,7 @@ class MagicStatisticsSensor(MagicEntity, StatisticsSensor):
         entity = self.hass.states.get(self._source_entity_id)
         if entity and entity.state:
             entity.last_updated = datetime.now(UTC)
-            self._add_state_to_queue(entity)
+            self._add_state_to_queue(entity, last_reported_timestamp=entity.last_updated)
         await self.async_update()
         self.async_write_ha_state()
 

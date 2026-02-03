@@ -56,6 +56,8 @@ def get_meta_area_object(name: str) -> AreaEntry:
         "icon": None,
         "floor_id": None,
         "labels": set(),
+        "humidity_entity_id": None,
+        "temperature_entity_id": None,
     }
 
     # We have to introspect the AreaEntry constructor

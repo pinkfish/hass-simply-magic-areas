@@ -14,7 +14,7 @@ pytest-homeassistant-custom-component==0.13.311
 hassil>=1.7.0
 home-assistant-intents>=2024.12.5
 
-aiohttp_cors==0.7.0
+aiohttp_cors==0.8.1
 
 
 # Types

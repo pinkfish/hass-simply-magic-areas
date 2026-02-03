@@ -297,17 +297,16 @@ class ConfigFlow(config_entries.ConfigFlow, ConfigBase, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry):
+    def async_get_options_flow():
         """Get the options flow for this handler."""
-        return OptionsFlowHandler(config_entry)
+        return OptionsFlowHandler()
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
     """Handle a option flow for Adaptive Lighting."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+    def __init__(self) -> None:
         """Initialize options flow."""
-        self.config_entry: config_entries.ConfigEntry = config_entry
         self.data = None
         self.area = None
         self.all_entities: list[str] = []

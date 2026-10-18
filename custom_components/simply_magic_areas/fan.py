@@ -1,7 +1,7 @@
 """Fan controls for magic areas."""
 
-from datetime import UTC, datetime
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
@@ -221,7 +221,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self.name,
             to_state,
             from_state,
-            self._attr_extra_state_attributes.get(ATTR_HUMIDITY_UP, False),
+            self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False),
             self.is_on,
         )
 
@@ -233,7 +233,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if to_state == AreaState.AREA_STATE_EXTENDED:
             self._turn_on_fan()
         elif self.is_on and not self._attr_extra_state_attributes.get(
-            ATTR_HUMIDITY_UP, False
+            ATTR_HUMIDITY_ON, False
         ):
             self._turn_off_fan()
         else:
@@ -317,7 +317,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         _LOGGER.debug("Fans on %s", fans_on)
         if fans_on:
             self._turn_on_fan()
-        else:
+        elif self.area.state != AreaState.AREA_STATE_EXTENDED:
             self._turn_off_fan()
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:

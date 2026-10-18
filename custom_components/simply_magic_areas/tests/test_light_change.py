@@ -4,8 +4,6 @@ import asyncio
 import logging
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
@@ -19,6 +17,7 @@ from homeassistant.const import (
     STATE_ON,
 )
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from .common import async_mock_service
 from .mocks import MockBinarySensor, MockSensor
@@ -321,3 +320,73 @@ async def test_light_on_off_with_mqtt_room(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     assert area_binary_sensor.state == "clear"
+
+
+async def test_substate_transition_lights_off_vs_on(
+    hass: HomeAssistant,
+    config_entry_entities: MockConfigEntry,
+    one_light: list[str],
+    one_motion: list[MockBinarySensor],
+    _setup_integration_entities: None,
+) -> None:
+    """Test that transitioning between substates when lights are off does not turn them on, but updates when on."""
+    # Ensure system control is on
+    service_data = {
+        ATTR_ENTITY_ID: f"{SWITCH_DOMAIN}.simply_magic_areas_system_control_kitchen",
+    }
+    await hass.services.async_call(SWITCH_DOMAIN, SERVICE_TURN_ON, service_data)
+    await hass.async_block_till_done()
+
+    # Ensure motion sensor is off initially
+    one_motion[0].turn_off()
+    one_motion[1].turn_off()
+    one_motion[2].turn_off()
+    one_motion[3].turn_off()
+    await hass.async_block_till_done()
+    await asyncio.sleep(1)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "clear"
+
+    calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_on")
+
+    # Transition bright -> sleep while lights are off/clear: lights must not turn on
+    one_motion[2].turn_on()  # bright
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.5)
+
+    one_motion[2].turn_off()
+    one_motion[1].turn_on()  # sleep
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.5)
+
+    # No light turn_on calls should have occurred because lights were not on
+    assert len(calls) == 0
+
+    # Now someone enters the room -> occupied in sleep state
+    one_motion[0].turn_on()  # motion on
+    await hass.async_block_till_done()
+    await asyncio.sleep(1)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "sleep"
+    assert len(calls) == 1
+    # Sleep mode sets dim_level 30% -> 76 brightness
+    assert calls[-1].data["brightness"] == 76
+
+    # Now while lights are on, change from sleep to bright
+    one_motion[1].turn_off()  # sleep off
+    one_motion[2].turn_on()   # bright on
+    await hass.async_block_till_done()
+    await asyncio.sleep(1)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "bright"
+    # Lights update to bright values (dim level 0% -> turns off)
+    assert len(calls) >= 1

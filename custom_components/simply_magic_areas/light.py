@@ -1,13 +1,15 @@
 """Light controls for magic areas."""
 
-from datetime import datetime
 import logging
+from datetime import datetime
 
 from homeassistant.components.group.light import LightGroup
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
-    DOMAIN as LIGHT_DOMAIN,
     LightEntityDescription,
+)
+from homeassistant.components.light import (
+    DOMAIN as LIGHT_DOMAIN,
 )
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
@@ -206,6 +208,11 @@ class AreaLightGroup(MagicEntity, LightGroup):
             )
             return
         to_state = AreaState(event.data["new_state"].state)
+        from_state = (
+            AreaState(event.data["old_state"].state)
+            if event.data["old_state"].state in AreaState
+            else None
+        )
 
         _LOGGER.debug(
             "Light group %s. New state: %s / Last state %s",
@@ -214,10 +221,54 @@ class AreaLightGroup(MagicEntity, LightGroup):
             from_state,
         )
 
-        if to_state is not None and self.area.has_configured_state(to_state):
-            conf = self.area.state_config(to_state)
-            if conf is not None:
-                self._turn_on_light(conf)
+        occupied_states = {
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_BRIGHT,
+            AreaState.AREA_STATE_SLEEP,
+            AreaState.AREA_STATE_ACCENTED,
+        }
+
+        if to_state == AreaState.AREA_STATE_CLEAR:
+            self._turn_off_light()
+            return
+
+        if to_state == AreaState.AREA_STATE_MANUAL:
+            _LOGGER.debug("%s: In manual mode, leaving lights as is", self.name)
+            return
+
+        if to_state in occupied_states:
+            # If changing between occupied/substates (e.g. bright to sleep)
+            if from_state in occupied_states:
+                # If lights are on, update to the new substate values
+                if self.is_on:
+                    if self.area.has_configured_state(to_state):
+                        conf = self.area.state_config(to_state)
+                        if conf is not None:
+                            self._turn_on_light(conf)
+                else:
+                    _LOGGER.debug(
+                        "%s: Lights are off; maintaining state on transition from %s to %s",
+                        self.name,
+                        from_state,
+                        to_state,
+                    )
+                return
+
+            # Transition from non-occupied (clear/extended) to occupied/substate: turn on lights
+            if self.area.has_configured_state(to_state):
+                conf = self.area.state_config(to_state)
+                if conf is not None:
+                    self._turn_on_light(conf)
+            return
+
+        if to_state == AreaState.AREA_STATE_EXTENDED:
+            if self.area.has_configured_state(to_state):
+                conf = self.area.state_config(to_state)
+                if conf is not None:
+                    self._turn_on_light(conf)
+            else:
+                self._turn_off_light()
+            return
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
         if self.area.state != AreaState.AREA_STATE_CLEAR:
@@ -327,6 +378,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         _LOGGER.debug("Turning on lights")
         self.last_update_from_entity = True
+        self._attr_is_on = True
         service_data = {
             ATTR_ENTITY_ID: self.entity_id,
             ATTR_BRIGHTNESS: brightness,
@@ -345,6 +397,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             return
 
         self.last_update_from_entity = True
+        self._attr_is_on = False
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         # await self.async_turn_off()
         self.hass.services.call(LIGHT_DOMAIN, SERVICE_TURN_OFF, service_data)

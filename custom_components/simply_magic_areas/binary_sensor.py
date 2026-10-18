@@ -66,13 +66,6 @@ async def async_setup_entry(
             )
             continue
 
-        if ATTR_UNIT_OF_MEASUREMENT not in entity:
-            _LOGGER.debug(
-                "Entity %s does not have unit_of_measurement defined",
-                entity[ATTR_ENTITY_ID],
-            )
-            continue
-
         # Dictionary of sensors by device class.
         device_class = entity[ATTR_DEVICE_CLASS]
         entities = entities_by_device_class.get(device_class, [])
@@ -188,11 +181,13 @@ class AreaSensorGroupBinarySensor(MagicEntity, BinarySensorGroup):
         )
         BinarySensorGroup.__init__(
             self,
+            unique_id=self._attr_unique_id,
+            name="",
             device_class=device_class,
             entity_ids=entity_ids,
             mode=device_class in AGGREGATE_MODE_ALL,
-            unique_id=self._attr_unique_id,
         )
+        delattr(self, "_attr_name")
 
         self.area = area
 
@@ -207,5 +202,5 @@ class AreaSensorGroupBinarySensor(MagicEntity, BinarySensorGroup):
             )
             self._attr_is_on = last_state.state == STATE_ON
             self._attr_extra_state_attributes = dict(last_state.attributes)
-        await super().async_added_to_hass()
+        await BinarySensorGroup.async_added_to_hass(self)
         self.async_write_ha_state()

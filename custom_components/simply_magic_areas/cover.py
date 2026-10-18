@@ -5,6 +5,7 @@ import logging
 from homeassistant.components.cover import (
     DEVICE_CLASSES as COVER_DEVICE_CLASSES,
     DOMAIN as COVER_DOMAIN,
+    CoverDeviceClass,
 )
 from homeassistant.components.group.cover import CoverGroup
 from homeassistant.config_entries import ConfigEntry
@@ -66,22 +67,21 @@ class AreaCoverGroup(MagicEntity, CoverGroup):
     """Cover group for handling all the covers in the area."""
 
     def __init__(
-        self, area: MagicArea, device_class: str, entity_ids: list[str]
+        self, area: MagicArea, device_class: str | None, entity_ids: list[str]
     ) -> None:
         """Initialize the cover group."""
-        MagicEntity.__init__(self, area=area, translation_key=f"cover_{device_class}")
+        translation_key = f"cover_{device_class}" if device_class else "cover"
+        MagicEntity.__init__(
+            self, area=area, domain=COVER_DOMAIN, translation_key=translation_key
+        )
         CoverGroup.__init__(
             self,
-            unique_id=f"simply_magic_area_cover_{device_class}",
-            entity_ids=entity_ids,
+            self.unique_id,
+            "",
+            entity_ids,
         )
-
-        CoverGroup.__init__(
-            self, self.unique_id, "", self._attributes[ATTR_COVER_ENTITY_ID]
-        )
-        self._attr_device_class = device_class
-        self._attr_extra_state_attributes[ATTR_COVER_ENTITY_ID] = [
-            e[ATTR_ENTITY_ID] for e in self._entities
-        ]
+        if device_class:
+            self._attr_device_class = CoverDeviceClass(device_class)
+        self._attr_extra_state_attributes[ATTR_COVER_ENTITY_ID] = entity_ids
 
         delattr(self, "_attr_name")

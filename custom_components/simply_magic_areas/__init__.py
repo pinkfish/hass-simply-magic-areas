@@ -152,7 +152,7 @@ async def async_setup_entry(
 
     # Wait for Hass to have started before setting up.
     if hass.is_running:
-        hass.async_create_task(_async_setup_integration())
+        await _async_setup_integration()
     else:
         hass.bus.async_listen_once(
             EVENT_HOMEASSISTANT_STARTED, _async_setup_integration

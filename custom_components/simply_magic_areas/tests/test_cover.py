@@ -44,3 +44,35 @@ async def test_cover_no_aggregation(
         assert not fan.is_closed
     assert control_entity.state == STATE_ON
     assert area_binary_sensor.state == "clear"
+
+
+async def test_cover_with_groups(
+    hass: HomeAssistant,
+    one_cover: list[MockCover],
+) -> None:
+    """Test loading cover with aggregation enabled."""
+    from homeassistant.helpers.area_registry import async_get as async_get_ar
+    from homeassistant.setup import async_setup_component
+    from .conftest import AREA_NAME, CONFIG_ENTRY_DATA
+    from ..const import CONF_COVER_GROUPS, CONF_ENABLED_FEATURES
+
+    data = dict(CONFIG_ENTRY_DATA)
+    data[CONF_ENABLED_FEATURES] = {
+        **data.get(CONF_ENABLED_FEATURES, {}),
+        CONF_COVER_GROUPS: {},
+    }
+    entry = MockConfigEntry(domain=DOMAIN, data=data)
+    entry.add_to_hass(hass)
+    registry = async_get_ar(hass)
+    registry.async_get_or_create(AREA_NAME)
+
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+    cover_entity = hass.states.get(
+        f"{COVER_DOMAIN}.simply_magic_areas_cover_awning_kitchen"
+    )
+    assert cover_entity is not None
+
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

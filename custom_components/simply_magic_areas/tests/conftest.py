@@ -13,6 +13,11 @@ from homeassistant.components.binary_sensor import (
     DOMAIN as BINARY_SENSOR_DOMAIN,
     BinarySensorDeviceClass,
 )
+from homeassistant.components.climate import (
+    DOMAIN as CLIMATE_DOMAIN,
+    ClimateEntityFeature,
+    HVACMode,
+)
 from homeassistant.components.cover import DOMAIN as COVER_DOMAIN, CoverDeviceClass
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.light import (
@@ -48,7 +53,14 @@ from ..const import (
     DOMAIN,
 )
 from .common import setup_mqtt_room_component_platform, setup_test_component_platform
-from .mocks import MockBinarySensor, MockCover, MockFan, MockSensor
+from .mocks import (
+    MockBinarySensor,
+    MockClimate,
+    MockCover,
+    MockFan,
+    MockMediaPlayer,
+    MockSensor,
+)
 
 AREA_NAME = "kitchen"
 _LOGGER = logging.getLogger(__name__)
@@ -225,6 +237,57 @@ async def setup_one_cover(hass: HomeAssistant) -> list[MockCover]:
         area_id=AREA_NAME,
     )
     return mock_cover_entities
+
+
+@pytest.fixture(name="one_climate")
+async def setup_one_climate(hass: HomeAssistant) -> list[MockClimate]:
+    """Create one mock climate entity and setup the system with it."""
+    mock_climate_entities = [
+        MockClimate(
+            name="climate",
+            unique_id="unique_climate",
+            hvac_mode=HVACMode.OFF,
+            supported_features=(
+                ClimateEntityFeature.TARGET_TEMPERATURE
+                | ClimateEntityFeature.FAN_MODE
+                | ClimateEntityFeature.SWING_MODE
+                | ClimateEntityFeature.PRESET_MODE
+            ),
+        ),
+    ]
+    setup_test_component_platform(hass, CLIMATE_DOMAIN, mock_climate_entities)
+    assert await async_setup_component(
+        hass, CLIMATE_DOMAIN, {CLIMATE_DOMAIN: {CONF_PLATFORM: "test"}}
+    )
+    await hass.async_block_till_done()
+    entity_registry = async_get_er(hass)
+    entity_registry.async_update_entity(
+        "climate.climate",
+        area_id=AREA_NAME,
+    )
+    return mock_climate_entities
+
+
+@pytest.fixture(name="one_media_player")
+async def setup_one_media_player(hass: HomeAssistant) -> list[MockMediaPlayer]:
+    """Create one mock media player entity and setup the system with it."""
+    mock_media_player_entities = [
+        MockMediaPlayer(
+            name="media player",
+            unique_id="unique_media_player",
+        ),
+    ]
+    setup_test_component_platform(hass, MEDIA_PLAYER_DOMAIN, mock_media_player_entities)
+    assert await async_setup_component(
+        hass, MEDIA_PLAYER_DOMAIN, {MEDIA_PLAYER_DOMAIN: {CONF_PLATFORM: "test"}}
+    )
+    await hass.async_block_till_done()
+    entity_registry = async_get_er(hass)
+    entity_registry.async_update_entity(
+        "media_player.media_player",
+        area_id=AREA_NAME,
+    )
+    return mock_media_player_entities
 
 
 @pytest.fixture(name="one_sensor_light")

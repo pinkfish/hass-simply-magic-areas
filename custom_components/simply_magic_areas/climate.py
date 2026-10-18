@@ -47,6 +47,7 @@ from homeassistant.components.group.util import (
     reduce_attribute,
     states_equal,
 )
+from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_ENTITY_ID,
@@ -54,12 +55,13 @@ from homeassistant.const import (
     ATTR_TEMPERATURE,
     STATE_UNAVAILABLE,
 )
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
+from .config.entity_names import EntityNames
 from .const import (
     CONF_CLIMATE_GROUPS_TURN_ON_STATE,
     CONF_FEATURE_CLIMATE_GROUPS,
@@ -131,6 +133,7 @@ class ClimateGroup(GroupEntity, ClimateEntity):
     ) -> None:
         """Initialize a climate group."""
         self._climate_entity_ids = entity_ids
+        self._entity_ids = entity_ids
 
         self._attr_name = name
         self._attr_unique_id = unique_id
@@ -139,7 +142,7 @@ class ClimateGroup(GroupEntity, ClimateEntity):
         self._attr_temperature_unit = temperature_unit
 
         # Set some defaults (will be overwritten on update)
-        self._attr_supported_features = 0
+        self._attr_supported_features = ClimateEntityFeature(0)
         self._attr_hvac_modes = [HVACMode.OFF]
         self._attr_hvac_mode = None
         self._attr_hvac_action = None
@@ -271,10 +274,11 @@ class ClimateGroup(GroupEntity, ClimateEntity):
         self._attr_preset_mode = most_frequent_attribute(states, ATTR_PRESET_MODE)
 
         # Supported flags
+        self._attr_supported_features = ClimateEntityFeature(0)
         for support in find_state_attributes(states, ATTR_SUPPORTED_FEATURES):
             # Merge supported features by emulating support for every feature
             # we find.
-            self._attr_supported_features |= support
+            self._attr_supported_features |= ClimateEntityFeature(support)
 
         # Bitwise-and the supported features with the Grouped climate's features
         # so that we don't break in the future when a new feature is added.
@@ -359,9 +363,11 @@ class ClimateGroup(GroupEntity, ClimateEntity):
 class AreaClimateGroup(MagicEntity, ClimateGroup):
     """Climate group for the meta area."""
 
-    def __init__(self, area, entities):
+    def __init__(self, area: MagicArea, entities: list[str]) -> None:
         """Initialize the climate group."""
-        MagicEntity.__init__(self, area)
+        MagicEntity.__init__(
+            self, area=area, domain=CLIMATE_DOMAIN, translation_key="climate"
+        )
 
         name = f"Area Climate ({area.name})"
 
@@ -369,13 +375,58 @@ class AreaClimateGroup(MagicEntity, ClimateGroup):
         self._entities = entities
         unit = self.area.hass.config.units.temperature_unit
 
-        ClimateGroup.__init__(self, self.unique_id, self._name, self._entities, unit)
+        ClimateGroup.__init__(self, self.unique_id, "", self._entities, unit)
+        delattr(self, "_attr_name")
 
         _LOGGER.debug(
-            f"Climate group {self._name} created with entities: {self._entities}"
+            f"Climate group {self.unique_id} created with entities: {self._entities}"
         )
 
+    async def async_added_to_hass(self) -> None:
+        """Register callbacks."""
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass,
+                [self.area.simply_magic_entity_id(SENSOR_DOMAIN, EntityNames.STATE)],
+                self._area_state_changed,
+            )
+        )
+        await super().async_added_to_hass()
+
+    def _area_state_changed(self, event: Event[EventStateChangedData]) -> None:
+        if self.area.is_meta():
+            _LOGGER.debug(f"{self.area.name} is meta. Noop.")
+            return
+
+        new_state = event.data.get("new_state")
+        if new_state is None:
+            return
+
+        _LOGGER.debug(f"Climate group {self.name} detected area state change")
+
+        if (
+            new_state.state == AreaState.AREA_STATE_CLEAR
+            and self._attr_hvac_action != HVACAction.OFF
+        ):
+            _LOGGER.debug(
+                f"{self.area.name}: Area clear, turning off Climate {self.entity_id}"
+            )
+            return self._turn_off()
+
+        configured_state = self.area.feature_config(
+            CONF_FEATURE_CLIMATE_GROUPS
+        ).get(
+            CONF_CLIMATE_GROUPS_TURN_ON_STATE, DEFAULT_CLIMATE_GROUPS_TURN_ON_STATE
+        )
+
+        if new_state.state == configured_state:
+            _LOGGER.debug(
+                f"{self.area.name}: Area on {configured_state}, turning on Climate {self.entity_id}"
+            )
+            return self._turn_on()
+
     def area_state_changed(self, area_id, states_tuple):
+        """Legacy callback support."""
         if self.area.is_meta():
             _LOGGER.debug(f"{self.area.name} is meta. Noop.")
             return
@@ -388,7 +439,7 @@ class AreaClimateGroup(MagicEntity, ClimateGroup):
             )
             return
 
-        _LOGGER.debug(f"Climate group {self.name} detected area state change")
+        _LOGGER.debug(f"Climate group {self.unique_id} detected area state change")
 
         if (
             AreaState.AREA_STATE_CLEAR in new_states
@@ -399,18 +450,17 @@ class AreaClimateGroup(MagicEntity, ClimateGroup):
             )
             return self._turn_off()
 
-        if self.area.is_occupied() and self._attr_hvac_action == HVACAction.OFF:
-            configured_state = self.area.feature_config(
-                CONF_FEATURE_CLIMATE_GROUPS
-            ).get(
-                CONF_CLIMATE_GROUPS_TURN_ON_STATE, DEFAULT_CLIMATE_GROUPS_TURN_ON_STATE
-            )
+        configured_state = self.area.feature_config(
+            CONF_FEATURE_CLIMATE_GROUPS
+        ).get(
+            CONF_CLIMATE_GROUPS_TURN_ON_STATE, DEFAULT_CLIMATE_GROUPS_TURN_ON_STATE
+        )
 
-            if (
-                not self.area.has_state(configured_state)
-                or configured_state not in new_states
-            ):
-                return
+        if configured_state in new_states:
+            _LOGGER.debug(
+                f"{self.area.name}: Area on {configured_state}, turning on Climate {self.entity_id}"
+            )
+            return self._turn_on()
 
             _LOGGER.debug(
                 f"{self.area.name}: Area on {configured_state}, turning on Climate {self.entity_id}"

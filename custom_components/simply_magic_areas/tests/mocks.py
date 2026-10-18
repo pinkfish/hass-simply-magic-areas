@@ -14,9 +14,18 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.components.climate import (
+    ClimateEntity,
+    ClimateEntityFeature,
+    HVACMode,
+)
 from homeassistant.components.cover import CoverEntity, CoverEntityFeature
 from homeassistant.components.fan import FanEntity
 from homeassistant.components.light import ColorMode, LightEntity
+from homeassistant.components.media_player import (
+    MediaPlayerEntity,
+    MediaPlayerEntityFeature,
+)
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -532,3 +541,140 @@ class MockCover(MockEntity, CoverEntity):
 
         await super().async_added_to_hass()
         self.async_write_ha_state()
+
+
+class MockClimate(MockEntity, ClimateEntity):
+    """Mock Climate class."""
+
+    def __init__(self, **values: Any) -> None:
+        """Initialize mock climate entity."""
+        super().__init__(**values)
+        self._attr_hvac_mode = values.get("hvac_mode", HVACMode.OFF)
+        self._attr_hvac_modes = values.get(
+            "hvac_modes", [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL]
+        )
+        self._attr_supported_features = values.get(
+            "supported_features",
+            ClimateEntityFeature.TARGET_TEMPERATURE,
+        )
+        self._attr_target_temperature = values.get("target_temperature", 20.0)
+        self._attr_current_temperature = values.get("current_temperature", 21.0)
+        self._attr_temperature_unit = values.get("temperature_unit", "°C")
+
+        self._attr_fan_mode = values.get("fan_mode", "auto")
+        self._attr_fan_modes = values.get("fan_modes", ["auto", "low", "high"])
+        self._attr_swing_mode = values.get("swing_mode", "off")
+        self._attr_swing_modes = values.get("swing_modes", ["on", "off"])
+        self._attr_preset_mode = values.get("preset_mode", "eco")
+        self._attr_preset_modes = values.get("preset_modes", ["eco", "comfort"])
+
+    @property
+    def hvac_mode(self) -> HVACMode:
+        return self._attr_hvac_mode
+
+    @property
+    def hvac_modes(self) -> list[HVACMode]:
+        return self._attr_hvac_modes
+
+    @property
+    def supported_features(self) -> ClimateEntityFeature:
+        return self._attr_supported_features
+
+    @property
+    def target_temperature(self) -> float:
+        return self._attr_target_temperature
+
+    @property
+    def current_temperature(self) -> float:
+        return self._attr_current_temperature
+
+    @property
+    def temperature_unit(self) -> str:
+        return self._attr_temperature_unit
+
+    @property
+    def fan_mode(self) -> str | None:
+        return self._attr_fan_mode
+
+    @property
+    def fan_modes(self) -> list[str] | None:
+        return self._attr_fan_modes
+
+    @property
+    def swing_mode(self) -> str | None:
+        return self._attr_swing_mode
+
+    @property
+    def swing_modes(self) -> list[str] | None:
+        return self._attr_swing_modes
+
+    @property
+    def preset_mode(self) -> str | None:
+        return self._attr_preset_mode
+
+    @property
+    def preset_modes(self) -> list[str] | None:
+        return self._attr_preset_modes
+
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        self._attr_hvac_mode = hvac_mode
+        self.async_write_ha_state()
+
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        if "temperature" in kwargs:
+            self._attr_target_temperature = kwargs["temperature"]
+        self.async_write_ha_state()
+
+    async def async_set_fan_mode(self, fan_mode: str) -> None:
+        self._attr_fan_mode = fan_mode
+        self.async_write_ha_state()
+
+    async def async_set_swing_mode(self, swing_mode: str) -> None:
+        self._attr_swing_mode = swing_mode
+        self.async_write_ha_state()
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        self._attr_preset_mode = preset_mode
+        self.async_write_ha_state()
+
+
+class MockMediaPlayer(MockEntity, MediaPlayerEntity):
+    """Mock Media Player class."""
+
+    def __init__(self, **values: Any) -> None:
+        """Initialize mock media player entity."""
+        super().__init__(**values)
+        self._attr_state = values.get("state", STATE_OFF)
+        self._attr_supported_features = values.get(
+            "supported_features",
+            MediaPlayerEntityFeature.PLAY
+            | MediaPlayerEntityFeature.PAUSE
+            | MediaPlayerEntityFeature.TURN_OFF
+            | MediaPlayerEntityFeature.TURN_ON
+            | MediaPlayerEntityFeature.PLAY_MEDIA,
+        )
+        self.played_media: list[tuple[str, str, dict[str, Any]]] = []
+
+    @property
+    def state(self) -> str:
+        return self._attr_state
+
+    @property
+    def supported_features(self) -> MediaPlayerEntityFeature:
+        return self._attr_supported_features
+
+    async def async_turn_on(self) -> None:
+        self._attr_state = STATE_ON
+        self.async_write_ha_state()
+
+    async def async_turn_off(self) -> None:
+        self._attr_state = STATE_OFF
+        self.async_write_ha_state()
+
+    async def async_play_media(
+        self, media_type: str, media_id: str, **kwargs: Any
+    ) -> None:
+        self.played_media.append((media_type, media_id, kwargs))
+        self._attr_state = STATE_ON
+        self.async_write_ha_state()
+

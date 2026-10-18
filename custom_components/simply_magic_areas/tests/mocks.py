@@ -479,6 +479,13 @@ class MockSensor(MockEntity, SensorEntity):
         await super().async_added_to_hass()
         self.async_write_ha_state()
 
+    def set_state(self, value: Any) -> None:
+        """Update native value and schedule state update."""
+        self._values["native_value"] = value
+        if "native_value" in self.__dict__:
+            del self.__dict__["native_value"]
+        self.schedule_update_ha_state()
+
 
 class MockCover(MockEntity, CoverEntity):
     """Mock Cover class."""

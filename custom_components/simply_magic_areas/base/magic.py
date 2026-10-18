@@ -28,6 +28,7 @@ from ..const import (
     AREA_TYPE_EXTERIOR,
     AREA_TYPE_INTERIOR,
     AREA_TYPE_META,
+    CONF_BRIGHT_LUX_THRESHOLD,
     CONF_ENABLED_FEATURES,
     CONF_EXCLUDE_ENTITIES,
     CONF_FAN_CONTROL,
@@ -36,8 +37,11 @@ from ..const import (
     CONF_FEATURE_HUMIDITY,
     CONF_INCLUDE_ENTITIES,
     CONF_LIGHT_CONTROL,
+    CONF_REFERENCE_BRIGHT_AREA,
+    CONF_REFERENCE_ILLUMINANCE_SENSOR,
     CONF_TYPE,
     DATA_AREA_OBJECT,
+    DEFAULT_BRIGHT_LUX_THRESHOLD,
     DEFAULT_FAN_CONTROL,
     DEFAULT_LIGHT_CONTROL,
     DOMAIN,
@@ -134,9 +138,8 @@ class MagicArea(object):  # noqa: UP004
         data = self.hass.data[MODULE_DATA]
         for area_info in data.values():
             area = area_info[DATA_AREA_OBJECT]
-            if not area.is_meta():
-                if not area.initialized:
-                    return False
+            if not area.is_meta() and not area.initialized:
+                return False
         return True
 
     def _finalize_init(self) -> None:
@@ -144,10 +147,8 @@ class MagicArea(object):  # noqa: UP004
 
         self.hass.bus.async_fire(EVENT_MAGICAREAS_AREA_READY, {"id": self.id})  # type: ignore
 
-        if not self.is_meta():
-            # Check if we finished loading all areas
-            if self.areas_loaded():
-                self.hass.bus.async_fire(EVENT_MAGICAREAS_READY)  # type: ignore
+        if not self.is_meta() and self.areas_loaded():
+            self.hass.bus.async_fire(EVENT_MAGICAREAS_READY)  # type: ignore
 
         area_type = "Meta-Area" if self.is_meta() else "Area"
         _LOGGER.debug("%s: %s initialized", self.slug, area_type)  # type: ignore
@@ -311,7 +312,7 @@ class MagicArea(object):  # noqa: UP004
     def _load_entity_list(self, prefix: str, entity_list: list[str]) -> None:
         for entity_id in entity_list:
             try:
-                entity_component, entity_name = entity_id.split(".")
+                entity_component, _ = entity_id.split(".")
 
                 # Get latest state and create object
                 latest_state = self.hass.states.get(entity_id)
@@ -373,7 +374,20 @@ class MagicArea(object):  # noqa: UP004
             if lg.has_entity:
                 entity_ob = base.get(lg.entity_name())
                 if entity_ob is None:
-                    continue
+                    if lg.enable_state == AreaState.AREA_STATE_BRIGHT and (
+                        int(
+                            base.get(
+                                CONF_BRIGHT_LUX_THRESHOLD,
+                                DEFAULT_BRIGHT_LUX_THRESHOLD,
+                            )
+                        )
+                        > 0
+                        or base.get(CONF_REFERENCE_BRIGHT_AREA)
+                        or base.get(CONF_REFERENCE_ILLUMINANCE_SENSOR)
+                    ):
+                        entity_ob = None
+                    else:
+                        continue
             lights = self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
                 lg.advanced_lights_to_control(), light_entities
             )
@@ -443,9 +457,8 @@ class MagicMetaArea(MagicArea):
         data = hass_object.data[MODULE_DATA]
         for area_info in data.values():
             area = area_info[DATA_AREA_OBJECT]
-            if area.config.get(CONF_TYPE) != AREA_TYPE_META:
-                if not area.initialized:
-                    return False
+            if area.config.get(CONF_TYPE) != AREA_TYPE_META and not area.initialized:
+                return False
 
         return True
 

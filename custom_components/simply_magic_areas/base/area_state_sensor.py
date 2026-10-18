@@ -17,6 +17,7 @@ from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
+    LIGHT_LUX,
     STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
@@ -43,6 +44,8 @@ from ..const import (
     ATTR_PRESENCE_SENSORS,
     ATTR_STATE,
     ATTR_TYPE,
+    CONF_BRIGHT_LUX_HYSTERESIS,
+    CONF_BRIGHT_LUX_THRESHOLD,
     CONF_CLEAR_TIMEOUT,
     CONF_EXTENDED_TIMEOUT,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
@@ -58,9 +61,14 @@ from ..const import (
     CONF_ON_STATES,
     CONF_PRESENCE_DEVICE_PLATFORMS,
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
+    CONF_REFERENCE_BRIGHT_AREA,
     CONF_REFERENCE_HUMIDITY_SENSOR,
+    CONF_REFERENCE_ILLUMINANCE_SENSOR,
     CONF_TYPE,
     CONF_UPDATE_INTERVAL,
+    DATA_AREA_OBJECT,
+    DEFAULT_BRIGHT_LUX_HYSTERESIS,
+    DEFAULT_BRIGHT_LUX_THRESHOLD,
     DEFAULT_HUMIDITY_DEADBAND,
     DEFAULT_HUMIDITY_DELTA_SHUTOFF,
     DEFAULT_HUMIDITY_DELTA_THRESHOLD,
@@ -74,6 +82,7 @@ from ..const import (
     DEFAULT_PRESENCE_DEVICE_SENSOR_CLASS,
     DEFAULT_UPDATE_INTERVAL,
     INVALID_STATES,
+    MODULE_DATA,
 )
 from .entities import MagicEntity
 from .magic import ControlType, MagicArea
@@ -246,6 +255,52 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             )
         )
 
+        # Track local illuminance sensor
+        local_lux_sensor = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.ILLUMINANCE
+        )
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [local_lux_sensor], self._group_entity_state_change
+            )
+        )
+
+        # Track reference illuminance sensor if configured
+        ref_lux_sensor = self.area.config.get(
+            CONF_REFERENCE_ILLUMINANCE_SENSOR,
+            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_REFERENCE_ILLUMINANCE_SENSOR
+            ),
+        )
+        if ref_lux_sensor:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [ref_lux_sensor], self._group_entity_state_change
+                )
+            )
+
+        # Track reference area state and illuminance sensors if configured
+        ref_area = self.area.config.get(
+            CONF_REFERENCE_BRIGHT_AREA,
+            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_REFERENCE_BRIGHT_AREA
+            ),
+        )
+        if ref_area:
+            ref_entities = [
+                self.area.simply_magic_entity_id(
+                    SENSOR_DOMAIN, EntityNames.STATE, area_name=ref_area
+                ),
+                self.area.simply_magic_entity_id(
+                    SENSOR_DOMAIN, EntityNames.ILLUMINANCE, area_name=ref_area
+                ),
+            ]
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, ref_entities, self._group_entity_state_change
+                )
+            )
+
         # Timed self update
         delta = timedelta(
             seconds=self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
@@ -405,8 +460,18 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         # If it is not occupied, then set the override state or leave as just occupied.
         new_state = AreaState.AREA_STATE_OCCUPIED
 
+        if self._is_bright_condition_met():
+            _LOGGER.debug(
+                "%s: Bright condition met, setting state to %s",
+                self.area.name,
+                AreaState.AREA_STATE_BRIGHT,
+            )
+            new_state = AreaState.AREA_STATE_BRIGHT
+
         for state in self.area.all_state_configs():
             conf = self.area.all_state_configs()[state]
+            if conf.for_state == AreaState.AREA_STATE_BRIGHT:
+                continue
             if conf.entity is None:
                 continue
 
@@ -426,6 +491,176 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 new_state = conf.for_state
 
         return new_state
+
+    def _get_bright_lux_threshold(self) -> int:
+        return int(
+            self.area.config.get(
+                CONF_BRIGHT_LUX_THRESHOLD,
+                self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                    CONF_BRIGHT_LUX_THRESHOLD, DEFAULT_BRIGHT_LUX_THRESHOLD
+                ),
+            )
+        )
+
+    def _get_bright_lux_hysteresis(self) -> int:
+        return int(
+            self.area.config.get(
+                CONF_BRIGHT_LUX_HYSTERESIS,
+                self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                    CONF_BRIGHT_LUX_HYSTERESIS, DEFAULT_BRIGHT_LUX_HYSTERESIS
+                ),
+            )
+        )
+
+    def _get_effective_illuminance(self) -> float | None:
+        """Get the current illuminance value for this area from local or reference sensors."""
+        # 1. Local illuminance sensor
+        local_lux_sensor = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.ILLUMINANCE
+        )
+        state = self.hass.states.get(local_lux_sensor)
+        if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            try:
+                return float(state.state)
+            except (ValueError, TypeError):
+                pass
+
+        if SENSOR_DOMAIN in self.area.entities:
+            for entity in self.area.entities[SENSOR_DOMAIN]:
+                if (
+                    entity.get(ATTR_DEVICE_CLASS) == SensorDeviceClass.ILLUMINANCE
+                    or entity.get("unit_of_measurement") == LIGHT_LUX
+                ):
+                    state = self.hass.states.get(entity[ATTR_ENTITY_ID])
+                    if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                        try:
+                            return float(state.state)
+                        except (ValueError, TypeError):
+                            pass
+
+        # 2. Reference illuminance sensor
+        ref_sensor = self.area.config.get(
+            CONF_REFERENCE_ILLUMINANCE_SENSOR,
+            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_REFERENCE_ILLUMINANCE_SENSOR
+            ),
+        )
+        if ref_sensor:
+            state = self.hass.states.get(ref_sensor)
+            if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    pass
+
+        # 3. Reference area illuminance sensor
+        ref_area = self.area.config.get(
+            CONF_REFERENCE_BRIGHT_AREA,
+            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_REFERENCE_BRIGHT_AREA
+            ),
+        )
+        if ref_area:
+            ref_lux_sensor = self.area.simply_magic_entity_id(
+                SENSOR_DOMAIN, EntityNames.ILLUMINANCE, area_name=ref_area
+            )
+            state = self.hass.states.get(ref_lux_sensor)
+            if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    pass
+
+            if MODULE_DATA in self.hass.data:
+                for entry in self.hass.data[MODULE_DATA].values():
+                    area = entry.get(DATA_AREA_OBJECT)
+                    if (
+                        area
+                        and (
+                            area.id == ref_area
+                            or area.slug == ref_area
+                            or area.name == ref_area
+                        )
+                        and SENSOR_DOMAIN in area.entities
+                    ):
+                        for entity in area.entities[SENSOR_DOMAIN]:
+                            if (
+                                entity.get(ATTR_DEVICE_CLASS)
+                                == SensorDeviceClass.ILLUMINANCE
+                                or entity.get("unit_of_measurement") == LIGHT_LUX
+                            ):
+                                state = self.hass.states.get(entity[ATTR_ENTITY_ID])
+                                if state and state.state not in (
+                                    STATE_UNKNOWN,
+                                    STATE_UNAVAILABLE,
+                                ):
+                                    try:
+                                        return float(state.state)
+                                    except (ValueError, TypeError):
+                                        pass
+
+        return None
+
+    def _is_bright_condition_met(self) -> bool:
+        """Evaluate if bright condition is met via Direct Lux, Reference Area/Sensor, or binary entity."""
+        threshold = self._get_bright_lux_threshold()
+        hysteresis = self._get_bright_lux_hysteresis()
+
+        # Tier 1 & Tier 2 numeric lux check
+        if threshold > 0:
+            lux = self._get_effective_illuminance()
+            if lux is not None:
+                is_currently_bright = self.area.state == AreaState.AREA_STATE_BRIGHT
+                effective_threshold = (
+                    (threshold - hysteresis) if is_currently_bright else threshold
+                )
+                return lux >= effective_threshold
+
+        # Tier 2 reference area state check
+        ref_area = self.area.config.get(
+            CONF_REFERENCE_BRIGHT_AREA,
+            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_REFERENCE_BRIGHT_AREA
+            ),
+        )
+        if ref_area:
+            if MODULE_DATA in self.hass.data:
+                for entry in self.hass.data[MODULE_DATA].values():
+                    area = entry.get(DATA_AREA_OBJECT)
+                    if (
+                        area
+                        and (
+                            area.id == ref_area
+                            or area.slug == ref_area
+                            or area.name == ref_area
+                        )
+                        and area.state == AreaState.AREA_STATE_BRIGHT
+                    ):
+                        return True
+            ref_state_entity = self.area.simply_magic_entity_id(
+                SENSOR_DOMAIN, EntityNames.STATE, area_name=ref_area
+            )
+            state_obj = self.hass.states.get(ref_state_entity)
+            if state_obj and state_obj.state == AreaState.AREA_STATE_BRIGHT:
+                return True
+
+        # Tier 3 binary bright_entity check
+        bright_conf = self.area.all_state_configs().get(AreaState.AREA_STATE_BRIGHT)
+        if bright_conf and bright_conf.entity:
+            entity = self.hass.states.get(bright_conf.entity)
+            if entity and entity.state.lower() == bright_conf.entity_state_on:
+                return True
+        else:
+            bright_entity = self.area.config.get("bright_entity")
+            if bright_entity:
+                entity = self.hass.states.get(bright_entity)
+                check_state = self.area.feature_config(
+                    CONF_FEATURE_ADVANCED_LIGHT_GROUPS
+                ).get("bright_state_check", STATE_ON)
+                if entity and entity.state.lower() == check_state.lower():
+                    return True
+
+        return False
 
     @callback
     def _update_state(self, extra: datetime) -> None:

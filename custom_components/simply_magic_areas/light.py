@@ -11,15 +11,24 @@ from homeassistant.components.light import (
 from homeassistant.components.light import (
     DOMAIN as LIGHT_DOMAIN,
 )
-from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
+from homeassistant.components.sensor import (
+    DOMAIN as SENSOR_DOMAIN,
+)
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+)
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
+    LIGHT_LUX,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
     STATE_OFF,
     STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
 )
 from homeassistant.core import (
     CALLBACK_TYPE,
@@ -45,6 +54,8 @@ from .const import (
     CONF_MANUAL_TIMEOUT,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
+    CONF_REFERENCE_BRIGHT_AREA,
+    CONF_REFERENCE_ILLUMINANCE_SENSOR,
     DATA_AREA_OBJECT,
     DEFAULT_MANUAL_TIMEOUT,
     DEFAULT_MAX_BRIGHTNESS_LEVEL,
@@ -508,15 +519,74 @@ class AreaLightGroup(MagicEntity, LightGroup):
         )
 
         sensor_entity = self.hass.states.get(entity_id)
-        if sensor_entity is None:
+
+        # Fallback to reference illuminance sensor or reference area if local sensor missing
+        if sensor_entity is None or sensor_entity.state in (
+            STATE_UNKNOWN,
+            STATE_UNAVAILABLE,
+        ):
+            ref_sensor = self.area.config.get(CONF_REFERENCE_ILLUMINANCE_SENSOR)
+            if ref_sensor:
+                ref_state = self.hass.states.get(ref_sensor)
+                if ref_state and ref_state.state not in (
+                    STATE_UNKNOWN,
+                    STATE_UNAVAILABLE,
+                ):
+                    sensor_entity = ref_state
+
+        if sensor_entity is None or sensor_entity.state in (
+            STATE_UNKNOWN,
+            STATE_UNAVAILABLE,
+        ):
+            ref_area = self.area.config.get(CONF_REFERENCE_BRIGHT_AREA)
+            if ref_area:
+                ref_lux_id = self.area.simply_magic_entity_id(
+                    SENSOR_DOMAIN, EntityNames.ILLUMINANCE, area_name=ref_area
+                )
+                ref_state = self.hass.states.get(ref_lux_id)
+                if ref_state and ref_state.state not in (
+                    STATE_UNKNOWN,
+                    STATE_UNAVAILABLE,
+                ):
+                    sensor_entity = ref_state
+                elif MODULE_DATA in self.hass.data:
+                    for entry in self.hass.data[MODULE_DATA].values():
+                        area = entry.get(DATA_AREA_OBJECT)
+                        if (
+                            area
+                            and (
+                                area.id == ref_area
+                                or area.slug == ref_area
+                                or area.name == ref_area
+                            )
+                            and SENSOR_DOMAIN in area.entities
+                        ):
+                            for ent in area.entities[SENSOR_DOMAIN]:
+                                    if (
+                                        ent.get(ATTR_DEVICE_CLASS)
+                                        == SensorDeviceClass.ILLUMINANCE
+                                        or ent.get("unit_of_measurement") == LIGHT_LUX
+                                    ):
+                                        st = self.hass.states.get(ent[ATTR_ENTITY_ID])
+                                        if st and st.state not in (
+                                            STATE_UNKNOWN,
+                                            STATE_UNAVAILABLE,
+                                        ):
+                                            sensor_entity = st
+                                            break
+
+        if sensor_entity is None or sensor_entity.state in (
+            STATE_UNKNOWN,
+            STATE_UNAVAILABLE,
+        ):
             self._attr_extra_state_attributes[ATTR_LAST_ON_ILLUMINANCE] = 0.0
             return 0.0
         try:
-            self._attr_extra_state_attributes[ATTR_LAST_ON_ILLUMINANCE] = float(
-                sensor_entity.state
-            )
-            return float(sensor_entity.state)
-        except ValueError:
+            val = float(sensor_entity.state)
+            self._attr_extra_state_attributes[ATTR_LAST_ON_ILLUMINANCE] = val
+            return val
+        except (ValueError, TypeError):
+            self._attr_extra_state_attributes[ATTR_LAST_ON_ILLUMINANCE] = 0.0
             return 0.0
 
     #### Control Release

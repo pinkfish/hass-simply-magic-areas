@@ -177,6 +177,11 @@ CONF_MAX_BRIGHTNESS_LEVEL, DEFAULT_MAX_BRIGHTNESS_LEVEL = ("max_brightness_level
 # Controlling the lights and the fan.
 CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL = ("light_control", True)
 CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL = ("fan_control", True)
+# Direct lux and referenced brightness
+CONF_BRIGHT_LUX_THRESHOLD, DEFAULT_BRIGHT_LUX_THRESHOLD = "bright_lux_threshold", 0
+CONF_BRIGHT_LUX_HYSTERESIS, DEFAULT_BRIGHT_LUX_HYSTERESIS = "bright_lux_hysteresis", 25
+CONF_REFERENCE_ILLUMINANCE_SENSOR = "reference_illuminance_sensor"
+CONF_REFERENCE_BRIGHT_AREA = "reference_bright_area"
 # Controls for the humidity stats sensor.
 CONF_HUMIDITY_TREND_DOWN_CUT_OFF, DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF = (
     "humidity_down",

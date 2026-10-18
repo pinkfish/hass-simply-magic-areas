@@ -172,6 +172,47 @@ The presence state is continuously tracked from the following configured platfor
 - **MQTT Room Sensors**: Distance/RSSI room tracking entities matching the area slug (`CONF_MQTT_ROOM_PRESENCE`).
 - **Humidity Trend Monitor**: Optional derivative rate-of-change statistics (`MagicStatisticsSensor`) to detect shower/bath occupancy before absolute humidity thresholds trigger.
 
+### 3.6 Direct Lux & Inter-Area Brightness Reference Architecture
+
+To evaluate the `bright` daytime substate without forcing synthetic helper entities across every room, Simply Magic Areas uses a three-tier brightness resolution hierarchy:
+
+```mermaid
+flowchart TD
+    A[Evaluate Area Bright State] --> B{Explicit bright_entity configured?}
+    B -- Yes --> C{Entity state == on?}
+    C -- Yes --> Bright[State: BRIGHT]
+    C -- No --> D{Local Illuminance Sensor exists?}
+    B -- No --> D
+
+    D -- Yes --> E{Local Lux >= Bright Threshold?}
+    E -- Yes --> Bright
+    E -- No --> NotBright[State: OCCUPIED / Standard Lighting]
+
+    D -- No --> F{Reference Area or Sensor configured?}
+    F -- Reference Sensor --> G{Reference Lux >= Bright Threshold?}
+    G -- Yes --> Bright
+    G -- No --> NotBright
+
+    F -- Reference Area --> H{Reference Area is BRIGHT?}
+    H -- Yes --> Bright
+    H -- No --> NotBright
+
+    F -- None / Auto-Parent --> I{Parent Meta-Area is BRIGHT?}
+    I -- Yes --> Bright
+    I -- No --> NotBright
+```
+
+1. **Tier 1 — Local Illuminance Sensor (`sensor.simply_magic_areas_illuminance_<area>`)**:
+   - Rooms with their own illuminance sensor evaluate directly against `CONF_BRIGHT_LUX_THRESHOLD` (default: `200` lx).
+   - A configurable hysteresis band (`CONF_BRIGHT_LUX_HYSTERESIS`, default: `25` lx) prevents flickering during twilight or passing cloud cover (turn on at `threshold`, turn off at `threshold - hysteresis`).
+2. **Tier 2 — Referenced Illuminance or Sibling Area**:
+   - For rooms without an illuminance sensor (hallways, closets, interior bathrooms):
+     - **Reference Area (`CONF_REFERENCE_BRIGHT_AREA`)**: Mirrors the `bright` state of an adjacent room with windows (e.g. `living_room`).
+     - **Reference Illuminance Sensor (`CONF_REFERENCE_ILLUMINANCE_SENSOR`)**: Borrows a lux reading from another room or outdoor weather station.
+     - **Automatic Meta-Area Fallback**: If no specific reference is configured, interior rooms inherit brightness from the parent `interior` or `global` meta-area.
+3. **Tier 3 — Explicit Binary Entity (`bright_entity`) Fallback**:
+   - Configured binary entities (`sun.sun`, `input_boolean.daytime`, or threshold helpers) are evaluated for full backward compatibility.
+
 ---
 
 ## 4. Platform Controllers & Capabilities
@@ -326,17 +367,17 @@ The presence state is continuously tracked from the following configured platfor
 ---
 
 ## 7. Architectural Roadmap & Recommended Enhancements
-
-The following design recommendations represent planned extensions to elevate area intelligence:
-
-1. **Sleep Mode Acoustic Fan Suppression (`CONF_FAN_SUPPRESS_IN_SLEEP`)**:
-   - In en-suite bathrooms, suppress loud exhaust fans during `extended` mode when the bedroom/en-suite is in the `sleep` substate, unless actively forced by high differential humidity.
-2. **Door Contact Interlocking for Bathroom Occupancy**:
-   - If a bathroom is occupied when the door is closed, maintain the `occupied` state regardless of motion sensor gaps (e.g. while bathing behind shower glass/curtains) until the door opens.
-3. **Direct Numeric Illuminance Threshold (`CONF_LUX_THRESHOLD`)**:
-   - Allow entering the `bright` daylight substate directly using an aggregated illuminance sensor lux reading (e.g. `250 lx`) without requiring external template helpers.
-4. **Persistent Timer Rehydration across Restarts**:
-   - Store countdown target timestamps in state attributes (`clear_timeout_ts`, `manual_timeout_ts`) so remaining timeouts resume accurately following a Home Assistant restart.
-5. **Multi-Speed Exhaust Fan Support**:
-   - Configure distinct speed percentages for background `extended` ventilation (e.g. 40%) versus high-speed steam clearance (`humidity_on`, 100%).
+ 
+ The following design recommendations represent planned extensions to elevate area intelligence:
+ 
+ 1. **Sleep Mode Acoustic Fan Suppression (`CONF_FAN_SUPPRESS_IN_SLEEP`)**:
+    - In en-suite bathrooms, suppress loud exhaust fans during `extended` mode when the bedroom/en-suite is in the `sleep` substate, unless actively forced by high differential humidity.
+ 2. **Door Contact Interlocking for Bathroom Occupancy**:
+    - If a bathroom is occupied when the door is closed, maintain the `occupied` state regardless of motion sensor gaps (e.g. while bathing behind shower glass/curtains) until the door opens.
+ 3. **Multi-Speed Exhaust Fan Support**:
+    - Configure distinct speed percentages for background `extended` ventilation (e.g. 40%) versus high-speed steam clearance (`humidity_on`, 100%).
+ 4. **Completed Architectural Enhancements**:
+    - [x] **Direct Numeric Illuminance & Reference Area Brightness**: Direct lux threshold evaluation with hysteresis, plus inter-area and meta-area reference inheritance for rooms without sensors (Section 3.6).
+    - [x] **Persistent Timer Rehydration across Restarts**: Area countdown timestamps (`clear_timeout_ts`, `extended_timeout_ts`) and manual control timestamps (`manual_timeout_ts`) saved to extra state attributes and restored on HA restart.
+    - [x] **Differential Humidity Fan Control & Deadband Shutoff**: Continuous derivative rate-of-change tracking with flatline shutoff and reference humidity delta comparison (Section 4.3).
 

@@ -3,9 +3,10 @@
 from itertools import chain
 
 import voluptuous as vol
-
 from homeassistant.components.binary_sensor import (
     DOMAIN as BINARY_SENSOR_DOMAIN,
+)
+from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
 )
 from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
@@ -15,7 +16,8 @@ from homeassistant.components.input_boolean import DOMAIN as INPUT_BOOLEAN_DOMAI
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.components.remote import DOMAIN as REMOTE_DOMAIN
-from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorDeviceClass
+from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.components.sun import DOMAIN as SUN_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.const import (
@@ -199,6 +201,33 @@ CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME = (
     "humidity_wait_s",
     20 * 60,
 )
+CONF_REFERENCE_HUMIDITY_SENSOR, DEFAULT_REFERENCE_HUMIDITY_SENSOR = (
+    "reference_humidity_sensor",
+    None,
+)
+CONF_HUMIDITY_DELTA_THRESHOLD, DEFAULT_HUMIDITY_DELTA_THRESHOLD = (
+    "humidity_delta_threshold",
+    10.0,
+)
+CONF_HUMIDITY_DELTA_SHUTOFF, DEFAULT_HUMIDITY_DELTA_SHUTOFF = (
+    "humidity_delta_shutoff",
+    3.0,
+)
+CONF_HUMIDITY_DEADBAND, DEFAULT_HUMIDITY_DEADBAND = (
+    "humidity_deadband",
+    0.001,
+)
+CONF_HUMIDITY_MAX_FAN_TIME, DEFAULT_HUMIDITY_MAX_FAN_TIME = (
+    "humidity_max_fan_time",
+    3600,
+)
+CONF_HUMIDITY_PRESENCE_GATE_TIME, DEFAULT_HUMIDITY_PRESENCE_GATE_TIME = (
+    "humidity_presence_gate_time",
+    0,
+)
+ATTR_HUMIDITY_START_TS = "humidity_start_ts"
+ATTR_HUMIDITY_DELTA = "humidity_delta"
+ATTR_REFERENCE_HUMIDITY = "reference_humidity"
 # Mqtt room control
 CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE = ("mqqt_room", False)
 
@@ -375,6 +404,30 @@ HUMIDITY_GROUP_FEATURE_SCHEMA = vol.Schema(
             CONF_HUMIDITY_ZERO_WAIT_TIME,
             default=DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
         ): int,
+        vol.Optional(
+            CONF_REFERENCE_HUMIDITY_SENSOR,
+            default=DEFAULT_REFERENCE_HUMIDITY_SENSOR,
+        ): vol.Any(cv.entity_id, None, ""),
+        vol.Optional(
+            CONF_HUMIDITY_DELTA_THRESHOLD,
+            default=DEFAULT_HUMIDITY_DELTA_THRESHOLD,
+        ): vol.Coerce(float),
+        vol.Optional(
+            CONF_HUMIDITY_DELTA_SHUTOFF,
+            default=DEFAULT_HUMIDITY_DELTA_SHUTOFF,
+        ): vol.Coerce(float),
+        vol.Optional(
+            CONF_HUMIDITY_DEADBAND,
+            default=DEFAULT_HUMIDITY_DEADBAND,
+        ): vol.Coerce(float),
+        vol.Optional(
+            CONF_HUMIDITY_MAX_FAN_TIME,
+            default=DEFAULT_HUMIDITY_MAX_FAN_TIME,
+        ): vol.Coerce(int),
+        vol.Optional(
+            CONF_HUMIDITY_PRESENCE_GATE_TIME,
+            default=DEFAULT_HUMIDITY_PRESENCE_GATE_TIME,
+        ): vol.Coerce(int),
     }
 )
 
@@ -547,6 +600,16 @@ OPTIONS_HUMIDITY = [
     ),
     (CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF, float),
     (CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME, int),
+    (
+        CONF_REFERENCE_HUMIDITY_SENSOR,
+        DEFAULT_REFERENCE_HUMIDITY_SENSOR,
+        vol.Any(cv.entity_id, None, ""),
+    ),
+    (CONF_HUMIDITY_DELTA_THRESHOLD, DEFAULT_HUMIDITY_DELTA_THRESHOLD, float),
+    (CONF_HUMIDITY_DELTA_SHUTOFF, DEFAULT_HUMIDITY_DELTA_SHUTOFF, float),
+    (CONF_HUMIDITY_DEADBAND, DEFAULT_HUMIDITY_DEADBAND, float),
+    (CONF_HUMIDITY_MAX_FAN_TIME, DEFAULT_HUMIDITY_MAX_FAN_TIME, int),
+    (CONF_HUMIDITY_PRESENCE_GATE_TIME, DEFAULT_HUMIDITY_PRESENCE_GATE_TIME, int),
 ]
 
 

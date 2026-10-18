@@ -1,13 +1,15 @@
 """Select control for magic areas, tracks the state as an enum."""
 
 import asyncio
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-import logging
 
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.sensor import (
     DOMAIN as SENSOR_DOMAIN,
+)
+from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
 )
@@ -42,6 +44,10 @@ from ..const import (
     CONF_EXTENDED_TIMEOUT,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_HUMIDITY,
+    CONF_HUMIDITY_DEADBAND,
+    CONF_HUMIDITY_DELTA_SHUTOFF,
+    CONF_HUMIDITY_DELTA_THRESHOLD,
+    CONF_HUMIDITY_PRESENCE_GATE_TIME,
     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
@@ -49,8 +55,13 @@ from ..const import (
     CONF_ON_STATES,
     CONF_PRESENCE_DEVICE_PLATFORMS,
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
+    CONF_REFERENCE_HUMIDITY_SENSOR,
     CONF_TYPE,
     CONF_UPDATE_INTERVAL,
+    DEFAULT_HUMIDITY_DEADBAND,
+    DEFAULT_HUMIDITY_DELTA_SHUTOFF,
+    DEFAULT_HUMIDITY_DELTA_THRESHOLD,
+    DEFAULT_HUMIDITY_PRESENCE_GATE_TIME,
     DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
     DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
     DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
@@ -86,7 +97,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self._attr_extra_state_attributes = {}
         self._attr_device_class = SensorDeviceClass.ENUM
 
-        self._last_off_time: datetime = datetime.now(UTC) - timedelta(days=2)  # type: ignore  # noqa: PGH003
+        self._last_off_time: datetime = datetime.now(UTC) - timedelta(days=2)  # type: ignore
         self._clear_timeout_callback: Callable[[], None] | None = None
         self._extended_timeout_callback: Callable[[], None] | None = None
         self._sensors: list[str] = []
@@ -104,13 +115,13 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         # Setup the listeners
         await self._setup_listeners()
 
-        _LOGGER.debug(  # type: ignore  # noqa: PGH003
+        _LOGGER.debug(  # type: ignore
             "%s: Select initialized %s %s %s",
             self.unique_id,
             self.entity_id,
             self.name,
             self.translation_key,
-        )  # type: ignore  # noqa: PGH003
+        )  # type: ignore
         self.async_on_remove(self._cleanup_timers)
 
     async def _restore_state(self) -> None:
@@ -119,23 +130,23 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         self.schedule_update_ha_state()
         if last_state is None:
-            _LOGGER.debug("%s: New select created", self.name)  # type: ignore  # noqa: PGH003
+            _LOGGER.debug("%s: New select created", self.name)  # type: ignore
             self._attr_native_value = AreaState.AREA_STATE_CLEAR
         else:
-            _LOGGER.debug(  # type: ignore  # noqa: PGH003
+            _LOGGER.debug(  # type: ignore
                 "%s: Select restored [state=%s]",
                 self.name,
                 last_state.state,
-            )  # type: ignore  # noqa: PGH003
+            )  # type: ignore
             self.area.state = AreaState(last_state.state)
             self._attr_native_value = last_state.state
-            self._attr_extra_state_attributes = dict(last_state.attributes)  # type: ignore  # noqa: PGH003
+            self._attr_extra_state_attributes = dict(last_state.attributes)  # type: ignore
         self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
 
     async def _setup_listeners(self) -> None:
-        _LOGGER.debug("%s: Called '_setup_listeners'", self.name)  # type: ignore  # noqa: PGH003
+        _LOGGER.debug("%s: Called '_setup_listeners'", self.name)  # type: ignore
         if not self.hass.is_running:
-            _LOGGER.debug("%s: Cancelled '_setup_listeners'", self.name)  # type: ignore  # noqa: PGH003
+            _LOGGER.debug("%s: Cancelled '_setup_listeners'", self.name)  # type: ignore
             return
 
         # Track presence sensor
@@ -170,7 +181,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             if not conf.entity:
                 continue
 
-            _LOGGER.debug("%s: State entity tracking: %s", self.name, conf.entity)  # type: ignore  # noqa: PGH003
+            _LOGGER.debug("%s: State entity tracking: %s", self.name, conf.entity)  # type: ignore
 
             self.async_on_remove(
                 async_track_state_change_event(
@@ -289,7 +300,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         # Get Main occupancy state
         occupied_state = self._get_sensors_state()
 
-        _LOGGER.debug("Sensor state %s", occupied_state)  # type: ignore  # noqa: PGH003
+        _LOGGER.debug("Sensor state %s", occupied_state)  # type: ignore
 
         seconds_since_last_change: int = int(
             (datetime.now(UTC) - self._last_off_time).total_seconds()
@@ -298,6 +309,24 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         clear_timeout: int = self._get_clear_timeout()
         extended_timeout: int = self._get_extended_timeout() + clear_timeout
         if not occupied_state:
+            # If the area was already clear, non-occupied sensor state keeps it clear
+            if self.area.state == AreaState.AREA_STATE_CLEAR:
+                self._remove_clear_timeout()
+                self._remove_extended_timeout()
+                return AreaState.AREA_STATE_CLEAR
+
+            # If the area was in extended mode, check if extended timeout has elapsed
+            if self.area.state == AreaState.AREA_STATE_EXTENDED:
+                if seconds_since_last_change >= extended_timeout:
+                    self._remove_extended_timeout()
+                    return AreaState.AREA_STATE_CLEAR
+                if not self._is_on_extended_timeout():
+                    remaining = extended_timeout - seconds_since_last_change
+                    if remaining > 0:
+                        self._set_extended_timeout(remaining)
+                return AreaState.AREA_STATE_EXTENDED
+
+            # If area was previously occupied: start or continue clear_timeout countdown
             if (
                 not self._is_on_clear_timeout()
                 and seconds_since_last_change < clear_timeout
@@ -307,7 +336,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 if seconds_since_last_change >= extended_timeout:
                     self._remove_extended_timeout()
                     return AreaState.AREA_STATE_CLEAR
-                _LOGGER.debug("%s: Clearing the imput, state extended", self.area.slug)  # type: ignore  # noqa: PGH003
+                _LOGGER.debug("%s: Clearing the imput, state extended", self.area.slug)  # type: ignore
                 self._remove_clear_timeout()
                 if (
                     not self._is_on_extended_timeout()
@@ -334,8 +363,8 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             if entity is None:
                 continue
 
-            if entity.state.lower() == conf.entity_state_on:  # type: ignore  # noqa: PGH003
-                _LOGGER.debug(  # type: ignore  # noqa: PGH003
+            if entity.state.lower() == conf.entity_state_on:  # type: ignore
+                _LOGGER.debug(  # type: ignore
                     "%s: Secondary state: %s is at %s, adding %s",
                     self.area.name,
                     conf.entity,
@@ -356,7 +385,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             return
 
         # Calculate what's new
-        _LOGGER.debug(  # type: ignore  # noqa: PGH003
+        _LOGGER.debug(  # type: ignore
             "%s: Current state: %s, last state: %s",
             self.name,
             new_state,
@@ -400,7 +429,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 entity_id,
                 to_state,
             )
-            return None
+            return
 
         self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
 
@@ -417,7 +446,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         if self._clear_timeout_callback:
             self._remove_clear_timeout()
 
-        _LOGGER.debug("%s: Scheduling clear in %s seconds", self.area.name, timeout)  # type: ignore  # noqa: PGH003
+        _LOGGER.debug("%s: Scheduling clear in %s seconds", self.area.name, timeout)  # type: ignore
         self._attr_extra_state_attributes["clear"] = True
         self._clear_timeout_callback = async_call_later(
             self.hass,
@@ -429,7 +458,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         if not self._clear_timeout_callback:
             return
 
-        _LOGGER.debug(  # type: ignore  # noqa: PGH003
+        _LOGGER.debug(  # type: ignore
             "%s: Clearing timeout",
             self.area.name,
         )
@@ -455,7 +484,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         if self._extended_timeout_callback:
             self._remove_extended_timeout()
 
-        _LOGGER.info("%s: Scheduling extended in %s seconds", self.area.name, timeout)  # type: ignore  # noqa: PGH003
+        _LOGGER.info("%s: Scheduling extended in %s seconds", self.area.name, timeout)  # type: ignore
         self._attr_extra_state_attributes["extended"] = True
         self._extended_timeout_callback = async_call_later(
             self.hass,
@@ -522,9 +551,17 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 event.data["old_state"],
                 event.data["new_state"],
             )
-            self._last_off_time = datetime.now(UTC)  # Update last_off_time
-            # Clear the timeout
+            if self.area.state in (
+                AreaState.AREA_STATE_OCCUPIED,
+                AreaState.AREA_STATE_BRIGHT,
+                AreaState.AREA_STATE_SLEEP,
+                AreaState.AREA_STATE_ACCENTED,
+            ):
+                self._last_off_time = datetime.now(UTC)  # Update last_off_time
+        else:
+            # Presence sensor turned ON: cancel any pending clear or extended timeouts
             self._remove_clear_timeout()
+            self._remove_extended_timeout()
 
         self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
 
@@ -603,7 +640,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                     if entity and entity.state == self.area.name.lower():
                         active_sensors.append(mqtt_room_sensor)
                 except Exception as e:  # noqa: BLE001
-                    _LOGGER.error(  # type: ignore  # noqa: PGH003
+                    _LOGGER.error(  # type: ignore
                         "[%s] Error getting entity state for '%s': %s",
                         self.area.slug,
                         mqtt_room_sensor,
@@ -623,10 +660,13 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             and humidity_trend.state != STATE_UNKNOWN
         ):
             humidity_feature_config = self.area.feature_config(CONF_FEATURE_HUMIDITY)
-            # Handle the 0.0 state and how long it has been zero for.
-            if float(humidity_trend.state) != 0.0:
+            deadband = humidity_feature_config.get(
+                CONF_HUMIDITY_DEADBAND, DEFAULT_HUMIDITY_DEADBAND
+            )
+            trend_val = float(humidity_trend.state)
+            if abs(trend_val) > deadband:
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = None
-            elif self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] is None:
+            elif self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ZERO_TS) is None:
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = datetime.now(
                     UTC
                 ).timestamp()
@@ -646,17 +686,84 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                     CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME
                 ):
                     self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+
+            # Calculate humidity delta if reference sensor is configured
+            humidity_delta: float | None = None
+            ref_sensor = humidity_feature_config.get(CONF_REFERENCE_HUMIDITY_SENSOR)
+            if ref_sensor:
+                ref_state = self.hass.states.get(ref_sensor)
+                area_humidity_id = self.area.simply_magic_entity_id(
+                    SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
+                )
+                area_state = self.hass.states.get(area_humidity_id)
+                if (
+                    ref_state
+                    and ref_state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+                    and area_state
+                    and area_state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+                ):
+                    try:
+                        ref_val = (
+                            float(ref_state.attributes["current_humidity"])
+                            if "current_humidity" in ref_state.attributes
+                            and ref_state.attributes["current_humidity"] is not None
+                            else float(ref_state.state)
+                        )
+                        area_val = float(area_state.state)
+                        humidity_delta = area_val - ref_val
+                    except (ValueError, TypeError):
+                        pass
+
+            # Delta shutoff check
+            delta_shutoff = humidity_feature_config.get(
+                CONF_HUMIDITY_DELTA_SHUTOFF, DEFAULT_HUMIDITY_DELTA_SHUTOFF
+            )
+            if (
+                humidity_delta is not None
+                and self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+                and humidity_delta <= delta_shutoff
+            ):
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+
             # Work out if it is trending up.
             trending_up = float(humidity_trend.state) >= humidity_feature_config.get(
                 CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF
-            ) or self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            )
             if trending_up:
-                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = True
+                can_activate = True
+                delta_threshold = humidity_feature_config.get(
+                    CONF_HUMIDITY_DELTA_THRESHOLD, DEFAULT_HUMIDITY_DELTA_THRESHOLD
+                )
+                if humidity_delta is not None and humidity_delta < delta_threshold:
+                    can_activate = False
+
+                gate_time = humidity_feature_config.get(
+                    CONF_HUMIDITY_PRESENCE_GATE_TIME,
+                    DEFAULT_HUMIDITY_PRESENCE_GATE_TIME,
+                )
+                if (
+                    gate_time > 0
+                    and self.state == AreaState.AREA_STATE_CLEAR
+                    and self._last_off_time is not None
+                ):
+                    time_since_clear = (
+                        datetime.now(UTC) - self._last_off_time
+                    ).total_seconds()
+                    if time_since_clear > gate_time:
+                        can_activate = False
+
+                if can_activate:
+                    self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = True
+
+            if self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
                 if float(humidity_trend.state) > humidity_feature_config.get(
                     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
                     DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
                 ):
                     active_sensors.append(humidity_trend.entity_id)
+                else:
+                    self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+
             # Make the last off time stay until this is not on any more.
             if float(humidity_trend.state) < humidity_feature_config.get(
                 CONF_HUMIDITY_TREND_DOWN_CUT_OFF,

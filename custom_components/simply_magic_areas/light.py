@@ -1,7 +1,7 @@
 """Light controls for magic areas."""
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from homeassistant.components.group.light import LightGroup
 from homeassistant.components.light import (
@@ -134,6 +134,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         delattr(self, "_attr_name")
         self._manual_timeout_cb: CALLBACK_TYPE | None = None
         self._attr_icon: str = "mdi:ceiling-light"
+        self._last_turn_off_ts: float = 0.0
 
         # Add static attributes
         self.last_update_from_entity: bool = False
@@ -258,7 +259,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             if self.area.has_configured_state(to_state):
                 conf = self.area.state_config(to_state)
                 if conf is not None:
-                    self._turn_on_light(conf)
+                    self._turn_on_light(conf, force=True)
             return
 
         if to_state == AreaState.AREA_STATE_EXTENDED:
@@ -271,6 +272,36 @@ class AreaLightGroup(MagicEntity, LightGroup):
             return
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if old_state is None or new_state is None:
+            return
+
+        occupied_states = {
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_BRIGHT,
+            AreaState.AREA_STATE_SLEEP,
+            AreaState.AREA_STATE_ACCENTED,
+        }
+
+        # If light group turned off while the area is occupied and not in manual override,
+        # recover from any racing turn-off by immediately re-asserting turn on.
+        if (
+            new_state.state == STATE_OFF
+            and self.area.state in occupied_states
+            and not self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, False)
+            and self.area.has_configured_state(self.area.state)
+        ):
+            conf = self.area.state_config(self.area.state)
+            if conf is not None and conf.dim_level > 0:
+                _LOGGER.info(
+                    "%s: Light turned off while area is %s, re-asserting turn on",
+                    self.name,
+                    self.area.state,
+                )
+                self._turn_on_light(conf, force=True)
+                return
+
         if self.area.state != AreaState.AREA_STATE_CLEAR:
             self._reset_control()
         else:
@@ -316,7 +347,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._manual_timeout_cb = None
 
     ####  Light Handling
-    def _turn_on_light(self, conf: StateConfigData) -> None:
+    def _turn_on_light(self, conf: StateConfigData, force: bool = False) -> None:
         """Turn on the light group."""
 
         self._entity_ids = conf.lights
@@ -331,7 +362,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
         )
 
         brightness = int(conf.dim_level * 255 / 100)
-        if self.is_on and self.brightness == brightness:
+        now_ts = datetime.now(UTC).timestamp()
+        recent_turn_off = (now_ts - getattr(self, "_last_turn_off_ts", 0.0)) < 3.0
+        if not force and not recent_turn_off and self.is_on and self.brightness == brightness:
             _LOGGER.debug("%s: Already on at %s", self.name, brightness)
             return
 
@@ -389,6 +422,21 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     def _turn_off_light(self) -> None:
         """Turn off the light group."""
+        occupied_states = {
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_BRIGHT,
+            AreaState.AREA_STATE_SLEEP,
+            AreaState.AREA_STATE_ACCENTED,
+        }
+        # Safety check: Never turn off lights if the area is currently in an occupied state
+        if self.area.state in occupied_states:
+            _LOGGER.debug(
+                "%s: Area is in occupied state %s, aborting turn off",
+                self.name,
+                self.area.state,
+            )
+            return
+
         if not self.is_on:
             _LOGGER.debug("%s: Light already off", self.name)
             return
@@ -396,6 +444,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if not self.area.is_control_enabled(ControlType.System):
             return
 
+        self._last_turn_off_ts = datetime.now(UTC).timestamp()
         self.last_update_from_entity = True
         self._attr_is_on = False
         service_data = {ATTR_ENTITY_ID: self.entity_id}
@@ -429,10 +478,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     #### Control Release
     def _is_controlled_by_this_entity(self) -> bool:
-        return self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, False)
+        return not self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, False)
 
     def _set_controlled_by_this_entity(self, enabled: bool) -> None:
-        self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, enabled)
+        self._attr_extra_state_attributes[ATTR_MANUAL_CONTROL] = not enabled
 
     def _reset_control(self) -> None:
         self._set_controlled_by_this_entity(True)

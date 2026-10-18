@@ -390,3 +390,56 @@ async def test_substate_transition_lights_off_vs_on(
     assert area_state_sensor.state == "bright"
     # Lights update to bright values (dim level 0% -> turns off)
     assert len(calls) >= 1
+
+
+async def test_rapid_unoccupied_to_occupied_no_race_condition(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    one_light: list[str],
+    one_motion: list[MockBinarySensor],
+    _setup_integration: None,
+) -> None:
+    """Test that rapid unoccupied -> occupied transition does not leave lights turned off."""
+    calls_on = async_mock_service(hass, LIGHT_DOMAIN, "turn_on")
+    calls_off = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "clear"
+
+    # Simulate presence sensor pulsing off then immediately on
+    one_motion[0].turn_off()
+    await hass.async_block_till_done()
+    one_motion[0].turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(1)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "occupied"
+    # Lights MUST be commanded ON and not ended up turned off
+    assert len(calls_on) >= 1
+    assert calls_on[-1].data == {
+        "entity_id": f"{LIGHT_DOMAIN}.simply_magic_areas_light_kitchen",
+        "brightness": 255,
+    }
+
+    # Now simulate rapid off -> on while in occupied
+    one_motion[0].turn_off()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+    one_motion[0].turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(1)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "occupied"
+    # No turn_off call should have been triggered to extinguish the lights
+    assert len(calls_off) == 0
+    # The last dispatched command was to turn ON the lights
+    assert calls_on[-1].service == SERVICE_TURN_ON
+

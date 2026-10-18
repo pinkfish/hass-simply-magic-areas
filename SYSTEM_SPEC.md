@@ -192,18 +192,36 @@ The presence state is continuously tracked from the following configured platfor
   - **Override Automatic State**: While in this manual state, the automatic lighting control is completely overridden and suspended. Automatic area state changes, substate context shifts (e.g. transitioning from `bright` to `sleep`), or clearance timeout transitions will **not** modify, turn off, or turn on the lights. This guarantees that automated routines do not "fight" human manual preferences.
   - **Configurable Override Duration**: The manual state persists for a user-configurable duration (`manual_timeout`, default: `60s`). Each subsequent manual adjustment resets the timeout back to the full configured duration.
   - **Automatic Restoration**: When the configured `manual_timeout` period elapses without further manual interactions, the manual state automatically clears (`manual_control: false`). The light returns to automatic control and smoothly realigns with the current area state and active substate profile.
+- **Rapid Transition & Race Condition Resilience**:
+  - **Forced Turn-On on Occupancy**: When transitioning into an occupied state from non-occupied (`clear` or `extended`), `_turn_on_light` enforces execution (`force=True`). It bypasses cached state checks (`is_on` / matching brightness) so that a pending in-flight turn-off never prevents the lights from being commanded on.
+  - **Turn-Off Occupancy Guard**: `_turn_off_light` verifies that the area is not currently in an occupied state before issuing any off command. If the area has transitioned back to occupied, the turn-off is aborted immediately.
+  - **Automatic Recovery from Racing Extinguishment**: If the light group transitions to `off` while the area is in an active occupied state (and not in manual override mode), the state change handler intercepts the discrepancy and immediately re-asserts `_turn_on_light(force=True)`.
+  - **Presence Timer Preemption**: When a presence sensor reports `on`, all running clear and extended timers in `AreaStateSensor` are cancelled synchronously, preventing background timer callbacks from clearing the area.
+  - **Unoccupied State Preservation**: In `AreaStateSensor`, when the area is `clear` or `extended`, non-occupied sensor state updates do not reset off-time counters or cause premature occupancy fall-throughs.
 
 ### 4.2 Ventilation & Fans (`fan.py`)
 - **Entity**: `AreaFanGroup` (`fan.simply_magic_areas_fan_<area>`).
 - **Post-Occupancy Ventilation (`extended` state)**:
   - **Bathroom & Room Exhaust**: When occupants leave the room and the area transitions from `occupied` to `extended` (e.g. leaving a bathroom), the lighting turns off (or dims to clear level) and the exhaust fan **automatically turns ON**.
   - **Extended Duration**: The fan remains on for the duration of the configured `extended_timeout` period before turning off when transitioning to `clear`, unless prolonged by elevated humidity.
-- **Humidity Trend-Based Ventilation (`MagicStatisticsSensor`)**:
-  - **Rising Humidity Activation**: Continuously monitors the derivative rate-of-change (gradient) of ambient humidity. When a rapid humidity rise is detected exceeding `CONF_HUMIDITY_TREND_UP_CUT_OFF` (default: `100.0` %/hr, indicative of a shower or bath starting), the fan **automatically turns ON**.
-  - **Dual Shut-off Criteria**: The humidity-driven fan run turns off once either:
-    1. **Humidity Drops**: The rate-of-change drops below `CONF_HUMIDITY_TREND_DOWN_CUT_OFF` (default: `-10.0` %/hr), confirming humidity is falling back down towards baseline.
-    2. **Gradient Flattens**: The rate-of-change stops changing (`0.0` gradient) and persists for longer than `CONF_HUMIDITY_ZERO_WAIT_TIME` (default: `20 minutes`), ensuring fans do not run indefinitely after humidity stabilizes.
-  - **State Precedence**: If humidity triggers the fan on, it will remain running even if the area state leaves `extended` or enters `clear`, until humidity conditions normalize. Similarly, while the room is actively in `extended` state, the fan will not be turned off prematurely by humidity normalization.
+- **Enhanced Humidity & Climate Differential Ventilation**:
+  - **Reference Baseline Comparison (`CONF_REFERENCE_HUMIDITY_SENSOR`)**:
+    - Compares room humidity against a reference entity (e.g., climate humidity sensor, hallway sensor, or `Interior` Meta-Area average).
+    - **Activation Delta (`CONF_HUMIDITY_DELTA_THRESHOLD`, default: `10.0%`)**: Area humidity must be at least 10% above the reference humidity baseline to trigger shower ventilation, preventing whole-house weather shifts from triggering exhaust fans.
+    - **Shut-off Delta (`CONF_HUMIDITY_DELTA_SHUTOFF`, default: `3.0%`)**: The fan turns off once room humidity returns to within 3% of the reference baseline, even if ambient weather keeps absolute indoor humidity elevated.
+  - **Shower Spike vs. Weather Gradient Recognition**:
+    - Continuously monitors rate-of-rise via `MagicStatisticsSensor`. Fast steam generation (exceeding `CONF_HUMIDITY_TREND_UP_CUT_OFF`, default `100.0` %/hr) is distinguished from gradual weather drift (+1–3%/hr).
+  - **Deadband Flatline Deactivation (Fix for `!= 0.0`)**:
+    - Replaces strict `0.0` derivative checks with a configurable deadband `CONF_HUMIDITY_DEADBAND` (default: `2.0` %/hr).
+    - When the derivative hovers within `[-2.0, +2.0]` %/hr continuously for `CONF_HUMIDITY_ZERO_WAIT_TIME` (default: `20 minutes`), the humidity is confirmed stabilized and the fan turns off.
+  - **Falling Trend Deactivation**:
+    - The fan turns off if rate-of-change drops below `CONF_HUMIDITY_TREND_DOWN_CUT_OFF` (default: `-10.0` %/hr), confirming rapid drying.
+  - **Presence Gating (`CONF_HUMIDITY_PRESENCE_GATE_TIME`, default: `30 minutes`)**:
+    - Prevents ambient climate changes from triggering fans in empty bathrooms when no shower has occurred. Humidity activation is only allowed if the room is currently occupied or was occupied within the gate window.
+  - **Safety Maximum Runtime (`CONF_HUMIDITY_MAX_FAN_TIME`, default: `60 minutes`)**:
+    - A hard safety cutoff capping continuous humidity-driven fan runtime to prevent fan motor burnout or continuous conditioned air exhaustion.
+  - **State Precedence**:
+    - While the room is actively in `extended` state, the fan will not be turned off prematurely by humidity normalization. Similarly, humidity-driven ventilation stays active across `extended` -> `clear` transitions until all shutoff criteria or timeouts are met.
 - **Manual Fan Override (`CONF_MANUAL_TIMEOUT`)**:
   - Manual adjustments (wall switches, UI) transition the fan group into manual override mode (`manual_control: true`), suspending automated adjustments for `manual_timeout` seconds (default: `60s`).
 
@@ -284,3 +302,13 @@ The presence state is continuously tracked from the following configured platfor
 - `aggregation`: Enables numeric/binary sensor grouping.
 - `health`: Enables distress/problem aggregation for environmental safety.
 - `humidity`: Enables humidity rate-of-change statistics sensor.
+
+### 6.3 Fan & Humidity Control Options
+- `reference_humidity_sensor`: Entity ID of baseline humidity (climate, outdoor weather, hallway, or interior average).
+- `humidity_delta_threshold`: Minimum humidity % above reference to trigger ventilation (default: `10.0%`).
+- `humidity_delta_shutoff`: Delta % above reference below which the fan will turn off (default: `3.0%`).
+- `humidity_deadband`: Rate-of-change deadband (%/hr) considered stationary/flatlined (default: `2.0` %/hr).
+- `humidity_zero_wait_time`: Duration (seconds) the rate must remain within deadband before fan shuts off (default: `1200s` / 20 min).
+- `humidity_max_fan_time`: Absolute safety cutoff (seconds) for continuous humidity fan operation (default: `3600s` / 60 min).
+- `humidity_presence_gate_time`: Maximum seconds since last occupied state to allow humidity activation (default: `1800s` / 30 min).
+

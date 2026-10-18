@@ -2,15 +2,13 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 
-from _pytest.monkeypatch import MonkeyPatch
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
+from _pytest.monkeypatch import MonkeyPatch
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
-from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     SERVICE_TURN_OFF,
@@ -18,12 +16,26 @@ from homeassistant.const import (
     STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
-    STATE_UNKNOWN
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.area_registry import async_get as async_get_ar
+from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from ..const import DOMAIN
+from ..const import (
+    CONF_ENABLED_FEATURES,
+    CONF_FEATURE_HUMIDITY,
+    CONF_HUMIDITY_DEADBAND,
+    CONF_HUMIDITY_DELTA_SHUTOFF,
+    CONF_HUMIDITY_DELTA_THRESHOLD,
+    CONF_HUMIDITY_MAX_FAN_TIME,
+    CONF_HUMIDITY_PRESENCE_GATE_TIME,
+    CONF_HUMIDITY_ZERO_WAIT_TIME,
+    CONF_REFERENCE_HUMIDITY_SENSOR,
+    DOMAIN,
+)
 from .common import async_mock_service
+from .conftest import AREA_NAME, CONFIG_ENTRY_DATA
 from .mocks import MockBinarySensor, MockFan, MockSensor
 
 _LOGGER = logging.getLogger(__name__)
@@ -270,3 +282,259 @@ async def test_fan_control_disabled(
     assert area_binary_sensor.state == "occupied"
     # Fans should not have changed, since they are disabled.
     assert len(calls) == 0
+
+
+@pytest.fixture(name="differential_humidity_config_entry")
+def mock_differential_humidity_config_entry() -> MockConfigEntry:
+    """Fixture for differential humidity configuration."""
+    data = dict(CONFIG_ENTRY_DATA)
+    data[CONF_ENABLED_FEATURES] = dict(data[CONF_ENABLED_FEATURES])
+    data[CONF_ENABLED_FEATURES][CONF_FEATURE_HUMIDITY] = {
+        CONF_REFERENCE_HUMIDITY_SENSOR: "sensor.reference_humidity",
+        CONF_HUMIDITY_DELTA_THRESHOLD: 10.0,
+        CONF_HUMIDITY_DELTA_SHUTOFF: 3.0,
+        CONF_HUMIDITY_DEADBAND: 0.001,
+        CONF_HUMIDITY_ZERO_WAIT_TIME: 10,
+        CONF_HUMIDITY_MAX_FAN_TIME: 60,
+        CONF_HUMIDITY_PRESENCE_GATE_TIME: 30,
+    }
+    return MockConfigEntry(domain=DOMAIN, data=data)
+
+
+@pytest.fixture(name="_setup_differential_humidity")
+async def setup_differential_humidity(
+    hass: HomeAssistant,
+    differential_humidity_config_entry: MockConfigEntry,
+) -> None:
+    """Set up the area with differential humidity."""
+    registry = async_get_ar(hass)
+    registry.async_get_or_create(AREA_NAME)
+    differential_humidity_config_entry.add_to_hass(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+    yield
+    await hass.config_entries.async_unload(differential_humidity_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_fan_differential_humidity_control(
+    hass: HomeAssistant,
+    differential_humidity_config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_sensor_humidity: list[MockSensor],
+    _setup_differential_humidity: None,
+) -> None:
+    """Test differential humidity logic: trigger above delta, ignore below delta, and shut off near baseline."""
+    # Set reference humidity entity and initial room humidity to 50%
+    hass.states.async_set(
+        "sensor.reference_humidity",
+        "50.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "50.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+
+    calls = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+
+    # Step 1: Rise to 54% (delta = 4%, which is < 10% threshold).
+    # Even if derivative spikes, fan should NOT activate.
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "54.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    assert len(calls) == 0
+
+    # Step 2: Rise to 65% (delta = 15%, which is >= 10% threshold).
+    # Fan should activate!
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "65.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    assert len(calls) == 1
+    assert calls[0].data == {
+        "entity_id": f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen",
+    }
+    one_fan[0].turn_on()
+
+    # Step 3: Room humidity drops down to 52% (delta = 2%, which is <= 3% shutoff threshold).
+    # Fan should shut off.
+    calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "52.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    assert len(calls_off) == 1
+
+
+async def test_fan_deadband_flatline(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_sensor_humidity: list[MockSensor],
+    _setup_integration: None,
+) -> None:
+    """Test deadband flatline shut-off when rate-of-change hovers near zero."""
+    calls = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+    calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
+
+    # Initial humidity and shower spike
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "10.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "30.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    assert len(calls) == 1
+    one_fan[0].turn_on()
+
+    # Find the fan group entity
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+    assert fan_group._attr_extra_state_attributes.get("humidity_on") is True
+
+    # Simulate flatline derivative within deadband (0.0002 <= 0.001)
+    stats_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+    hass.states.async_set(stats_entity_id, "0.0002")
+    await hass.async_block_till_done()
+
+    # Deadband tracking should have recorded the zero timestamp
+    assert fan_group._attr_extra_state_attributes.get("humidity_zero_ts") is not None
+
+    # Advance the zero timestamp past the zero wait duration (e.g. 25 minutes ago)
+    fan_group._attr_extra_state_attributes["humidity_zero_ts"] = (
+        datetime.now(UTC).timestamp() - 1500
+    )
+
+    # Next trend update within deadband triggers shut-off
+    hass.states.async_set(stats_entity_id, "0.0001")
+    await hass.async_block_till_done()
+
+    assert fan_group._attr_extra_state_attributes.get("humidity_on") is False
+    assert len(calls_off) == 1
+
+
+async def test_fan_max_runtime_cutoff(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_sensor_humidity: list[MockSensor],
+    _setup_integration: None,
+) -> None:
+    """Test safety cutoff turns off fan when max humidity run duration is exceeded."""
+    calls = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+    calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
+
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "10.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "30.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    assert len(calls) == 1
+    one_fan[0].turn_on()
+
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+    assert fan_group._attr_extra_state_attributes.get("humidity_start_ts") is not None
+
+    # Age start_ts past max runtime (> 3600s)
+    fan_group._attr_extra_state_attributes["humidity_start_ts"] = (
+        datetime.now(UTC).timestamp() - 4000
+    )
+
+    # Trigger a trend event
+    stats_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+    hass.states.async_set(stats_entity_id, "10.0")
+    await hass.async_block_till_done()
+
+    # Safety cutoff triggers and fan turns off
+    assert fan_group._attr_extra_state_attributes.get("humidity_on") is False
+    assert len(calls_off) == 1
+
+
+async def test_fan_presence_gating(
+    hass: HomeAssistant,
+    differential_humidity_config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_sensor_humidity: list[MockSensor],
+    _setup_differential_humidity: None,
+) -> None:
+    """Test presence gating prevents fan from turning on if area has been clear for too long."""
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+
+    # Set baseline reference humidity and room humidity
+    hass.states.async_set(
+        "sensor.reference_humidity",
+        "50.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "50.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+
+    # Simulate area being clear for 1 hour (gate window is 30s)
+    fan_group._last_occupied_ts = datetime.now(UTC).timestamp() - 3600
+
+    calls = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+
+    # Sudden steep humidity rise
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "80.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    # Fan should NOT turn on because of presence gating
+    assert len(calls) == 0
+    assert fan_group._attr_extra_state_attributes.get("humidity_on", False) is False
+

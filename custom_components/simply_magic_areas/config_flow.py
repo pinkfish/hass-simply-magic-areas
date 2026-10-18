@@ -3,15 +3,14 @@
 import logging
 from typing import Any
 
+import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.helpers.area_registry import async_get as async_get_ar
-import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.selector import EntitySelectorConfig, Selector, selector
 
 from .config.area_state import AreaState
@@ -33,7 +32,6 @@ from .const import (
     CONF_EXCLUDE_ENTITIES,
     CONF_EXTENDED_TIMEOUT,
     CONF_FAN_CONTROL,
-    CONF_MQTT_ROOM_PRESENCE,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_AREA_AWARE_MEDIA_PLAYER,
     CONF_FEATURE_CLIMATE_GROUPS,
@@ -42,6 +40,11 @@ from .const import (
     CONF_FEATURE_LIST,
     CONF_FEATURE_LIST_GLOBAL,
     CONF_FEATURE_LIST_META,
+    CONF_HUMIDITY_DEADBAND,
+    CONF_HUMIDITY_DELTA_SHUTOFF,
+    CONF_HUMIDITY_DELTA_THRESHOLD,
+    CONF_HUMIDITY_MAX_FAN_TIME,
+    CONF_HUMIDITY_PRESENCE_GATE_TIME,
     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
@@ -50,11 +53,13 @@ from .const import (
     CONF_INCLUDE_ENTITIES,
     CONF_LIGHT_CONTROL,
     CONF_MEDIA_PLAYER_GROUPS,
+    CONF_MQTT_ROOM_PRESENCE,
     CONF_NOTIFICATION_DEVICES,
     CONF_NOTIFY_STATES,
     CONF_ON_STATES,
     CONF_PRESENCE_DEVICE_PLATFORMS,
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
+    CONF_REFERENCE_HUMIDITY_SENSOR,
     CONF_TYPE,
     CONF_UPDATE_INTERVAL,
     CONFIG_FLOW_ENTITY_FILTER_EXT,
@@ -262,7 +267,7 @@ class ConfigFlow(config_entries.ConfigFlow, ConfigBase, domain=DOMAIN):
         ma_data = self.hass.data.get(MODULE_DATA, {})
 
         for config_data in ma_data.values():
-            configured_areas.append(config_data[DATA_AREA_OBJECT].id)  # noqa: PERF401
+            configured_areas.append(config_data[DATA_AREA_OBJECT].id)
 
         available_areas = [area for area in areas if area.id not in configured_areas]
 
@@ -648,7 +653,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
     async def async_step_feature_conf_humidity(
         self, user_input: dict[str, Any] | None = None
     ):
-        """Configure the climate groups feature."""
+        """Configure the humidity feature."""
 
         return await self.do_feature_config(
             name=CONF_FEATURE_HUMIDITY,
@@ -657,11 +662,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
                 CONF_HUMIDITY_TREND_UP_CUT_OFF: float,
                 CONF_HUMIDITY_TREND_DOWN_CUT_OFF: float,
                 CONF_HUMIDITY_ZERO_WAIT_TIME: int,
+                CONF_REFERENCE_HUMIDITY_SENSOR: vol.Any(cv.entity_id, None, ""),
+                CONF_HUMIDITY_DELTA_THRESHOLD: float,
+                CONF_HUMIDITY_DELTA_SHUTOFF: float,
+                CONF_HUMIDITY_DEADBAND: float,
+                CONF_HUMIDITY_MAX_FAN_TIME: int,
+                CONF_HUMIDITY_PRESENCE_GATE_TIME: int,
             },
             selectors={
                 CONF_HUMIDITY_TREND_UP_CUT_OFF: float,
                 CONF_HUMIDITY_TREND_DOWN_CUT_OFF: float,
                 CONF_HUMIDITY_ZERO_WAIT_TIME: int,
+                CONF_REFERENCE_HUMIDITY_SENSOR: self._build_selector_entity_simple(),
+                CONF_HUMIDITY_DELTA_THRESHOLD: float,
+                CONF_HUMIDITY_DELTA_SHUTOFF: float,
+                CONF_HUMIDITY_DEADBAND: float,
+                CONF_HUMIDITY_MAX_FAN_TIME: int,
+                CONF_HUMIDITY_PRESENCE_GATE_TIME: int,
             },
             user_input=user_input,
         )

@@ -1,10 +1,10 @@
 """Tests for the config flow."""
 
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from homeassistant import config_entries
 from homeassistant.components.binary_sensor import (
     DOMAIN as BINARY_SENSOR_DOMAIN,
+)
+from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
 )
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
@@ -13,6 +13,7 @@ from homeassistant.const import STATE_OFF, STATE_ON, STATE_OPEN
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.area_registry import async_get as async_get_ar
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from ..const import (
     AREA_TYPE_INTERIOR,
@@ -23,6 +24,11 @@ from ..const import (
     CONF_FAN_CONTROL,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_HUMIDITY,
+    CONF_HUMIDITY_DEADBAND,
+    CONF_HUMIDITY_DELTA_SHUTOFF,
+    CONF_HUMIDITY_DELTA_THRESHOLD,
+    CONF_HUMIDITY_MAX_FAN_TIME,
+    CONF_HUMIDITY_PRESENCE_GATE_TIME,
     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
@@ -37,6 +43,7 @@ from ..const import (
     CONF_ON_STATES,
     CONF_PRESENCE_DEVICE_PLATFORMS,
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
+    CONF_REFERENCE_HUMIDITY_SENSOR,
     CONF_TYPE,
     CONF_UPDATE_INTERVAL,
     DOMAIN,
@@ -308,6 +315,12 @@ async def test_options_enable_humidity(
                 CONF_HUMIDITY_ZERO_WAIT_TIME: 50,
                 CONF_HUMIDITY_TREND_UP_CUT_OFF: 0.03,
                 CONF_HUMIDITY_TREND_DOWN_CUT_OFF: -0.015,
+                CONF_REFERENCE_HUMIDITY_SENSOR: None,
+                CONF_HUMIDITY_DELTA_THRESHOLD: 10.0,
+                CONF_HUMIDITY_DELTA_SHUTOFF: 3.0,
+                CONF_HUMIDITY_DEADBAND: 0.001,
+                CONF_HUMIDITY_MAX_FAN_TIME: 3600,
+                CONF_HUMIDITY_PRESENCE_GATE_TIME: 0,
             },
         },
         CONF_ICON: "mdi:texture-box",

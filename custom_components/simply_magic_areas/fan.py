@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.group.fan import FanGroup
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -34,18 +35,33 @@ from .base.magic import ControlType, MagicArea
 from .config.area_state import AreaState
 from .config.entity_names import EntityNames
 from .const import (
+    ATTR_HUMIDITY_DELTA,
+    ATTR_HUMIDITY_START_TS,
     ATTR_LAST_UPDATE_FROM_ENTITY,
+    ATTR_REFERENCE_HUMIDITY,
     CONF_FEATURE_HUMIDITY,
+    CONF_HUMIDITY_DEADBAND,
+    CONF_HUMIDITY_DELTA_SHUTOFF,
+    CONF_HUMIDITY_DELTA_THRESHOLD,
+    CONF_HUMIDITY_MAX_FAN_TIME,
+    CONF_HUMIDITY_PRESENCE_GATE_TIME,
     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
     CONF_MANUAL_TIMEOUT,
+    CONF_REFERENCE_HUMIDITY_SENSOR,
     DATA_AREA_OBJECT,
+    DEFAULT_HUMIDITY_DEADBAND,
+    DEFAULT_HUMIDITY_DELTA_SHUTOFF,
+    DEFAULT_HUMIDITY_DELTA_THRESHOLD,
+    DEFAULT_HUMIDITY_MAX_FAN_TIME,
+    DEFAULT_HUMIDITY_PRESENCE_GATE_TIME,
     DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
     DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
     DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
     DEFAULT_MANUAL_TIMEOUT,
     DOMAIN,
+    META_AREA_INTERIOR,
     MODULE_DATA,
 )
 
@@ -135,6 +151,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self._manual_timeout_cb: CALLBACK_TYPE | None = None
 
         self._controled_by_entity = True
+        self._last_occupied_ts: float | None = None
 
         # Add static attributes
         self.last_update_from_entity: bool = False
@@ -165,6 +182,14 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 ]
                 self._attr_extra_state_attributes[ATTR_LAST_UPDATE_FROM_ENTITY] = (
                     self.last_update_from_entity
+                )
+            if ATTR_HUMIDITY_ON in last_state.attributes:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = (
+                    last_state.attributes[ATTR_HUMIDITY_ON]
+                )
+            if ATTR_HUMIDITY_START_TS in last_state.attributes:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_START_TS] = (
+                    last_state.attributes[ATTR_HUMIDITY_START_TS]
                 )
         else:
             self._attr_is_on = False
@@ -208,6 +233,16 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 )
             )
 
+        # Track configured reference humidity sensor if configured
+        humidity_config = self.area.feature_config(CONF_FEATURE_HUMIDITY)
+        ref_sensor = humidity_config.get(CONF_REFERENCE_HUMIDITY_SENSOR)
+        if ref_sensor and self.hass.states.get(ref_sensor) is not None:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [ref_sensor], self._trend_state_change
+                )
+            )
+
     ### State Change Handling
     def _area_state_change(self, event: Event[EventStateChangedData]) -> None:
         if event.data["old_state"] is None or event.data["new_state"] is None:
@@ -228,6 +263,15 @@ class AreaFanGroup(MagicEntity, FanGroup):
         # Manual control, ignore all changes
         if to_state == AreaState.AREA_STATE_MANUAL:
             return
+
+        if to_state in (AreaState.AREA_STATE_OCCUPIED, AreaState.AREA_STATE_EXTENDED):
+            state_entity = self.hass.states.get(
+                self.area.simply_magic_entity_id(SENSOR_DOMAIN, EntityNames.STATE)
+            )
+            if state_entity is None or not state_entity.attributes.get(
+                ATTR_HUMIDITY_ON, False
+            ):
+                self._last_occupied_ts = datetime.now(UTC).timestamp()
 
         # For fans we only worry about the extended state.
         if to_state == AreaState.AREA_STATE_EXTENDED:
@@ -253,9 +297,52 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if to_state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             self._humidity_fan_control()
 
+    def _get_area_humidity(self) -> float | None:
+        sensor_id = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
+        )
+        state = self.hass.states.get(sensor_id)
+        if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            try:
+                return float(state.state)
+            except (ValueError, TypeError):
+                pass
+        return None
+
+    def _get_reference_humidity(self) -> float | None:
+        humidity_feature_config = self.area.feature_config(CONF_FEATURE_HUMIDITY)
+        ref_entity = humidity_feature_config.get(CONF_REFERENCE_HUMIDITY_SENSOR)
+        if ref_entity:
+            state = self.hass.states.get(ref_entity)
+            if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                try:
+                    if (
+                        "current_humidity" in state.attributes
+                        and state.attributes["current_humidity"] is not None
+                    ):
+                        return float(state.attributes["current_humidity"])
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    pass
+
+        # Fallback to Interior meta-area humidity if available
+        if MODULE_DATA in self.hass.data:
+            for entry in self.hass.data[MODULE_DATA].values():
+                area = entry.get(DATA_AREA_OBJECT)
+                if area and area.is_meta() and area.id == META_AREA_INTERIOR.lower():
+                    interior_sensor_id = area.simply_magic_entity_id(
+                        SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
+                    )
+                    state = self.hass.states.get(interior_sensor_id)
+                    if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                        try:
+                            return float(state.state)
+                        except (ValueError, TypeError):
+                            pass
+        return None
+
     def _humidity_fan_control(self) -> None:
         fans_on: bool = False
-        # Track the up/down trend.
         humidity_trend = self.hass.states.get(
             self.area.simply_magic_entity_id(
                 SENSOR_DOMAIN,
@@ -263,58 +350,158 @@ class AreaFanGroup(MagicEntity, FanGroup):
             )
         )
         if (
-            humidity_trend is not None
-            and humidity_trend.state != STATE_UNAVAILABLE
-            and humidity_trend.state != STATE_UNKNOWN
+            humidity_trend is None
+            or humidity_trend.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
         ):
-            humidity_feature_config = self.area.feature_config(CONF_FEATURE_HUMIDITY)
-            # Handle the 0.0 state and how long it has been zero for.
-            if float(humidity_trend.state) != 0.0:
-                self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = None
-            elif (
-                self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ZERO_TS, None)
-                is None
-            ):
-                self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = datetime.now(
-                    UTC
-                ).timestamp()
-            if (
-                self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ZERO_TS, None)
-                is not None
-            ):
-                zero_time: int = int(
-                    (
-                        datetime.now(UTC)
-                        - datetime.fromtimestamp(
-                            int(
-                                self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS]
-                            ),
-                            UTC,
-                        )
-                    ).total_seconds()
+            return
+
+        humidity_feature_config = self.area.feature_config(CONF_FEATURE_HUMIDITY)
+        trend_val = float(humidity_trend.state)
+        now_ts = datetime.now(UTC).timestamp()
+
+        # Compute differential baseline if available
+        area_humidity = self._get_area_humidity()
+        ref_humidity = self._get_reference_humidity()
+        humidity_delta: float | None = None
+        if area_humidity is not None and ref_humidity is not None:
+            humidity_delta = area_humidity - ref_humidity
+            self._attr_extra_state_attributes[ATTR_HUMIDITY_DELTA] = round(
+                humidity_delta, 1
+            )
+            self._attr_extra_state_attributes[ATTR_REFERENCE_HUMIDITY] = round(
+                ref_humidity, 1
+            )
+        else:
+            self._attr_extra_state_attributes.pop(ATTR_HUMIDITY_DELTA, None)
+            self._attr_extra_state_attributes.pop(ATTR_REFERENCE_HUMIDITY, None)
+
+        # 1. Deadband Flatline Detection (replaces strict != 0.0)
+        deadband = humidity_feature_config.get(
+            CONF_HUMIDITY_DEADBAND, DEFAULT_HUMIDITY_DEADBAND
+        )
+        if abs(trend_val) > deadband:
+            self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = None
+        elif self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ZERO_TS) is None:
+            self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = now_ts
+
+        if self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ZERO_TS) is not None:
+            zero_time = int(
+                now_ts - float(self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS])
+            )
+            wait_time = humidity_feature_config.get(
+                CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME
+            )
+            if zero_time > wait_time:
+                _LOGGER.debug(
+                    "%s: Humidity rate %s within deadband %s for %ss (> %ss), turning off",
+                    self.name,
+                    trend_val,
+                    deadband,
+                    zero_time,
+                    wait_time,
                 )
-                if zero_time > humidity_feature_config.get(
-                    CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME
-                ):
-                    self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
-            # Work out if it is trending up.
-            trending_up = float(humidity_trend.state) >= humidity_feature_config.get(
-                CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF
-            ) or self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
-            if trending_up:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+
+        # 2. Maximum Fan Runtime Check (Safety Timeout)
+        max_runtime_exceeded = False
+        max_fan_time = humidity_feature_config.get(
+            CONF_HUMIDITY_MAX_FAN_TIME, DEFAULT_HUMIDITY_MAX_FAN_TIME
+        )
+        start_ts = self._attr_extra_state_attributes.get(ATTR_HUMIDITY_START_TS)
+        if (
+            max_fan_time > 0
+            and self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            and start_ts is not None
+        ):
+            run_duration = now_ts - float(start_ts)
+            if run_duration > max_fan_time:
+                _LOGGER.warning(
+                    "%s: Humidity fan max runtime (%ss) exceeded, shutting off",
+                    self.name,
+                    max_fan_time,
+                )
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+                max_runtime_exceeded = True
+
+        # 3. Reference Delta Shutoff Check
+        delta_shutoff = humidity_feature_config.get(
+            CONF_HUMIDITY_DELTA_SHUTOFF, DEFAULT_HUMIDITY_DELTA_SHUTOFF
+        )
+        if (
+            humidity_delta is not None
+            and self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            and humidity_delta <= delta_shutoff
+        ):
+            _LOGGER.debug(
+                "%s: Humidity delta (%s%%) returned to <= shutoff (%s%%), turning off",
+                self.name,
+                humidity_delta,
+                delta_shutoff,
+            )
+            self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+
+        # 4. Falling Trend Check (Below DOWN_CUT_OFF)
+        trend_down_cutoff = humidity_feature_config.get(
+            CONF_HUMIDITY_TREND_DOWN_CUT_OFF, DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF
+        )
+        if trend_val < trend_down_cutoff:
+            self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+
+        # 5. Rising Trend / Activation Check
+        trend_up_cutoff = humidity_feature_config.get(
+            CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF
+        )
+        if trend_val >= trend_up_cutoff and not max_runtime_exceeded:
+            can_activate = True
+
+            # Differential check: require delta >= threshold if reference baseline is available
+            delta_threshold = humidity_feature_config.get(
+                CONF_HUMIDITY_DELTA_THRESHOLD, DEFAULT_HUMIDITY_DELTA_THRESHOLD
+            )
+            if humidity_delta is not None and humidity_delta < delta_threshold:
+                _LOGGER.debug(
+                    "%s: Humidity rising (%s) but delta (%s%%) < threshold (%s%%), rejecting activation",
+                    self.name,
+                    trend_val,
+                    humidity_delta,
+                    delta_threshold,
+                )
+                can_activate = False
+
+            # Presence gating check: require recent occupancy if gate window is configured
+            gate_time = humidity_feature_config.get(
+                CONF_HUMIDITY_PRESENCE_GATE_TIME, DEFAULT_HUMIDITY_PRESENCE_GATE_TIME
+            )
+            if gate_time > 0 and self._last_occupied_ts is not None:
+                time_since_occupied = now_ts - self._last_occupied_ts
+                if time_since_occupied > gate_time:
+                    _LOGGER.debug(
+                        "%s: Humidity rising but area last occupied %ss ago (> %ss), rejecting activation",
+                        self.name,
+                        time_since_occupied,
+                        gate_time,
+                    )
+                    can_activate = False
+
+            if can_activate:
+                if not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
+                    self._attr_extra_state_attributes[ATTR_HUMIDITY_START_TS] = now_ts
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = True
-                if float(humidity_trend.state) > humidity_feature_config.get(
-                    CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
-                    DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
-                ):
-                    fans_on = True
-            # Make the last off time stay until this is not on any more.
-            if float(humidity_trend.state) < humidity_feature_config.get(
-                CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
-                DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
-            ):
-                fans_on = False
-        _LOGGER.debug("Fans on %s", fans_on)
+
+        # Determine whether fan should be on based on humidity_on and down trend
+        if self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
+            if trend_val > trend_down_cutoff:
+                fans_on = True
+            else:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+        else:
+            self._attr_extra_state_attributes.pop(ATTR_HUMIDITY_START_TS, None)
+
+        _LOGGER.debug(
+            "Fans on %s (humidity_on: %s)",
+            fans_on,
+            self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False),
+        )
         if fans_on:
             self._turn_on_fan()
         elif self.area.state != AreaState.AREA_STATE_EXTENDED:

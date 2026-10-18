@@ -87,10 +87,18 @@
         }
       },
       "feature_conf_humidity": {
+        "title": "Humidity & Ventilation Control",
+        "description": "Configure humidity trend thresholds and climate baseline comparison for ventilation",
         "data": {
           "humidity_down": "Humidity trend level below which room is not occupied",
           "humidity_up": "Humidity trend level above which room is occupied",
-          "humidity_wait_s": "How long to wait at 0 change in humidity to mark the room as unoccupied"
+          "humidity_wait_s": "How long to wait at flatline change in humidity before turning off",
+          "reference_humidity_sensor": "Reference sensor (e.g. climate or hallway humidity) for ambient baseline comparison",
+          "humidity_delta_threshold": "Relative humidity increase (% above baseline) to trigger fan",
+          "humidity_delta_shutoff": "Relative humidity delta (% above baseline) below which fan turns off",
+          "humidity_deadband": "Rate of change deadband considered flatlined / no change",
+          "humidity_max_fan_time": "Maximum continuous fan run time for humidity (seconds, 0 = disabled)",
+          "humidity_presence_gate_time": "Presence gate window: maximum seconds since last occupied to trigger (0 = disabled)"
         }
       },
       "area_config": {

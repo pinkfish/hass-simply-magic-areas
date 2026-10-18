@@ -242,8 +242,6 @@ async def test_options_enable_advanced_lights(
         CONF_MAX_BRIGHTNESS_LEVEL: 200,
         "bright_entity": "",
         "sleep_entity": "",
-        CONF_MAX_BRIGHTNESS_LEVEL: 200,
-        CONF_MIN_BRIGHTNESS_LEVEL: 100,
     }
     await hass.async_block_till_done()
     await hass.config_entries.async_unload(config_entry.entry_id)

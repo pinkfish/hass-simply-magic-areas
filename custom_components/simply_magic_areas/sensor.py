@@ -179,7 +179,7 @@ class AreaSensorGroupSensor(MagicEntity, SensorGroup):
             "unit_of_measurement": str(
                 UNIT_CONVERTERS[device_class].NORMALIZED_UNIT
                 if device_class in UNIT_CONVERTERS
-                else list(DEVICE_CLASS_UNITS[device_class])[0]
+                else next(iter(DEVICE_CLASS_UNITS[device_class]))
             ),
         }
         if "hass" in inspect.signature(SensorGroup.__init__).parameters:

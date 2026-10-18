@@ -432,7 +432,7 @@ class AreaClimateGroup(MagicEntity, ClimateGroup):
             _LOGGER.debug(f"{self.area.name} is meta. Noop.")
             return
 
-        new_states, old_states = states_tuple
+        new_states, _old_states = states_tuple
 
         if area_id != self.area.id:
             _LOGGER.debug(

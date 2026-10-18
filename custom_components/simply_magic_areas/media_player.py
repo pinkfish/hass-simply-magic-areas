@@ -155,8 +155,8 @@ class AreaAwareMediaPlayer(MagicEntity, MediaPlayerEntity):
         self._tracked_entities: list[str] = []
         self._attr_extra_state_attributes: dict[str, Any] = {}
 
-        for area in self._areas:
-            entity_list = self._get_media_players_for_area(area)
+        for tracked_area in self._areas:
+            entity_list = self._get_media_players_for_area(tracked_area)
             if entity_list:
                 self._tracked_entities.extend(entity_list)
 

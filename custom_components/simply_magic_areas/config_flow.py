@@ -407,7 +407,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
                 _LOGGER.debug(
                     "Found the following errors: %s (((%s)))", errors, user_input
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 _LOGGER.warning("Unexpected error caught: %s", str(e))
             else:
                 _LOGGER.debug("Saving area base config: %s", self.area_options)

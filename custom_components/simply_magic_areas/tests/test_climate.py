@@ -172,7 +172,6 @@ async def test_climate_area_state_change(
     assert await async_setup_component(hass, DOMAIN, {})
     await hass.async_block_till_done()
 
-    group_entity_id = f"{CLIMATE_DOMAIN}.simply_magic_areas_climate_kitchen"
     state_select_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
 
     # Initially off

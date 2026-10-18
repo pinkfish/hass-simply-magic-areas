@@ -7,9 +7,18 @@ from enum import StrEnum
 from typing import Any
 
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
+from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ENTITY_ID, STATE_ON
+from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
+    ATTR_ENTITY_ID,
+    LIGHT_LUX,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.area_registry import AreaEntry
 from homeassistant.helpers.device_registry import async_get as async_get_dr
@@ -436,6 +445,95 @@ class MagicArea(object):  # noqa: UP004
             area_name = self.name
         return f"{domain}.{MAGIC_DEVICE_ID_PREFIX}{slugify(name)}_{slugify(area_name)}"
 
+    def get_effective_illuminance(self) -> float | None:
+        """Get the current illuminance value for this area from local or reference sensors."""
+        # 1. Local illuminance sensor
+        local_lux_sensor = self.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.ILLUMINANCE
+        )
+        state = self.hass.states.get(local_lux_sensor)
+        if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            try:
+                return float(state.state)
+            except (ValueError, TypeError):
+                pass
+
+        if SENSOR_DOMAIN in self.entities:
+            for entity in self.entities[SENSOR_DOMAIN]:
+                if (
+                    entity.get(ATTR_DEVICE_CLASS) == SensorDeviceClass.ILLUMINANCE
+                    or entity.get("unit_of_measurement") == LIGHT_LUX
+                ):
+                    state = self.hass.states.get(entity[ATTR_ENTITY_ID])
+                    if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                        try:
+                            return float(state.state)
+                        except (ValueError, TypeError):
+                            pass
+
+        # 2. Reference illuminance sensor
+        ref_sensor = self.config.get(
+            CONF_REFERENCE_ILLUMINANCE_SENSOR,
+            self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_REFERENCE_ILLUMINANCE_SENSOR
+            ),
+        )
+        if ref_sensor:
+            state = self.hass.states.get(ref_sensor)
+            if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    pass
+
+        # 3. Reference area illuminance sensor
+        ref_area = self.config.get(
+            CONF_REFERENCE_BRIGHT_AREA,
+            self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_REFERENCE_BRIGHT_AREA
+            ),
+        )
+        if ref_area:
+            ref_lux_sensor = self.simply_magic_entity_id(
+                SENSOR_DOMAIN, EntityNames.ILLUMINANCE, area_name=ref_area
+            )
+            state = self.hass.states.get(ref_lux_sensor)
+            if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    pass
+
+            if MODULE_DATA in self.hass.data:
+                for entry in self.hass.data[MODULE_DATA].values():
+                    area = entry.get(DATA_AREA_OBJECT)
+                    if (
+                        area
+                        and (
+                            area.id == ref_area
+                            or area.slug == ref_area
+                            or area.name == ref_area
+                        )
+                        and SENSOR_DOMAIN in area.entities
+                    ):
+                        for entity in area.entities[SENSOR_DOMAIN]:
+                            if (
+                                entity.get(ATTR_DEVICE_CLASS)
+                                == SensorDeviceClass.ILLUMINANCE
+                                or entity.get("unit_of_measurement") == LIGHT_LUX
+                            ):
+                                state = self.hass.states.get(entity[ATTR_ENTITY_ID])
+                                if state and state.state not in (
+                                    STATE_UNKNOWN,
+                                    STATE_UNAVAILABLE,
+                                ):
+                                    try:
+                                        return float(state.state)
+                                    except (ValueError, TypeError):
+                                        pass
+
+        return None
+
     def get_active_areas(self) -> list[str]:
         """Return the active areas for the magic area, always empty for non-meta area."""
         return []
@@ -467,20 +565,15 @@ class MagicMetaArea(MagicArea):
         areas = self.get_child_areas()
         active_areas: list[str] = []
 
-        for area in areas:
-            try:
-                entity_id = f"binary_sensor.area_{area}"
-                entity = self.hass.states.get(entity_id)
-
-                if entity and entity.state == STATE_ON:
-                    active_areas.append(area)
-            except Exception as e:  # noqa: BLE001
-                _LOGGER.error(  # type: ignore
-                    "%s: Unable to get active area state for %s: %s",
-                    self.slug,
-                    area,
-                    str(e),
-                )
+        if MODULE_DATA in self.hass.data:
+            for area_info in self.hass.data[MODULE_DATA].values():
+                child_area = area_info.get(DATA_AREA_OBJECT)
+                if (
+                    child_area
+                    and child_area.slug in areas
+                    and child_area.state != AreaState.AREA_STATE_CLEAR
+                ):
+                    active_areas.append(child_area.slug)
 
         return active_areas
 

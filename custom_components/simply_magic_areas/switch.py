@@ -62,7 +62,6 @@ class SwitchBase(MagicEntity, SwitchEntity):
         """Call when entity about to be added to hass."""
         await super().async_added_to_hass()
         self.async_write_ha_state()
-        self.schedule_update_ha_state()
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn on the switch."""

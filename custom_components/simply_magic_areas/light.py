@@ -54,6 +54,7 @@ from .const import (
     DOMAIN,
     MODULE_DATA,
 )
+from .util import call_service_non_blocking
 
 _LOGGER = logging.getLogger(__name__)
 ATTR_LAST_ON_ILLUMINANCE: str = "last_on_illuminance"
@@ -461,7 +462,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
             ATTR_ENTITY_ID: self.entity_id,
             ATTR_BRIGHTNESS: brightness,
         }
-        self.hass.services.call(LIGHT_DOMAIN, SERVICE_TURN_ON, service_data)
+        call_service_non_blocking(
+            self.hass, LIGHT_DOMAIN, SERVICE_TURN_ON, service_data
+        )
 
         return
 
@@ -494,7 +497,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._attr_is_on = False
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         # await self.async_turn_off()
-        self.hass.services.call(LIGHT_DOMAIN, SERVICE_TURN_OFF, service_data)
+        call_service_non_blocking(
+            self.hass, LIGHT_DOMAIN, SERVICE_TURN_OFF, service_data
+        )
 
         return
 

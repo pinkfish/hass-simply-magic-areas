@@ -69,6 +69,7 @@ from .const import (
     META_AREA_INTERIOR,
     MODULE_DATA,
 )
+from .util import call_service_non_blocking
 
 _LOGGER = logging.getLogger(__name__)
 ATTR_FANS: str = "fans"
@@ -610,7 +611,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         service_data = {
             ATTR_ENTITY_ID: self.entity_id,
         }
-        self.hass.services.call(FAN_DOMAIN, SERVICE_TURN_ON, service_data)
+        call_service_non_blocking(self.hass, FAN_DOMAIN, SERVICE_TURN_ON, service_data)
 
     def _turn_off_fan(self) -> None:
         """Turn off the fan group."""
@@ -623,7 +624,9 @@ class AreaFanGroup(MagicEntity, FanGroup):
         _LOGGER.debug("%s: Turning fan off", self.name)
         self.last_update_from_entity = True
         service_data = {ATTR_ENTITY_ID: self.entity_id}
-        self.hass.services.call(FAN_DOMAIN, SERVICE_TURN_OFF, service_data)
+        call_service_non_blocking(
+            self.hass, FAN_DOMAIN, SERVICE_TURN_OFF, service_data
+        )
 
     #### Control Release
     def _is_controlled_by_this_entity(self) -> bool:

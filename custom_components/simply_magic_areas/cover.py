@@ -21,7 +21,7 @@ from .base.magic import MagicArea
 from .const import CONF_COVER_GROUPS, DATA_AREA_OBJECT, MODULE_DATA
 
 _LOGGER = logging.getLogger(__name__)
-DEPENDENCIES = ["magic_areas"]
+DEPENDENCIES = ["cover"]
 ATTR_COVER_ENTITY_ID = "cover_entity_id"
 
 

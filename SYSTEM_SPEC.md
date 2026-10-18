@@ -4,6 +4,8 @@
 
 **Simply Magic Areas** is a Home Assistant custom integration that transforms static physical areas into dynamic, reactive, stateful environments. By grouping devices, synthesizing occupancy presence from disparate sensors, tracking ambient environmental trends, and coordinating automations across platforms (lighting, climate, ventilation, covers, media players, and distress monitoring), it turns areas into autonomous smart rooms.
 
+All development and implementation within Simply Magic Areas is strictly governed by the engineering principles and architectural invariants codified in the [Project Constitution](constitution.md).
+
 ---
 
 ## 2. System Architecture & Topology
@@ -19,6 +21,7 @@ Simply Magic Areas categorizes spaces into two primary constructs:
    - **Global (`Global`)**: Aggregates all interior and exterior areas across the entire home. Hosts global capabilities such as the Area-Aware Media Player (AAMP).
    - **Interior Meta-Area (`Interior`)**: Aggregates all interior spaces.
    - **Exterior Meta-Area (`Exterior`)**: Aggregates all exterior spaces.
+   - **Active Area Resolution (`get_active_areas()`)**: Meta-areas dynamically evaluate the states of all subordinate child areas and expose active non-clear child slugs in `get_active_areas()` and the state sensor's `active_areas` attribute (`ATTR_ACTIVE_AREAS`).
 
 ```mermaid
 graph TD
@@ -240,6 +243,7 @@ flowchart TD
   - **Presence Timer Preemption**: When a presence sensor reports `on`, all running clear and extended timers in `AreaStateSensor` are cancelled synchronously, preventing background timer callbacks from clearing the area.
   - **Unoccupied State Preservation**: In `AreaStateSensor`, when the area is `clear` or `extended`, non-occupied sensor state updates do not reset off-time counters or cause premature occupancy fall-throughs.
   - **Extended State Sensor Reactivity**: If the area is in the `extended` state, any state change in the sensors (presence sensors or room tracking sensors) immediately moves the area state back to `occupied`, cancels running extended timeouts, restarts the clear countdown buffer, and re-engages lighting automations (turning off exhaust ventilation unless prolonged by high humidity).
+- **Asynchronous Non-Blocking Execution**: In accordance with the Project Constitution, light command dispatches (`turn_on`, `turn_off`) utilize non-blocking async task dispatching (`call_service_non_blocking`), preventing event loop latency or blocking deadlocks across both loop callbacks and worker threads.
 
 ### 4.2 Ventilation & Fans (`fan.py`)
 - **Entity**: `AreaFanGroup` (`fan.simply_magic_areas_fan_<area>`).
@@ -366,18 +370,7 @@ flowchart TD
 
 ---
 
-## 7. Architectural Roadmap & Recommended Enhancements
- 
- The following design recommendations represent planned extensions to elevate area intelligence:
- 
- 1. **Sleep Mode Acoustic Fan Suppression (`CONF_FAN_SUPPRESS_IN_SLEEP`)**:
-    - In en-suite bathrooms, suppress loud exhaust fans during `extended` mode when the bedroom/en-suite is in the `sleep` substate, unless actively forced by high differential humidity.
- 2. **Door Contact Interlocking for Bathroom Occupancy**:
-    - If a bathroom is occupied when the door is closed, maintain the `occupied` state regardless of motion sensor gaps (e.g. while bathing behind shower glass/curtains) until the door opens.
- 3. **Multi-Speed Exhaust Fan Support**:
-    - Configure distinct speed percentages for background `extended` ventilation (e.g. 40%) versus high-speed steam clearance (`humidity_on`, 100%).
- 4. **Completed Architectural Enhancements**:
-    - [x] **Direct Numeric Illuminance & Reference Area Brightness**: Direct lux threshold evaluation with hysteresis, plus inter-area and meta-area reference inheritance for rooms without sensors (Section 3.6).
-    - [x] **Persistent Timer Rehydration across Restarts**: Area countdown timestamps (`clear_timeout_ts`, `extended_timeout_ts`) and manual control timestamps (`manual_timeout_ts`) saved to extra state attributes and restored on HA restart.
-    - [x] **Differential Humidity Fan Control & Deadband Shutoff**: Continuous derivative rate-of-change tracking with flatline shutoff and reference humidity delta comparison (Section 4.3).
+## 7. Roadmap & Project Tasks
+
+Active development, architectural roadmap items, open feature proposals, and completed implementation tasks are tracked in [tasks.md](tasks.md).
 

@@ -71,6 +71,7 @@ from .const import (
     MODULE_DATA,
     AreaState,
 )
+from .util import call_service_non_blocking
 
 ###    Climate Group Constants
 
@@ -473,7 +474,9 @@ class AreaClimateGroup(MagicEntity, ClimateGroup):
             ATTR_ENTITY_ID: self.entity_id,
             ATTR_HVAC_MODE: HVACMode.OFF,
         }
-        self.hass.services.call(CLIMATE_DOMAIN, SERVICE_SET_HVAC_MODE, service_data)
+        call_service_non_blocking(
+            self.hass, CLIMATE_DOMAIN, SERVICE_SET_HVAC_MODE, service_data
+        )
 
     def _turn_on(self):
         for mode in (HVACMode.HEAT_COOL, HVACMode.HEAT, HVACMode.COOL):
@@ -485,5 +488,7 @@ class AreaClimateGroup(MagicEntity, ClimateGroup):
                 ATTR_HVAC_MODE: mode,
             }
 
-            self.hass.services.call(CLIMATE_DOMAIN, SERVICE_SET_HVAC_MODE, service_data)
+            call_service_non_blocking(
+                self.hass, CLIMATE_DOMAIN, SERVICE_SET_HVAC_MODE, service_data
+            )
             break

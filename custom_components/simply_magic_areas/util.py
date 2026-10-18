@@ -2,6 +2,7 @@
 
 import inspect
 import logging
+import threading
 from collections.abc import Generator, Iterable
 from typing import Any
 
@@ -74,3 +75,18 @@ def get_meta_area_object(name: str) -> AreaEntry:
             available_params[k] = v
 
     return AreaEntry(**available_params)  # type: ignore
+
+
+def call_service_non_blocking(
+    hass: HomeAssistant,
+    domain: str,
+    service: str,
+    service_data: dict[str, Any] | None = None,
+) -> None:
+    """Safely dispatch a service call asynchronously without blocking the event loop or crashing on worker threads."""
+    coro = hass.services.async_call(domain, service, service_data)
+    if hass.loop_thread_id == threading.get_ident():
+        hass.async_create_task(coro)
+    else:
+        hass.create_task(coro)
+

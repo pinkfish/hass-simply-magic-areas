@@ -36,6 +36,7 @@ from .const import (
     META_AREA_GLOBAL,
     MODULE_DATA,
 )
+from .util import call_service_non_blocking
 
 DEPENDENCIES = ["media_player"]
 
@@ -278,7 +279,9 @@ class AreaAwareMediaPlayer(MagicEntity, MediaPlayerEntity):
             ATTR_ENTITY_ID: media_players,
         }
 
-        self.hass.services.call(MEDIA_PLAYER_DOMAIN, SERVICE_PLAY_MEDIA, data)
+        call_service_non_blocking(
+            self.hass, MEDIA_PLAYER_DOMAIN, SERVICE_PLAY_MEDIA, data
+        )
 
         return True
 
@@ -312,7 +315,9 @@ class AreaMediaPlayerGroup(MagicEntity, MediaPlayerGroup):
 
     def _turn_off(self) -> None:
         service_data = {ATTR_ENTITY_ID: self.entity_id}
-        self.hass.services.call(MEDIA_PLAYER_DOMAIN, SERVICE_TURN_OFF, service_data)
+        call_service_non_blocking(
+            self.hass, MEDIA_PLAYER_DOMAIN, SERVICE_TURN_OFF, service_data
+        )
 
     async def async_added_to_hass(self) -> None:
         """Register callbacks."""

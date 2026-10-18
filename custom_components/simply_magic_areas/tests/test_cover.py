@@ -3,14 +3,12 @@
 import logging
 
 from _pytest.monkeypatch import MonkeyPatch
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from homeassistant.components.cover import DOMAIN as COVER_DOMAIN
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
-from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from ..const import DOMAIN
 from .mocks import MockCover
@@ -53,8 +51,9 @@ async def test_cover_with_groups(
     """Test loading cover with aggregation enabled."""
     from homeassistant.helpers.area_registry import async_get as async_get_ar
     from homeassistant.setup import async_setup_component
-    from .conftest import AREA_NAME, CONFIG_ENTRY_DATA
+
     from ..const import CONF_COVER_GROUPS, CONF_ENABLED_FEATURES
+    from .conftest import AREA_NAME, CONFIG_ENTRY_DATA
 
     data = dict(CONFIG_ENTRY_DATA)
     data[CONF_ENABLED_FEATURES] = {

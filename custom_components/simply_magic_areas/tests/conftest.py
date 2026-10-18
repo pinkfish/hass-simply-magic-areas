@@ -1,38 +1,44 @@
 """Fixtures for tests."""
 
-from collections.abc import Generator
 import logging
+from collections.abc import Generator
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from pytest_homeassistant_custom_component.syrupy import HomeAssistantSnapshotExtension
-from syrupy.assertion import SnapshotAssertion
-
 from homeassistant.components.binary_sensor import (
     DOMAIN as BINARY_SENSOR_DOMAIN,
+)
+from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
 )
 from homeassistant.components.climate import (
     DOMAIN as CLIMATE_DOMAIN,
+)
+from homeassistant.components.climate import (
     ClimateEntityFeature,
     HVACMode,
 )
-from homeassistant.components.cover import DOMAIN as COVER_DOMAIN, CoverDeviceClass
+from homeassistant.components.cover import DOMAIN as COVER_DOMAIN
+from homeassistant.components.cover import CoverDeviceClass
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.light import (
     ATTR_SUPPORTED_COLOR_MODES,
-    DOMAIN as LIGHT_DOMAIN,
     ColorMode,
 )
+from homeassistant.components.light import (
+    DOMAIN as LIGHT_DOMAIN,
+)
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
-from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN, SensorDeviceClass
+from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
+from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_PLATFORM, LIGHT_LUX, PERCENTAGE, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.area_registry import async_get as async_get_ar
 from homeassistant.helpers.entity_registry import async_get as async_get_er
 from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.syrupy import HomeAssistantSnapshotExtension
+from syrupy.assertion import SnapshotAssertion
 
 from ..const import (
     AREA_TYPE_INTERIOR,

@@ -1,8 +1,8 @@
 """Magic Areas component for Home Assistant."""
 
+import logging
 from collections import defaultdict
 from datetime import UTC, datetime
-import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED

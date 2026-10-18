@@ -1,8 +1,8 @@
 """Sensor controls for magic areas."""
 
-from datetime import UTC, datetime, timedelta
 import inspect
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from homeassistant.components.group.sensor import (
@@ -13,9 +13,11 @@ from homeassistant.components.group.sensor import (
 )
 from homeassistant.components.sensor import (
     DEVICE_CLASS_UNITS,
-    DOMAIN as SENSOR_DOMAIN,
     UNIT_CONVERTERS,
     SensorDeviceClass,
+)
+from homeassistant.components.sensor import (
+    DOMAIN as SENSOR_DOMAIN,
 )
 from homeassistant.components.statistics.sensor import StatisticsSensor
 from homeassistant.config_entries import ConfigEntry

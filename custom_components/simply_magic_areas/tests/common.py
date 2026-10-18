@@ -1,15 +1,14 @@
 """Common code for running the tests."""
 
-from asyncio import get_running_loop
-from collections.abc import Sequence
 import functools
 import logging
 import pathlib
+from asyncio import get_running_loop
+from collections.abc import Sequence
 from typing import NoReturn
 from unittest.mock import Mock, patch
 
 import voluptuous as vol
-
 from homeassistant import loader
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import (
@@ -132,7 +131,7 @@ def mock_integration(
             name=f"{integration.pkg_path}.{platform_name}",
         )
 
-    integration._import_platform = mock_import_platform  # noqa: SLF001
+    integration._import_platform = mock_import_platform
 
     _LOGGER.info("Adding mock integration: %s", module.DOMAIN)
     integration_cache = hass.data[loader.DATA_INTEGRATIONS]
@@ -161,7 +160,7 @@ def mock_platform(
     if domain not in integration_cache:
         mock_integration(hass, MockModule(domain), built_in=built_in)
 
-    integration_cache[domain]._top_level_files.add(f"{platform_name}.py")  # noqa: SLF001
+    integration_cache[domain]._top_level_files.add(f"{platform_name}.py")
     _LOGGER.info("Adding mock integration platform: %s", platform_path)
     module_cache[platform_path] = module or Mock()
 
@@ -230,9 +229,9 @@ class VirtualClock:
         loop = get_running_loop()
         with (
             patch.object(
-                loop._selector,  # noqa: SLF001
+                loop._selector,
                 "select",
-                new=functools.partial(self._virtual_select, loop._selector.select),  # noqa: SLF001
+                new=functools.partial(self._virtual_select, loop._selector.select),
             ),
             patch.object(
                 loop,

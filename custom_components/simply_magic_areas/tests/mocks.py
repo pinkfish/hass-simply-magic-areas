@@ -1,14 +1,13 @@
 """Fake light for testing with."""
 
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from functools import cached_property
-import logging
 from typing import Any, Final, Literal
 from unittest.mock import AsyncMock
 
 import voluptuous as vol
-
 from homeassistant import data_entry_flow, loader
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -302,13 +301,13 @@ class MockToggleEntity(MockEntity, ToggleEntity):
         return self._name
 
     @property
-    def state(self) -> Literal["on", "off"] | None:  # type: ignore  # noqa: PGH003
+    def state(self) -> Literal["on", "off"] | None:  # type: ignore
         """Return the state of the entity if any."""
         self.calls.append(("state", {}))
-        return self._state  # type: ignore  # noqa: PGH003
+        return self._state  # type: ignore
 
     @property
-    def is_on(self) -> bool:  # type: ignore  # noqa: PGH003
+    def is_on(self) -> bool:  # type: ignore
         """Return true if entity is on."""
         self.calls.append(("is_on", {}))
         return self._state == STATE_ON
@@ -376,7 +375,7 @@ class MockLight(MockToggleEntity, LightEntity):
             ]:
                 setattr(self, key, value)
             if key == "white":
-                setattr(self, "brightness", value)
+                self.brightness = value
             if key in TURN_ON_ARG_TO_COLOR_MODE:
                 self._attr_color_mode = TURN_ON_ARG_TO_COLOR_MODE[key]
 
@@ -387,7 +386,7 @@ class MockBinarySensor(MockEntity, BinarySensorEntity):
     _state = STATE_OFF
 
     @property
-    def is_on(self) -> bool:  # type: ignore  # noqa: PGH003
+    def is_on(self) -> bool:  # type: ignore
         """Return true if the binary sensor is on."""
         return self._state == STATE_ON
 
@@ -487,11 +486,11 @@ class MockCover(MockEntity, CoverEntity):
     _reports_opening_closing = False
 
     @property
-    def supported_features(self) -> CoverEntityFeature:  # type: ignore  # noqa: PGH003
+    def supported_features(self) -> CoverEntityFeature:  # type: ignore
         """Return the supported features of the cover."""
         if "supported_feautes" in self._values:
             return self._values["supported_features"]
-        return CoverEntity.supported_features.fget(self)  # type: ignore  # noqa: PGH003
+        return CoverEntity.supported_features.fget(self)  # type: ignore
 
     @cached_property
     def is_closed(self) -> bool:

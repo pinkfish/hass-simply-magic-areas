@@ -4,12 +4,15 @@ import logging
 
 from homeassistant.components.cover import (
     DEVICE_CLASSES as COVER_DEVICE_CLASSES,
+)
+from homeassistant.components.cover import (
     DOMAIN as COVER_DOMAIN,
+)
+from homeassistant.components.cover import (
     CoverDeviceClass,
 )
 from homeassistant.components.group.cover import CoverGroup
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 

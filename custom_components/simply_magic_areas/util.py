@@ -1,8 +1,8 @@
 """Utility details for the system."""
 
-from collections.abc import Generator, Iterable
 import inspect
 import logging
+from collections.abc import Generator, Iterable
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -67,10 +67,10 @@ def get_meta_area_object(name: str) -> AreaEntry:
     # in particular.
 
     available_params = {}
-    constructor_params = inspect.signature(AreaEntry.__init__).parameters  # type: ignore  # noqa: PGH003
+    constructor_params = inspect.signature(AreaEntry.__init__).parameters  # type: ignore
 
     for k, v in params.items():
         if k in constructor_params:
             available_params[k] = v
 
-    return AreaEntry(**available_params)  # type: ignore  # noqa: PGH003
+    return AreaEntry(**available_params)  # type: ignore

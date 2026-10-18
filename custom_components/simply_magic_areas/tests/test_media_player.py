@@ -1,23 +1,22 @@
 """Tests for media_player platform."""
 
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from homeassistant.components.media_player import (
     ATTR_MEDIA_CONTENT_ID,
     ATTR_MEDIA_CONTENT_TYPE,
-    DOMAIN as MEDIA_PLAYER_DOMAIN,
     SERVICE_PLAY_MEDIA,
-    SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
+)
+from homeassistant.components.media_player import (
+    DOMAIN as MEDIA_PLAYER_DOMAIN,
 )
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.const import ATTR_ENTITY_ID, STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.area_registry import async_get as async_get_ar
 from homeassistant.setup import async_setup_component
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from ..config.area_state import AreaState
-from ..config.entity_names import EntityNames
 from ..const import (
     AREA_TYPE_META,
     CONF_ENABLED_FEATURES,
@@ -157,7 +156,7 @@ async def test_area_aware_media_player(
     # Now set kitchen state to occupied
     hass.states.async_set(state_select_entity_id, AreaState.AREA_STATE_OCCUPIED)
     # Also ensure kitchen area object recognizes occupied state
-    from ..const import MODULE_DATA, DATA_AREA_OBJECT
+    from ..const import DATA_AREA_OBJECT, MODULE_DATA
     kitchen_area = hass.data[MODULE_DATA][kitchen_entry.entry_id][DATA_AREA_OBJECT]
     kitchen_area.states = [AreaState.AREA_STATE_OCCUPIED]
 

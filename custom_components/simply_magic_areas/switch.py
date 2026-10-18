@@ -2,9 +2,10 @@
 
 import logging
 
-from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.switch import (
     DOMAIN as SWITCH_DOMAIN,
+)
+from homeassistant.components.switch import (
     SwitchDeviceClass,
     SwitchEntity,
 )

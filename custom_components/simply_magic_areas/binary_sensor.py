@@ -4,6 +4,8 @@ import logging
 
 from homeassistant.components.binary_sensor import (
     DOMAIN as BINARY_SENSOR_DOMAIN,
+)
+from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
 )
 from homeassistant.components.group.binary_sensor import BinarySensorGroup
@@ -11,7 +13,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
-    ATTR_UNIT_OF_MEASUREMENT,
     STATE_ON,
 )
 from homeassistant.core import HomeAssistant

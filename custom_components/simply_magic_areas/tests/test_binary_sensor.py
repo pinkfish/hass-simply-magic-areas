@@ -7,6 +7,8 @@ _LOGGER = logging.getLogger(__name__)
 
 from homeassistant.components.binary_sensor import (
     DOMAIN as BINARY_SENSOR_DOMAIN,
+)
+from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
 )
 from homeassistant.const import CONF_PLATFORM, STATE_OFF, STATE_ON

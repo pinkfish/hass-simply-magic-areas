@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 
 import voluptuous as vol
-
 from homeassistant.const import STATE_ON
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import EntitySelectorConfig, selector

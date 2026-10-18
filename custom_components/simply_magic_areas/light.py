@@ -29,7 +29,10 @@ from homeassistant.core import (
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
-from homeassistant.helpers.event import async_track_state_change_event, call_later
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+)
 
 from .base.entities import MagicEntity
 from .base.magic import ControlType, MagicArea, StateConfigData
@@ -37,6 +40,8 @@ from .config.area_state import AreaState
 from .config.entity_names import EntityNames
 from .const import (
     ATTR_LAST_UPDATE_FROM_ENTITY,
+    ATTR_MANUAL_CONTROL,
+    ATTR_MANUAL_TIMEOUT_TS,
     CONF_MANUAL_TIMEOUT,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
@@ -50,7 +55,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 ATTR_LAST_ON_ILLUMINANCE: str = "last_on_illuminance"
-ATTR_MANUAL_CONTROL: str = "manual_control"
 
 
 async def async_setup_entry(
@@ -161,6 +165,37 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 self._attr_extra_state_attributes[ATTR_LAST_UPDATE_FROM_ENTITY] = (
                     self.last_update_from_entity
                 )
+
+            if ATTR_MANUAL_CONTROL in last_state.attributes:
+                is_manual = bool(last_state.attributes[ATTR_MANUAL_CONTROL])
+                if is_manual:
+                    self._attr_extra_state_attributes[ATTR_MANUAL_CONTROL] = True
+                    target_ts = last_state.attributes.get(ATTR_MANUAL_TIMEOUT_TS)
+                    now_ts = datetime.now(UTC).timestamp()
+                    if target_ts is not None:
+                        try:
+                            remaining = float(target_ts) - now_ts
+                            if remaining > 0:
+                                self._attr_extra_state_attributes[
+                                    ATTR_MANUAL_TIMEOUT_TS
+                                ] = float(target_ts)
+                                self._manual_timeout_cb = async_call_later(
+                                    self.hass, remaining, self._reset_manual_timeout
+                                )
+                            else:
+                                self._reset_manual_timeout()
+                        except (ValueError, TypeError):
+                            self._reset_manual_timeout()
+                    else:
+                        manual_timeout = self.area.config.get(
+                            CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
+                        )
+                        self._attr_extra_state_attributes[ATTR_MANUAL_TIMEOUT_TS] = (
+                            now_ts + manual_timeout
+                        )
+                        self._manual_timeout_cb = async_call_later(
+                            self.hass, manual_timeout, self._reset_manual_timeout
+                        )
         else:
             self._attr_is_on = False
 
@@ -277,6 +312,21 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if old_state is None or new_state is None:
             return
 
+        if old_state.attributes.get("restored"):
+            # On state restored, if already scheduled from async_added_to_hass, do not rearm.
+            if not self._is_controlled_by_this_entity() and self._manual_timeout_cb is None:
+                manual_timeout = self.area.config.get(
+                    CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
+                )
+                now_ts = datetime.now(UTC).timestamp()
+                self._attr_extra_state_attributes[ATTR_MANUAL_TIMEOUT_TS] = (
+                    now_ts + manual_timeout
+                )
+                self._manual_timeout_cb = async_call_later(
+                    self.hass, manual_timeout, self._reset_manual_timeout
+                )
+            return
+
         occupied_states = {
             AreaState.AREA_STATE_OCCUPIED,
             AreaState.AREA_STATE_BRIGHT,
@@ -305,10 +355,6 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if self.area.state != AreaState.AREA_STATE_CLEAR:
             self._reset_control()
         else:
-            old_state = event.data["old_state"]
-            new_state = event.data["new_state"]
-            if old_state is None or new_state is None:
-                return
             # Skip non ON/OFF state changes
             if old_state.state not in [
                 STATE_ON,
@@ -323,28 +369,25 @@ class AreaLightGroup(MagicEntity, LightGroup):
             manual_timeout = self.area.config.get(
                 CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
             )
-            if old_state.attributes.get("restored"):
-                # On state restored, also setup the timeout callback.
-                if not self._is_controlled_by_this_entity():
-                    if self._manual_timeout_cb is not None:
-                        self._manual_timeout_cb()
-                    self._manual_timeout_cb = call_later(
-                        self.hass, manual_timeout, self._reset_manual_timeout
-                    )
-                return
             if self.last_update_from_entity:
                 self.last_update_from_entity = False
                 return
             self._set_controlled_by_this_entity(False)
             if self._manual_timeout_cb is not None:
                 self._manual_timeout_cb()
-            self._manual_timeout_cb = call_later(
+            now_ts = datetime.now(UTC).timestamp()
+            self._attr_extra_state_attributes[ATTR_MANUAL_TIMEOUT_TS] = (
+                now_ts + manual_timeout
+            )
+            self._manual_timeout_cb = async_call_later(
                 self.hass, manual_timeout, self._reset_manual_timeout
             )
 
-    def _reset_manual_timeout(self, now: datetime):
+    def _reset_manual_timeout(self, now: datetime | None = None) -> None:
+        if self._manual_timeout_cb is not None:
+            self._manual_timeout_cb = None
         self._set_controlled_by_this_entity(True)
-        self._manual_timeout_cb = None
+        self.schedule_update_ha_state()
 
     ####  Light Handling
     def _turn_on_light(self, conf: StateConfigData, force: bool = False) -> None:
@@ -481,8 +524,15 @@ class AreaLightGroup(MagicEntity, LightGroup):
         return not self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, False)
 
     def _set_controlled_by_this_entity(self, enabled: bool) -> None:
-        self._attr_extra_state_attributes[ATTR_MANUAL_CONTROL] = not enabled
+        if enabled:
+            self._attr_extra_state_attributes.pop(ATTR_MANUAL_CONTROL, None)
+            self._attr_extra_state_attributes.pop(ATTR_MANUAL_TIMEOUT_TS, None)
+        else:
+            self._attr_extra_state_attributes[ATTR_MANUAL_CONTROL] = True
 
     def _reset_control(self) -> None:
+        if self._manual_timeout_cb is not None:
+            self._manual_timeout_cb()
+            self._manual_timeout_cb = None
         self._set_controlled_by_this_entity(True)
         self.schedule_update_ha_state()

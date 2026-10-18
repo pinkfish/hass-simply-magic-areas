@@ -27,7 +27,10 @@ from homeassistant.core import (
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
-from homeassistant.helpers.event import async_track_state_change_event, call_later
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+)
 from homeassistant.util import slugify
 
 from .base.entities import MagicEntity
@@ -38,6 +41,8 @@ from .const import (
     ATTR_HUMIDITY_DELTA,
     ATTR_HUMIDITY_START_TS,
     ATTR_LAST_UPDATE_FROM_ENTITY,
+    ATTR_MANUAL_CONTROL,
+    ATTR_MANUAL_TIMEOUT_TS,
     ATTR_REFERENCE_HUMIDITY,
     CONF_FEATURE_HUMIDITY,
     CONF_HUMIDITY_DEADBAND,
@@ -67,7 +72,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 ATTR_FANS: str = "fans"
-ATTR_MANUAL_CONTROL: str = "manual_control"
 ATTR_HUMIDITY_ON: str = "humidity_on"
 ATTR_HUMIDITY_ZERO_TS: str = "humidity_zero_ts"
 
@@ -190,6 +194,36 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_START_TS] = (
                     last_state.attributes[ATTR_HUMIDITY_START_TS]
                 )
+            if ATTR_MANUAL_CONTROL in last_state.attributes:
+                is_manual = bool(last_state.attributes[ATTR_MANUAL_CONTROL])
+                if is_manual:
+                    self._attr_extra_state_attributes[ATTR_MANUAL_CONTROL] = True
+                    target_ts = last_state.attributes.get(ATTR_MANUAL_TIMEOUT_TS)
+                    now_ts = datetime.now(UTC).timestamp()
+                    if target_ts is not None:
+                        try:
+                            remaining = float(target_ts) - now_ts
+                            if remaining > 0:
+                                self._attr_extra_state_attributes[
+                                    ATTR_MANUAL_TIMEOUT_TS
+                                ] = float(target_ts)
+                                self._manual_timeout_cb = async_call_later(
+                                    self.hass, remaining, self._reset_manual_timeout
+                                )
+                            else:
+                                self._reset_manual_timeout()
+                        except (ValueError, TypeError):
+                            self._reset_manual_timeout()
+                    else:
+                        manual_timeout = self.area.config.get(
+                            CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
+                        )
+                        self._attr_extra_state_attributes[ATTR_MANUAL_TIMEOUT_TS] = (
+                            now_ts + manual_timeout
+                        )
+                        self._manual_timeout_cb = async_call_later(
+                            self.hass, manual_timeout, self._reset_manual_timeout
+                        )
         else:
             self._attr_is_on = False
 
@@ -507,48 +541,59 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self._turn_off_fan()
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
-        if self.area.state == AreaState.AREA_STATE_CLEAR:
-            self._reset_control(datetime.now(UTC))
-        else:
-            # Skip non ON/OFF state changes
-            if not event.data["old_state"] or event.data["old_state"].state not in [
-                STATE_ON,
-                STATE_OFF,
-            ]:
-                return
-            if not event.data["new_state"] or event.data["new_state"].state not in [
-                STATE_ON,
-                STATE_OFF,
-            ]:
-                return
-            manual_timeout = self.area.config.get(
-                CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
-            )
-            if (
-                "restored" in event.data["old_state"].attributes
-                and event.data["old_state"].attributes["restored"]
-            ):
-                # On state restored, also setup the timeout callback.
-                if not self._is_controlled_by_this_entity():
-                    if self._manual_timeout_cb is not None:
-                        self._manual_timeout_cb()
-                    self._manual_timeout_cb = call_later(
-                        self.hass, manual_timeout, self._reset_manual_timeout
-                    )
-                return
-            if self.last_update_from_entity:
-                self.last_update_from_entity = False
-                return
-            self._set_controlled_by_this_entity(False)
-            if self._manual_timeout_cb is not None:
-                self._manual_timeout_cb()
-            self._manual_timeout_cb = call_later(
-                self.hass, manual_timeout, self._reset_manual_timeout
-            )
+        old_state = event.data.get("old_state")
+        new_state = event.data.get("new_state")
+        if old_state is None or new_state is None:
+            return
 
-    def _reset_manual_timeout(self, dt: datetime) -> None:
+        if old_state.attributes.get("restored"):
+            # On state restored, if already scheduled from async_added_to_hass, do not rearm.
+            if not self._is_controlled_by_this_entity() and self._manual_timeout_cb is None:
+                manual_timeout = self.area.config.get(
+                    CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
+                )
+                now_ts = datetime.now(UTC).timestamp()
+                self._attr_extra_state_attributes[ATTR_MANUAL_TIMEOUT_TS] = (
+                    now_ts + manual_timeout
+                )
+                self._manual_timeout_cb = async_call_later(
+                    self.hass, manual_timeout, self._reset_manual_timeout
+                )
+            return
+
+        # Skip non ON/OFF state changes
+        if old_state.state not in [
+            STATE_ON,
+            STATE_OFF,
+        ] or new_state.state not in [
+            STATE_ON,
+            STATE_OFF,
+        ]:
+            return
+
+        if self.last_update_from_entity:
+            self.last_update_from_entity = False
+            return
+
+        manual_timeout = self.area.config.get(
+            CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
+        )
+        self._set_controlled_by_this_entity(False)
+        if self._manual_timeout_cb is not None:
+            self._manual_timeout_cb()
+        now_ts = datetime.now(UTC).timestamp()
+        self._attr_extra_state_attributes[ATTR_MANUAL_TIMEOUT_TS] = (
+            now_ts + manual_timeout
+        )
+        self._manual_timeout_cb = async_call_later(
+            self.hass, manual_timeout, self._reset_manual_timeout
+        )
+
+    def _reset_manual_timeout(self, dt: datetime | None = None) -> None:
+        if self._manual_timeout_cb is not None:
+            self._manual_timeout_cb = None
         self._set_controlled_by_this_entity(True)
-        self._manual_timeout_cb = None
+        self.schedule_update_ha_state()
 
     ####  Fan Handling
     def _turn_on_fan(self) -> None:
@@ -582,12 +627,19 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
     #### Control Release
     def _is_controlled_by_this_entity(self) -> bool:
-        return self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, True)
+        return not self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, False)
 
     def _set_controlled_by_this_entity(self, enabled: bool) -> None:
-        self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, enabled)
+        if enabled:
+            self._attr_extra_state_attributes.pop(ATTR_MANUAL_CONTROL, None)
+            self._attr_extra_state_attributes.pop(ATTR_MANUAL_TIMEOUT_TS, None)
+        else:
+            self._attr_extra_state_attributes[ATTR_MANUAL_CONTROL] = True
 
-    def _reset_control(self, time: datetime) -> None:
+    def _reset_control(self, time: datetime | None = None) -> None:
+        if self._manual_timeout_cb is not None:
+            self._manual_timeout_cb()
+            self._manual_timeout_cb = None
         self._set_controlled_by_this_entity(True)
         self.schedule_update_ha_state()
         _LOGGER.debug("%s: Control Reset", self.name)

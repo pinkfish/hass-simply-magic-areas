@@ -35,8 +35,11 @@ from ..const import (
     ATTR_ACTIVE_SENSORS,
     ATTR_AREAS,
     ATTR_CLEAR_TIMEOUT,
+    ATTR_CLEAR_TIMEOUT_TS,
     ATTR_EXTENDED_TIMEOUT,
+    ATTR_EXTENDED_TIMEOUT_TS,
     ATTR_LAST_ACTIVE_SENSORS,
+    ATTR_LAST_OFF_TIME,
     ATTR_PRESENCE_SENSORS,
     ATTR_STATE,
     ATTR_TYPE,
@@ -142,6 +145,47 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self.area.state = AreaState(last_state.state)
             self._attr_native_value = last_state.state
             self._attr_extra_state_attributes = dict(last_state.attributes)  # type: ignore
+
+            # Persistent timer restoration
+            if (
+                ATTR_LAST_OFF_TIME in last_state.attributes
+                and last_state.attributes[ATTR_LAST_OFF_TIME] is not None
+            ):
+                try:
+                    self._last_off_time = datetime.fromtimestamp(
+                        float(last_state.attributes[ATTR_LAST_OFF_TIME]), UTC
+                    )
+                except (ValueError, TypeError):
+                    pass
+
+            now_ts = datetime.now(UTC).timestamp()
+
+            # Restore persistent extended timeout
+            if self.area.state == AreaState.AREA_STATE_EXTENDED:
+                target_ts = last_state.attributes.get(ATTR_EXTENDED_TIMEOUT_TS)
+                if target_ts is not None:
+                    try:
+                        remaining = int(float(target_ts) - now_ts)
+                        if remaining > 0:
+                            self._set_extended_timeout(remaining)
+                        else:
+                            self._remove_extended_timeout()
+                    except (ValueError, TypeError):
+                        pass
+
+            # Restore persistent clear timeout
+            elif last_state.attributes.get("clear"):
+                target_ts = last_state.attributes.get(ATTR_CLEAR_TIMEOUT_TS)
+                if target_ts is not None:
+                    try:
+                        remaining = int(float(target_ts) - now_ts)
+                        if remaining > 0:
+                            self._set_clear_timeout(remaining)
+                        else:
+                            self._remove_clear_timeout()
+                    except (ValueError, TypeError):
+                        pass
+
         self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
 
     async def _setup_listeners(self) -> None:
@@ -476,6 +520,12 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         _LOGGER.debug("%s: Scheduling clear in %s seconds", self.area.name, timeout)  # type: ignore
         self._attr_extra_state_attributes["clear"] = True
+        self._attr_extra_state_attributes[ATTR_CLEAR_TIMEOUT_TS] = (
+            datetime.now(UTC) + timedelta(seconds=timeout)
+        ).timestamp()
+        self._attr_extra_state_attributes[ATTR_LAST_OFF_TIME] = (
+            self._last_off_time.timestamp()
+        )
         self._clear_timeout_callback = async_call_later(
             self.hass,
             timeout,
@@ -492,6 +542,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         )
 
         self._attr_extra_state_attributes["clear"] = False
+        self._attr_extra_state_attributes.pop(ATTR_CLEAR_TIMEOUT_TS, None)
         self._clear_timeout_callback()
         self._clear_timeout_callback = None
 
@@ -503,6 +554,11 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self._sensor_changed_in_extended = False
         self._remove_clear_timeout()
         self._remove_extended_timeout()
+        self._attr_extra_state_attributes.pop("clear", None)
+        self._attr_extra_state_attributes.pop("extended", None)
+        self._attr_extra_state_attributes.pop(ATTR_CLEAR_TIMEOUT_TS, None)
+        self._attr_extra_state_attributes.pop(ATTR_EXTENDED_TIMEOUT_TS, None)
+        self._attr_extra_state_attributes.pop(ATTR_LAST_OFF_TIME, None)
 
     ###       Extended
 
@@ -515,6 +571,12 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         _LOGGER.info("%s: Scheduling extended in %s seconds", self.area.name, timeout)  # type: ignore
         self._attr_extra_state_attributes["extended"] = True
+        self._attr_extra_state_attributes[ATTR_EXTENDED_TIMEOUT_TS] = (
+            datetime.now(UTC) + timedelta(seconds=timeout)
+        ).timestamp()
+        self._attr_extra_state_attributes[ATTR_LAST_OFF_TIME] = (
+            self._last_off_time.timestamp()
+        )
         self._extended_timeout_callback = async_call_later(
             self.hass,
             timeout,
@@ -526,6 +588,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             return
 
         self._attr_extra_state_attributes["extended"] = False
+        self._attr_extra_state_attributes.pop(ATTR_EXTENDED_TIMEOUT_TS, None)
         self._extended_timeout_callback()
         self._extended_timeout_callback = None
 

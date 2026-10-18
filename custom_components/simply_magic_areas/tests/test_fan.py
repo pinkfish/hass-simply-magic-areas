@@ -464,7 +464,11 @@ async def test_fan_max_runtime_cutoff(
         attributes={"unit_of_measurement": "%"},
     )
     await hass.async_block_till_done()
-    await asyncio.sleep(0.1)
+    for _ in range(10):
+        if len(calls) >= 1:
+            break
+        await asyncio.sleep(0.05)
+        await hass.async_block_till_done()
 
     assert len(calls) >= 1
     one_fan[0].turn_on()

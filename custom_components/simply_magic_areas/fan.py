@@ -66,7 +66,6 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-ATTR_HUMIDITY_UP: str = "humidity_up"
 ATTR_FANS: str = "fans"
 ATTR_MANUAL_CONTROL: str = "manual_control"
 ATTR_HUMIDITY_ON: str = "humidity_on"

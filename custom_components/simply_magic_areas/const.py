@@ -37,7 +37,6 @@ DOMAIN = "simply_magic_areas"
 MODULE_DATA = f"{DOMAIN}_data"
 
 # Magic Areas Events
-EVENT_MAGICAREAS_STARTED = "magicareas_start"
 EVENT_MAGICAREAS_READY = "magicareas_ready"
 EVENT_MAGICAREAS_AREA_READY = "magicareas_area_ready"
 
@@ -53,12 +52,10 @@ ATTR_STATE = "state"
 ATTR_AREAS = "areas"
 ATTR_ACTIVE_AREAS = "active_areas"
 ATTR_TYPE = "type"
-ATTR_UPDATE_INTERVAL = "update_interval"
 ATTR_CLEAR_TIMEOUT = "clear_timeout"
 ATTR_EXTENDED_TIMEOUT = "extended_timeout"
 ATTR_ACTIVE_SENSORS = "active_sensors"
 ATTR_LAST_ACTIVE_SENSORS = "last_active_sensors"
-ATTR_FEATURES = "features"
 ATTR_PRESENCE_SENSORS = "presence_sensors"
 ATTR_LAST_UPDATE_FROM_ENTITY: str = "last_update_from_entity"
 
@@ -98,7 +95,6 @@ META_AREAS = [META_AREA_GLOBAL, META_AREA_INTERIOR, META_AREA_EXTERIOR]
 AREA_TYPE_META = "meta"
 AREA_TYPE_INTERIOR = "interior"
 AREA_TYPE_EXTERIOR = "exterior"
-AREA_TYPES = [AREA_TYPE_INTERIOR, AREA_TYPE_EXTERIOR, AREA_TYPE_META]
 
 AVAILABLE_ON_STATES = [STATE_ON, STATE_HOME, STATE_PLAYING, STATE_OPEN]
 
@@ -108,7 +104,7 @@ INVALID_STATES = [STATE_UNAVAILABLE, STATE_UNKNOWN]
 CONF_ID = "id"
 CONF_NAME, DEFAULT_NAME = "name", ""  # cv.string
 CONF_TYPE, DEFAULT_TYPE = "type", AREA_TYPE_INTERIOR  # cv.string
-CONF_ENABLED_FEATURES, DEFAULT_ENABLED_FEATURES = "features", {}  # cv.ensure_list
+CONF_ENABLED_FEATURES = "features"
 CONF_INCLUDE_ENTITIES = "include_entities"  # cv.entity_ids
 CONF_EXCLUDE_ENTITIES = "exclude_entities"  # cv.entity_ids
 (
@@ -135,18 +131,6 @@ ALL_PRESENCE_DEVICE_PLATFORMS = [
         BinarySensorDeviceClass.MOTION,
         BinarySensorDeviceClass.OCCUPANCY,
         BinarySensorDeviceClass.PRESENCE,
-    ],
-)  # cv.ensure_list
-ILLUMINANCE_DEVICE_PLATFORMS = [
-    SENSOR_DOMAIN,
-]
-(
-    CONF_ILLUMINANCE_DEVICE_CLASS,
-    DEFAULT_ILLUMINANCE_DEVICE_SENSOR_CLASS,
-) = (
-    "illuminance_sensor_device_class",
-    [
-        SensorDeviceClass.ILLUMINANCE,
     ],
 )  # cv.ensure_list
 CONF_ON_STATES, DEFAULT_ON_STATES = (
@@ -325,19 +309,6 @@ CONF_CLIMATE_GROUPS_TURN_ON_STATE, DEFAULT_CLIMATE_GROUPS_TURN_ON_STATE = (
     AreaState.AREA_STATE_EXTENDED,
 )
 
-LIGHT_GROUP_DEFAULT_ICON = "mdi:lightbulb-group"
-
-LIGHT_GROUP_ICONS = {}
-
-
-AGGREGATE_BINARY_SENSOR_CLASSES = [
-    BinarySensorDeviceClass.WINDOW,
-    BinarySensorDeviceClass.DOOR,
-    BinarySensorDeviceClass.MOTION,
-    BinarySensorDeviceClass.MOISTURE,
-    BinarySensorDeviceClass.LIGHT,
-]
-
 AGGREGATE_MODE_ALL = [
     BinarySensorDeviceClass.CONNECTIVITY,
     BinarySensorDeviceClass.PLUG,
@@ -351,16 +322,6 @@ DISTRESS_SENSOR_CLASSES = [
     BinarySensorDeviceClass.SAFETY,
     BinarySensorDeviceClass.GAS,
 ]  # @todo make configurable
-
-# Aggregates
-AGGREGATE_SENSOR_CLASSES = (
-    SensorDeviceClass.CURRENT,
-    SensorDeviceClass.ENERGY,
-    SensorDeviceClass.HUMIDITY,
-    SensorDeviceClass.ILLUMINANCE,
-    SensorDeviceClass.POWER,
-    SensorDeviceClass.TEMPERATURE,
-)
 
 AGGREGATE_MODE_SUM = [
     SensorDeviceClass.POWER,

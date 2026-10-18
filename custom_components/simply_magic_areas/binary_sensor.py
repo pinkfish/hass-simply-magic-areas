@@ -35,9 +35,6 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-ATTR_GRADIENT: str = "gradient"
-ATTR_MIN_GRADIENT: str = "min_gradient"
-ATTR_ENTITY_TO_MONITOR: str = "entity_to_monitor"
 
 
 async def async_setup_entry(

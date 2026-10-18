@@ -103,6 +103,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self._sensors: list[str] = []
         self._mqqt_room_sensors: list[str] = []
         self._mode: str = "one"
+        self._sensor_changed_in_extended: bool = False
 
     async def async_added_to_hass(self) -> None:
         """Call to add the system to hass."""
@@ -309,14 +310,20 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         clear_timeout: int = self._get_clear_timeout()
         extended_timeout: int = self._get_extended_timeout() + clear_timeout
         if not occupied_state:
+            # If the area was in extended mode and a sensor changed, move back to occupied
+            if self._sensor_changed_in_extended:
+                self._sensor_changed_in_extended = False
+                self._remove_extended_timeout()
+                self._remove_clear_timeout()
+                self._set_clear_timeout(clear_timeout)
             # If the area was already clear, non-occupied sensor state keeps it clear
-            if self.area.state == AreaState.AREA_STATE_CLEAR:
+            elif self.area.state == AreaState.AREA_STATE_CLEAR:
                 self._remove_clear_timeout()
                 self._remove_extended_timeout()
                 return AreaState.AREA_STATE_CLEAR
 
             # If the area was in extended mode, check if extended timeout has elapsed
-            if self.area.state == AreaState.AREA_STATE_EXTENDED:
+            elif self.area.state == AreaState.AREA_STATE_EXTENDED:
                 if seconds_since_last_change >= extended_timeout:
                     self._remove_extended_timeout()
                     return AreaState.AREA_STATE_CLEAR
@@ -347,6 +354,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                     )
                 return AreaState.AREA_STATE_EXTENDED
         else:
+            self._sensor_changed_in_extended = False
             self._remove_clear_timeout()
             self._remove_extended_timeout()
 
@@ -422,6 +430,9 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             to_state,
         )
 
+        old_state = event.data.get("old_state")
+        old_state_val = old_state.state if old_state is not None else None
+
         if to_state in INVALID_STATES:
             _LOGGER.debug(
                 "%s: sensor '%s' has invalid state %s",
@@ -430,6 +441,23 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 to_state,
             )
             return
+
+        if (
+            self.area.state == AreaState.AREA_STATE_EXTENDED
+            and entity_id in self._mqqt_room_sensors
+            and old_state_val != to_state
+        ):
+            _LOGGER.info(
+                "%s: Room presence '%s' changed from %s to %s while in extended state; returning to occupied",
+                self.area.name,
+                entity_id,
+                old_state_val,
+                to_state,
+            )
+            self._sensor_changed_in_extended = True
+            self._last_off_time = datetime.now(UTC)
+            self._remove_extended_timeout()
+            self._remove_clear_timeout()
 
         self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
 
@@ -472,6 +500,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
     @callback
     def _cleanup_timers(self) -> None:
+        self._sensor_changed_in_extended = False
         self._remove_clear_timeout()
         self._remove_extended_timeout()
 
@@ -534,6 +563,9 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             to_state,
         )
 
+        old_state = event.data.get("old_state")
+        old_state_val = old_state.state if old_state is not None else None
+
         if to_state in INVALID_STATES:
             _LOGGER.debug(
                 "%s: sensor '%s' has invalid state %s",
@@ -542,6 +574,22 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 to_state,
             )
             return
+
+        if (
+            self.area.state == AreaState.AREA_STATE_EXTENDED
+            and old_state_val != to_state
+        ):
+            _LOGGER.info(
+                "%s: Sensor '%s' changed from %s to %s while in extended state; returning to occupied",
+                self.name,
+                entity_id,
+                old_state_val,
+                to_state,
+            )
+            self._sensor_changed_in_extended = True
+            self._last_off_time = datetime.now(UTC)
+            self._remove_extended_timeout()
+            self._remove_clear_timeout()
 
         if to_state and to_state not in self.area.feature_config(
             CONF_FEATURE_ADVANCED_LIGHT_GROUPS

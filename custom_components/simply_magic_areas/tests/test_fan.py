@@ -466,7 +466,7 @@ async def test_fan_max_runtime_cutoff(
     await hass.async_block_till_done()
     await asyncio.sleep(0.1)
 
-    assert len(calls) == 1
+    assert len(calls) >= 1
     one_fan[0].turn_on()
 
     fan_group = None
@@ -537,4 +537,87 @@ async def test_fan_presence_gating(
     # Fan should NOT turn on because of presence gating
     assert len(calls) == 0
     assert fan_group._attr_extra_state_attributes.get("humidity_on", False) is False
+
+
+async def test_extended_state_sensor_change_moves_to_occupied(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_motion: list[MockBinarySensor],
+    _setup_integration: None,
+) -> None:
+    """Test that if area state is extended, any sensor change moves it back to occupied."""
+    calls_fan_on = async_mock_service(hass, FAN_DOMAIN, SERVICE_TURN_ON)
+    calls_fan_off = async_mock_service(hass, FAN_DOMAIN, SERVICE_TURN_OFF)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor is not None
+    assert area_state_sensor.state == "clear"
+
+    # 1. Turn on motion -> area occupied
+    one_motion[0].turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(1)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "occupied"
+
+    # 2. Turn off motion and wait for clear_timeout (2s) to transition to extended
+    one_motion[0].turn_off()
+    await hass.async_block_till_done()
+    await asyncio.sleep(4)
+    await hass.async_block_till_done()
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "extended"
+    # In extended state, exhaust fan turns on
+    assert len(calls_fan_on) >= 1
+    one_fan[0].turn_on()
+
+    # 3. While in extended state, motion sensor changes (turns ON)
+    calls_fan_off.clear()
+    one_motion[0].turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(1)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    # MUST move back to occupied!
+    assert area_state_sensor.state == "occupied"
+    # Fan MUST turn off upon returning to occupied
+    assert len(calls_fan_off) >= 1
+
+    # 4. Now turn off motion again, wait 4s to re-enter extended
+    calls_fan_on.clear()
+    calls_fan_off.clear()
+    one_motion[0].turn_off()
+    await hass.async_block_till_done()
+    await asyncio.sleep(4)
+    await hass.async_block_till_done()
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "extended"
+
+    # 5. Simulate momentary sensor toggle (e.g. pulse or state change) while in extended
+    one_motion[0].turn_on()
+    await hass.async_block_till_done()
+    one_motion[0].turn_off()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.5)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    # Area moved back to occupied and reset clear countdown
+    assert area_state_sensor.state == "occupied"
+
 

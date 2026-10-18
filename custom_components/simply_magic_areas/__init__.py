@@ -30,8 +30,6 @@ from .util import get_meta_area_object
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[str] = []
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -138,11 +136,11 @@ async def async_setup_entry(
             if (
                 magic_area.id != META_AREA_GLOBAL_ID
                 and META_AREA_GLOBAL_ID in meta_areas
+                and meta_areas[META_AREA_GLOBAL_ID].initialized
             ):
-                if meta_areas[META_AREA_GLOBAL_ID].initialized:
-                    await hass.config_entries.async_reload(
-                        meta_areas[META_AREA_GLOBAL_ID].hass_config.entry_id
-                    )
+                await hass.config_entries.async_reload(
+                    meta_areas[META_AREA_GLOBAL_ID].hass_config.entry_id
+                )
 
     hass.data.setdefault(MODULE_DATA, {})
 

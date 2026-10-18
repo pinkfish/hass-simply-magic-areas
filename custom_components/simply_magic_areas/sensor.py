@@ -1,7 +1,9 @@
 """Sensor controls for magic areas."""
 
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
+import inspect
 import logging
+from typing import Any
 
 from homeassistant.components.group.sensor import (
     ATTR_MEAN,
@@ -160,24 +162,28 @@ class AreaSensorGroupSensor(MagicEntity, SensorGroup):
         MagicEntity.__init__(
             self, area=area, domain=SENSOR_DOMAIN, translation_key=device_class
         )
-        SensorGroup.__init__(
-            self,
-            hass=area.hass,
-            device_class=device_class,
-            entity_ids=entity_ids,
-            ignore_non_numeric=True,
-            name=None,
-            unique_id=self._attr_unique_id,
-            sensor_type=ATTR_SUM if device_class in AGGREGATE_MODE_SUM else ATTR_MEAN,
-            state_class=SensorStateClass.TOTAL
-            if device_class in AGGREGATE_MODE_SUM
-            else SensorStateClass.MEASUREMENT,
-            unit_of_measurement=str(
+        sensor_group_params: dict[str, Any] = {
+            "device_class": device_class,
+            "entity_ids": entity_ids,
+            "ignore_non_numeric": True,
+            "name": None,
+            "unique_id": self._attr_unique_id,
+            "sensor_type": ATTR_SUM if device_class in AGGREGATE_MODE_SUM else ATTR_MEAN,
+            "state_class": (
+                SensorStateClass.TOTAL
+                if device_class in AGGREGATE_MODE_SUM
+                else SensorStateClass.MEASUREMENT
+            ),
+            "unit_of_measurement": str(
                 UNIT_CONVERTERS[device_class].NORMALIZED_UNIT
                 if device_class in UNIT_CONVERTERS
                 else list(DEVICE_CLASS_UNITS[device_class])[0]
             ),
-        )
+        }
+        if "hass" in inspect.signature(SensorGroup.__init__).parameters:
+            sensor_group_params["hass"] = area.hass
+
+        SensorGroup.__init__(self, **sensor_group_params)
         delattr(self, "_attr_name")
 
 
@@ -186,21 +192,23 @@ class MagicStatisticsSensor(MagicEntity, StatisticsSensor):
 
     def __init__(self, area: MagicArea) -> None:
         """Create the sensor to track the change in humidity."""
-        StatisticsSensor.__init__(
-            self,
-            hass=area.hass,
-            source_entity_id=area.simply_magic_entity_id(
+        stats_params: dict[str, Any] = {
+            "source_entity_id": area.simply_magic_entity_id(
                 SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
             ),
-            name="",
-            unique_id=None,
-            state_characteristic="change_second",
-            samples_max_buffer_size=5,
-            samples_max_age=timedelta(minutes=5),
-            samples_keep_last=True,
-            precision=4,
-            percentile=50,
-        )
+            "name": "",
+            "unique_id": None,
+            "state_characteristic": "change_second",
+            "samples_max_buffer_size": 5,
+            "samples_max_age": timedelta(minutes=5),
+            "samples_keep_last": True,
+            "precision": 4,
+            "percentile": 50,
+        }
+        if "hass" in inspect.signature(StatisticsSensor.__init__).parameters:
+            stats_params["hass"] = area.hass
+
+        StatisticsSensor.__init__(self, **stats_params)
         MagicEntity.__init__(
             self,
             area=area,

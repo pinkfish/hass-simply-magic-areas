@@ -15,7 +15,6 @@ from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID, SERVICE_TURN_OFF, STATE_IDLE, STATE_ON
 from homeassistant.core import Event, EventStateChangedData, HomeAssistant
-from homeassistant.helpers.area_registry import AreaEntry, async_get as async_get_ar
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 

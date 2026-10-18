@@ -152,7 +152,7 @@ async def async_setup_entry(
 
     # Wait for Hass to have started before setting up.
     if hass.is_running:
-        hass.create_task(_async_setup_integration())
+        hass.async_create_task(_async_setup_integration())
     else:
         hass.bus.async_listen_once(
             EVENT_HOMEASSISTANT_STARTED, _async_setup_integration
@@ -169,21 +169,16 @@ async def async_update_options(hass: HomeAssistant, config_entry: ConfigEntry):
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
     """Unload a config entry."""
 
-    platforms_unloaded = []
     data = hass.data[MODULE_DATA]
     area_data = data[config_entry.entry_id]
     area = area_data[DATA_AREA_OBJECT]
 
-    for platform in area.loaded_platforms:
-        unload_ok = await hass.config_entries.async_forward_entry_unload(
-            config_entry, platform
-        )
-        platforms_unloaded.append(unload_ok)
+    all_unloaded = await hass.config_entries.async_unload_platforms(
+        config_entry, area.loaded_platforms
+    )
 
     area_data[DATA_UNDO_UPDATE_LISTENER]()
     area_data[DATA_ENTITY_LISTENER]()
-
-    all_unloaded = all(platforms_unloaded)
 
     if all_unloaded:
         data.pop(config_entry.entry_id)

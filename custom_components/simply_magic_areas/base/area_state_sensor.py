@@ -576,12 +576,47 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         return False
 
     @callback
+    def _validate_state_consistency(self) -> None:
+        """Validate area state consistency and schedule clear timeout if needed.
+
+        Catches edge cases where:
+        1. Area is stuck occupied due to a race condition or sensor unavailability
+        2. Clear timeout was lost or expired during Home Assistant shutdown
+        """
+        if self.area.state in (AreaState.AREA_STATE_CLEAR, AreaState.AREA_STATE_MANUAL):
+            return
+
+        has_active_sensors = self._get_sensors_state()
+        has_timeout_pending = (
+            self._is_on_clear_timeout() or self._is_on_extended_timeout()
+        )
+
+        if not has_active_sensors and not has_timeout_pending:
+            _LOGGER.warning(
+                "%s: State inconsistency detected - occupied with no active sensors "
+                "and no timeout scheduled. Scheduling clear timeout.",
+                self.area.name,
+            )
+            clear_timeout = self._get_clear_timeout()
+            seconds_since_off = int(
+                (datetime.now(UTC) - self._last_off_time).total_seconds()
+            )
+            if seconds_since_off >= clear_timeout:
+                self.area.state = AreaState.AREA_STATE_CLEAR
+                self._attr_native_value = AreaState.AREA_STATE_CLEAR
+                self._update_attributes()
+                self.schedule_update_ha_state()
+            else:
+                self._set_clear_timeout(clear_timeout - seconds_since_off)
+
+    @callback
     def _update_state(self, extra: datetime | None = None) -> None:
         last_state = self.area.state
         new_state = self.get_current_area_state()
 
         if last_state == new_state:
             self._update_attributes()
+            self._validate_state_consistency()
             return
 
         # Calculate what's new
@@ -605,6 +640,8 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             new_state,
             last_state,
         )
+
+        self._validate_state_consistency()
 
     def _group_entity_state_change(self, event: Event[EventStateChangedData]) -> None:
         if event.event_type != "state_changed":

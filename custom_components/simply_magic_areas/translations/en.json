@@ -113,7 +113,8 @@
           "bright_entity": "Entity used to put area into bright when occupied",
           "sleep_entity": "Entity used to put area into sleep when occupied",
           "light_control": "Control the lights",
-          "fan_control": "Control the fans"
+          "fan_control": "Control the fans",
+          "fan_suppress_in_sleep": "Suppress exhaust fan in sleep mode"
         }
       }
     },

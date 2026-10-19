@@ -6,6 +6,17 @@
 
 All development and implementation within Simply Magic Areas is strictly governed by the engineering principles and architectural invariants codified in the [Project Constitution](constitution.md).
 
+### 1.1 Foundational Design Philosophy: Zero-Configuration "It Just Works"
+
+A guiding invariant of Simply Magic Areas is **Convention Over Configuration**: the system is architected to minimize configuration burden and work automatically, intuitively, and safely straight out of the box.
+
+- **Zero-Touch Ingestion from Home Assistant Registries**: By simply assigning devices to an Area in Home Assistant's native Area Registry, Simply Magic Areas automatically discovers, aggregates, and coordinates all lights, exhaust fans, media players, climate units, and presence sensors. No manual entity mapping or YAML editing is required.
+- **Intelligent Autonomous Heuristics & Dynamic Fallbacks**:
+  - *Automatic Daylight / Illuminance Detection*: Rooms automatically derive their daytime/bright state using local illuminance sensors; if none exist, they dynamically borrow illuminance from an adjacent referenced room, the parent meta-area average, or solar sun elevation (`sun.sun`) without requiring manual daylight helper configuration.
+  - *Automatic Differential Humidity Baselines*: En-suite and bathroom ventilation automatically pairs local humidity against interior baseline averages or climate sensors if an explicit reference entity is omitted.
+  - *Automated Presence Sensor Fusion*: Native motion, occupancy, and presence sensors assigned to an area are fused into a unified presence tracker with zero manual mapping.
+- **Sensible Human-Centric Defaults**: All timeouts, deadbands, thresholds, and hysteresis bands are pre-tuned based on empirical real-world dwelling use. Advanced options exist strictly for optional customization, never as prerequisites for basic operation.
+
 ---
 
 ## 2. System Architecture & Topology
@@ -80,6 +91,8 @@ sequenceDiagram
     Note over SMA,HA: When all areas initialized: Fire EVENT_MAGICAREAS_READY
 ```
 
+- **Dynamic Device Registry Tracking (`EVENT_DEVICE_REGISTRY_UPDATED`)**: Simply Magic Areas listens for device area reassignments in Home Assistant's Device Registry. When a physical device is moved between areas, affected area config entries reload automatically without requiring a Home Assistant restart.
+
 ---
 
 ## 3. Core State Machine Engine (`AreaStateSensor`)
@@ -96,6 +109,8 @@ The main state defines whether the room is occupied or vacant, and whether autom
 | **Occupied** | `occupied` | Primary presence state. **Based entirely on active detection from presence sensors** (motion sensors, occupancy sensors, media playback, or room presence sensors). Acts as the parent container for lighting substates. |
 | **Extended** | `extended` | Transitionary timeout grace period after presence sensors cease detecting presence before reverting to `clear`. Keeps area ready or dimly lit for quick re-entry. |
 | **Manual** | `manual` | Override state entered when the area system control switch is turned OFF (`switch.simply_magic_areas_system_control_<area>`). Suspends all automated state transitions and device controls across the area. *(Note: Individual light manual override also transitions lights into a manual state for a configurable timeout; see Section 4.1).* |
+
+- **Self-Healing State Consistency Guard**: During startup or reload, `AreaStateSensor._validate_state_consistency()` confirms that if all presence sensors are off and no clear/extended timeout is active, any stale or orphaned occupied state is automatically corrected back to `clear`.
 
 ### 3.2 Occupied Substates (Lighting Context Modifiers)
 
@@ -164,16 +179,69 @@ stateDiagram-v2
     Manual --> Clear: System Control Switch turned ON
 ```
 
-### 3.5 Presence Detection Sources
+### 3.5 Safe & Reliable Occupancy Derivation ("Fail-Safe" Occupancy Engineering)
 
-> [!NOTE]
-> **Occupancy Derivation Principle:** The `occupied` main state is based **entirely on the presence of the presence sensors in the room**. Contextual entities (such as sleep switches, bright/lux entities, or accent toggles) do not influence presence detection; they only modulate lighting behavior once occupancy has been established by presence sensors.
+> [!IMPORTANT]
+> **The Asymmetry of Safety Principle (Zero Sudden Darkness):**
+> In residential automation, false negatives (erroneously deciding a room is empty and plunging an occupant into darkness) are disruptive, frustrating, and unsafe—particularly in showers, on staircases, or in kitchens. Conversely, a brief false positive (leaving lights on for an extra minute or two after departure) carries trivial energy cost.
+>
+> Therefore, Simply Magic Areas enforces **Fail-Safe Asymmetric Confidence**: the system activates presence instantly upon any affirmative signal and requires strict, multi-stage confirmation before vacating.
 
-The presence state is continuously tracked from the following configured platforms and device classes:
-- **Binary Sensors**: Primary occupancy indicators matching configured device classes (`motion`, `occupancy`, `presence`).
-- **Media Players**: Filtered by active playing states (`playing`) when media player presence tracking is enabled.
-- **MQTT Room Sensors**: Distance/RSSI room tracking entities matching the area slug (`CONF_MQTT_ROOM_PRESENCE`).
-- **Humidity Trend Monitor**: Optional derivative rate-of-change statistics (`MagicStatisticsSensor`) to detect shower/bath occupancy before absolute humidity thresholds trigger.
+#### 3.5.1 Multi-Modal Sensor Fusion
+To derive occupancy in the safest and most reliable manner, Simply Magic Areas evaluates presence across multiple distinct sensory modalities:
+
+```mermaid
+flowchart TD
+    subgraph Fast-Response Detection
+        PIR["PIR / Motion Sensors"]
+        mmWave["mmWave Stillness Sensors"]
+    end
+
+    subgraph Sustained Engagement
+        Media["Media Players: state == playing"]
+        BLE["Room Presence / RSSI Trackers"]
+    end
+
+    subgraph Micro-Climate Dynamics
+        HumRise["Fast Humidity Derivative: > 0.03 %/s"]
+    end
+
+    subgraph Architectural Interlocks
+        DoorContact["Door Contact Closed + Prior Occupancy"]
+    end
+
+    PIR -->|Any Active| FUSED["Fused Presence Active"]
+    mmWave -->|Any Active| FUSED
+    Media -->|Any Active| FUSED
+    BLE -->|Any Active| FUSED
+    HumRise -->|Any Active| FUSED
+    DoorContact -->|Interlock Latched| FUSED
+
+    FUSED --> OCCUPIED["Main State: OCCUPIED"]
+```
+
+1. **Fast-Response Indicators (PIR Motion)**: Detects initial entry with millisecond responsiveness, instantly waking the room.
+2. **Sustained Stillness Detection (mmWave Presence)**: Detects micro-movements (breathing, typing, reading) to maintain occupancy when occupants remain stationary.
+3. **Active Engagement Latch (Media Players)**: When media players in the area are actively `playing` (e.g. TV, music streamer), the room is automatically maintained in `occupied` to prevent lights or displays extinguishing during passive viewing or listening.
+4. **Micro-Climate Derivative Indicators (Humidity Rate-of-Rise)**: A rapid spike in humidity (`change_second > 0.03 %/s`) indicates an active shower, bath, or cooking session, immediately engaging or preserving presence even before optical sensors register through fogged glass or closed shower curtains.
+5. **Architectural Interlocks (Door Contact Occupancy Latching)**: When an area is occupied and a perimeter/entry door closes (such as a bathroom or private office), presence is latched to eliminate sensor blind spots until the door is reopened.
+6. **Room Proximity & BLE (MQTT Room Presence)**: Proximity RSSI sensors track individual device locations to reinforce presence.
+
+#### 3.5.2 Instantaneous Preemption & State Assertion (`force=True`)
+- The moment any presence sensor fires, `AreaStateSensor` transitions immediately to `occupied`.
+- All pending clear or extended timeouts are synchronously canceled.
+- Commands to turn on lights and systems enforce execution (`force=True`), immediately aborting any in-flight turn-off service calls or racing states to ensure zero latency between entry and illumination.
+
+#### 3.5.3 Tiered Graceful Degradation & Early Warning
+Rooms never abruptly drop from `occupied` to `clear`. Departure follows a multi-tiered safety protocol:
+1. **Clear Timeout Buffer (`clear_timeout`, default: 60s)**: When physical sensors stop detecting motion, a buffer timer begins, filtering out temporary stillness or sensor blind spots.
+2. **Extended Grace & Warning Period (`extended_timeout`, default: 120s)**: The room transitions to `extended`. In advanced lighting setups, lights dim to the extended level (e.g. 50%), providing a clear visual cue to occupants that departure is pending while keeping the room safely illuminated.
+3. **Instantaneous Reactivity During Extended**: If *any* sensor detects presence during the extended state, the system instantly snaps back to `occupied`, cancels the extended timer, resets the clear buffer, and restores full task lighting without delay.
+
+#### 3.5.4 Self-Healing State Consistency & Fault Recovery
+- **Startup & Restart Validation (`_validate_state_consistency()`)**: When Home Assistant restarts or the integration reloads, the state machine cross-references current sensor states. If all presence sensors are off and no timers were persisted, stale or orphaned `occupied` states are safely cleared to prevent rooms becoming stuck indefinitely.
+- **Anti-Fighting Wall Switch Resilience**: If an external command or physical switch turns off lights while human presence remains affirmatively verified (and no manual override was set), the system automatically re-asserts lighting to protect occupants from accidental deactivation.
+- **Context Isolation**: Substates (`sleep`, `bright`, `accented`) modulate *how* the room is illuminated, but never influence *whether* human presence exists. Presence detection is completely decoupled from contextual scene profiles.
 
 ### 3.6 Direct Lux & Inter-Area Brightness Reference Architecture
 
@@ -250,6 +318,11 @@ flowchart TD
 - **Post-Occupancy Ventilation (`extended` state)**:
   - **Bathroom & Room Exhaust**: When occupants leave the room and the area transitions from `occupied` to `extended` (e.g. leaving a bathroom), the lighting turns off (or dims to clear level) and the exhaust fan **automatically turns ON**.
   - **Extended Duration**: The fan remains on for the duration of the configured `extended_timeout` period before turning off when transitioning to `clear`, unless prolonged by elevated humidity.
+- **Acoustic Fan Suppression in Sleep Mode (`CONF_FAN_SUPPRESS_IN_SLEEP`)**:
+  - **En-Suite & Bedroom Quiet Hours**: When enabled (`fan_suppress_in_sleep: true`), exhaust fans are prevented from turning on during `extended` mode if sleep mode is active.
+  - **Sleep Source Detection**: Evaluates whether the current area is in `sleep` substate, whether the area's configured `sleep_entity` is active, or whether a referenced adjacent area (e.g. Master Bedroom for an Ensuite via `CONF_REFERENCE_BRIGHT_AREA`) is in `sleep` state.
+  - **Dynamic State Reactivity**: If sleep activates while the fan is actively running in `extended` mode, the fan is immediately turned OFF. Conversely, if sleep mode ends while the room remains in `extended` mode, the fan automatically turns ON for the remaining extended timeout.
+  - **Humidity Extraction Precedence**: Steam and moisture extraction take safety precedence over acoustic suppression. If differential humidity triggers ventilation (`humidity_on: true`), the fan activates regardless of sleep state to protect against mold and condensation buildup.
 - **Enhanced Humidity & Climate Differential Ventilation**:
   - **Reference Baseline Comparison (`CONF_REFERENCE_HUMIDITY_SENSOR`)**:
     - Compares room humidity against a reference entity (e.g., climate entity `current_humidity`, outdoor weather humidity sensor, hallway sensor, or `Interior` Meta-Area average).
@@ -308,6 +381,8 @@ flowchart TD
 ### 4.6 Environmental & Statistical Sensors (`sensor.py`)
 - **Group Aggregators**:
   - Calculates `mean` (temperature, illuminance) or `sum` (energy, power) for numeric sensors in the area.
+  - **Unitless Sensor Aggregation**: Safely aggregates unitless sensor device classes (e.g., `SensorDeviceClass.AQI`, `SensorDeviceClass.PH`) without entity rejection, properly handling `unit_of_measurement=None`.
+  - **Long-Term Statistics for Energy & Utilities**: Automatically assigns `SensorStateClass.TOTAL_INCREASING` to cumulative `gas` and `water` meter aggregates (and `TOTAL` to `energy`), providing native long-term statistical integration with the Home Assistant Energy Dashboard.
 - **Statistical Derivatives**:
   - Generates moving statistical analysis (percentiles, rolling averages) via Home Assistant's `StatisticsSensor`.
   - Powers humidity rate-of-rise trend tracking.
@@ -340,10 +415,15 @@ flowchart TD
 ## 6. Configuration & Feature Schema
 
 ### 6.1 Core Config Flow Options
+
+> [!TIP]
+> **Zero-Config Guarantee:** Every configuration option below is strictly optional. All settings are pre-configured with production-grade defaults, allowing Simply Magic Areas to operate fully autonomously immediately upon installation without requiring user tuning.
+
 - `type`: Area classification (`interior`, `exterior`, `meta`).
 - `clear_timeout`: Seconds of sensor inactivity before transitioning `occupied` -> `extended` (default: `60s`).
 - `extended_timeout`: Seconds of sensor inactivity before transitioning `extended` -> `clear` (default: `120s`).
 - `manual_timeout`: Seconds to remain in manual override mode when a light is manually adjusted before returning to automatic control (default: `60s`).
+- `fan_suppress_in_sleep`: Suppresses exhaust fan operation during `extended` state when sleep mode is active (default: `False`).
 - `update_interval`: Periodic heartbeat re-evaluation interval (default: `60s`).
 
 ### 6.2 Feature Flags (`CONF_ENABLED_FEATURES`)

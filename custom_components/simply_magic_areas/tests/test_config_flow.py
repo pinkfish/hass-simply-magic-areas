@@ -22,6 +22,7 @@ from ..const import (
     CONF_EXCLUDE_ENTITIES,
     CONF_EXTENDED_TIMEOUT,
     CONF_FAN_CONTROL,
+    CONF_FAN_SUPPRESS_IN_SLEEP,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_HUMIDITY,
     CONF_HUMIDITY_DEADBAND,
@@ -83,6 +84,7 @@ async def test_form(hass: HomeAssistant) -> None:
         "sleep_entity": "",
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
+        CONF_FAN_SUPPRESS_IN_SLEEP: False,
         CONF_MAX_BRIGHTNESS_LEVEL: 200,
         CONF_MIN_BRIGHTNESS_LEVEL: 100,
     }
@@ -122,6 +124,7 @@ async def test_options(hass: HomeAssistant, config_entry: MockConfigEntry) -> No
     assert result["data"] == {
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
+        CONF_FAN_SUPPRESS_IN_SLEEP: False,
         CONF_CLEAR_TIMEOUT: 12,
         CONF_EXTENDED_TIMEOUT: 60,
         CONF_ENABLED_FEATURES: {},
@@ -167,6 +170,7 @@ async def test_options_enable_advanced_lights(
         CONF_TYPE: "interior",
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
+        CONF_FAN_SUPPRESS_IN_SLEEP: False,
     }
 
     # submit form with options
@@ -199,6 +203,7 @@ async def test_options_enable_advanced_lights(
         CONF_EXTENDED_TIMEOUT: 360,
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
+        CONF_FAN_SUPPRESS_IN_SLEEP: False,
         CONF_ENABLED_FEATURES: {
             CONF_FEATURE_ADVANCED_LIGHT_GROUPS: {
                 "accented_entity": "",
@@ -276,6 +281,7 @@ async def test_options_enable_humidity(
         CONF_TYPE: "interior",
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
+        CONF_FAN_SUPPRESS_IN_SLEEP: False,
     }
 
     # submit form with options
@@ -308,6 +314,7 @@ async def test_options_enable_humidity(
         CONF_EXTENDED_TIMEOUT: 360,
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
+        CONF_FAN_SUPPRESS_IN_SLEEP: False,
         CONF_ENABLED_FEATURES: {
             CONF_FEATURE_HUMIDITY: {
                 CONF_HUMIDITY_ZERO_WAIT_TIME: 50,

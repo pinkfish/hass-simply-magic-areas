@@ -24,6 +24,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from ..const import (
     CONF_ENABLED_FEATURES,
+    CONF_FAN_SUPPRESS_IN_SLEEP,
     CONF_FEATURE_HUMIDITY,
     CONF_HUMIDITY_DEADBAND,
     CONF_HUMIDITY_DELTA_SHUTOFF,
@@ -623,5 +624,124 @@ async def test_extended_state_sensor_change_moves_to_occupied(
     )
     # Area moved back to occupied and reset clear countdown
     assert area_state_sensor.state == "occupied"
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_fan_suppress_in_sleep_mode(
+    hass: HomeAssistant,
+    one_fan: list[MockFan],
+    one_motion: list[MockBinarySensor],
+) -> None:
+    """Test that fan is suppressed in extended state when sleep mode is active."""
+    registry = async_get_ar(hass)
+    registry.async_get_or_create(AREA_NAME)
+
+    # Initialize sensors to OFF
+    one_motion[0].turn_off()
+    one_motion[1].turn_off()
+    await hass.async_block_till_done()
+
+    data = dict(CONFIG_ENTRY_DATA)
+    data[CONF_FAN_SUPPRESS_IN_SLEEP] = True
+    data["sleep_entity"] = "binary_sensor.sleep"
+    config_entry = MockConfigEntry(domain=DOMAIN, data=data)
+    config_entry.add_to_hass(hass)
+
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+    calls_fan_on = async_mock_service(hass, FAN_DOMAIN, SERVICE_TURN_ON)
+    async_mock_service(hass, FAN_DOMAIN, SERVICE_TURN_OFF)
+
+    # 1. Turn on sleep mode
+    one_motion[1].turn_on()
+    await hass.async_block_till_done()
+
+    # 2. Trigger motion -> area enters sleep state
+    one_motion[0].turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(1)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor is not None
+    assert area_state_sensor.state == "sleep"
+
+    # 3. Motion turns off -> wait for clear timeout (2s) to transition to extended
+    one_motion[0].turn_off()
+    await hass.async_block_till_done()
+    await asyncio.sleep(4)
+    await hass.async_block_till_done()
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "extended"
+
+    # Exhaust fan MUST NOT turn on because CONF_FAN_SUPPRESS_IN_SLEEP is True
+    assert len(calls_fan_on) == 0
+
+    # 4. Turn sleep mode OFF while still in extended state
+    one_motion[1].turn_off()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.5)
+
+    # Once sleep clears, fan turns on for extended ventilation
+    assert len(calls_fan_on) >= 1
+
+
+@pytest.mark.parametrize("expected_lingering_timers", [True])
+async def test_fan_suppress_in_sleep_dynamic_shutoff(
+    hass: HomeAssistant,
+    one_fan: list[MockFan],
+    one_motion: list[MockBinarySensor],
+) -> None:
+    """Test that running fan in extended state shuts off when sleep mode is activated."""
+    registry = async_get_ar(hass)
+    registry.async_get_or_create(AREA_NAME)
+
+    one_motion[0].turn_off()
+    one_motion[1].turn_off()
+    await hass.async_block_till_done()
+
+    data = dict(CONFIG_ENTRY_DATA)
+    data[CONF_FAN_SUPPRESS_IN_SLEEP] = True
+    data["sleep_entity"] = "binary_sensor.sleep"
+    config_entry = MockConfigEntry(domain=DOMAIN, data=data)
+    config_entry.add_to_hass(hass)
+
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+    calls_fan_on = async_mock_service(hass, FAN_DOMAIN, SERVICE_TURN_ON)
+    calls_fan_off = async_mock_service(hass, FAN_DOMAIN, SERVICE_TURN_OFF)
+
+    # 1. Motion turns ON without sleep
+    one_motion[0].turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(1)
+
+    # 2. Motion turns OFF -> transitions to extended state
+    one_motion[0].turn_off()
+    await hass.async_block_till_done()
+    await asyncio.sleep(4)
+    await hass.async_block_till_done()
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "extended"
+    assert len(calls_fan_on) >= 1
+    one_fan[0].turn_on()
+
+    # 3. Sleep mode turns ON while fan is running in extended
+    one_motion[1].turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.5)
+
+    # Fan must shut off immediately due to acoustic suppression
+    assert len(calls_fan_off) >= 1
+
 
 

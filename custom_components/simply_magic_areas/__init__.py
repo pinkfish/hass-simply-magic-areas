@@ -8,6 +8,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.area_registry import async_get as async_get_ar
+from homeassistant.helpers.device_registry import (
+    EVENT_DEVICE_REGISTRY_UPDATED,
+    EventDeviceRegistryUpdatedData,
+)
 from homeassistant.helpers.entity_registry import (
     EVENT_ENTITY_REGISTRY_UPDATED,
     EventEntityRegistryUpdatedData,
@@ -18,6 +22,7 @@ from .const import (
     CONF_ID,
     CONF_NAME,
     DATA_AREA_OBJECT,
+    DATA_DEVICE_LISTENER,
     DATA_ENTITY_LISTENER,
     DATA_UNDO_UPDATE_LISTENER,
     META_AREA_EXTERIOR,
@@ -38,10 +43,15 @@ async def async_setup_entry(
     """Set up the component."""
 
     @callback
-    def _async_registry_updated(event: Event[EventEntityRegistryUpdatedData]) -> None:
+    def _async_registry_updated(
+        event: (
+            Event[EventEntityRegistryUpdatedData]
+            | Event[EventDeviceRegistryUpdatedData]
+        ),
+    ) -> None:
         # Reload entities and then update the other pieces of the system.
         _LOGGER.debug(
-            "%s: Updateing entity from area change", config_entry.data[CONF_NAME]
+            "%s: Updating entities from registry change", config_entry.data[CONF_NAME]
         )
         hass.config_entries.async_update_entry(
             config_entry,
@@ -92,11 +102,17 @@ async def async_setup_entry(
             _async_registry_updated,
             _entity_registry_filter,
         )
+        device_listener = hass.bus.async_listen(
+            EVENT_DEVICE_REGISTRY_UPDATED,
+            _async_registry_updated,
+            _device_registry_filter,
+        )
 
         hass.data[MODULE_DATA][config_entry.entry_id] = {
             DATA_AREA_OBJECT: magic_area,
             DATA_UNDO_UPDATE_LISTENER: undo_listener,
             DATA_ENTITY_LISTENER: entity_listener,
+            DATA_DEVICE_LISTENER: device_listener,
         }
 
         # Setup platforms
@@ -177,6 +193,8 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
 
     area_data[DATA_UNDO_UPDATE_LISTENER]()
     area_data[DATA_ENTITY_LISTENER]()
+    if DATA_DEVICE_LISTENER in area_data:
+        area_data[DATA_DEVICE_LISTENER]()
 
     if all_unloaded:
         data.pop(config_entry.entry_id)
@@ -190,4 +208,10 @@ async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> 
 @callback
 def _entity_registry_filter(event_data: EventEntityRegistryUpdatedData) -> bool:
     """Filter entity registry events."""
+    return event_data["action"] == "update" and "area_id" in event_data["changes"]
+
+
+@callback
+def _device_registry_filter(event_data: EventDeviceRegistryUpdatedData) -> bool:
+    """Filter device registry events."""
     return event_data["action"] == "update" and "area_id" in event_data["changes"]

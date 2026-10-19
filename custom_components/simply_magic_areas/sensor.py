@@ -2,6 +2,7 @@
 
 import inspect
 import logging
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -13,7 +14,6 @@ from homeassistant.components.group.sensor import (
 )
 from homeassistant.components.sensor import (
     DEVICE_CLASS_UNITS,
-    UNIT_CONVERTERS,
     SensorDeviceClass,
 )
 from homeassistant.components.sensor import (
@@ -37,6 +37,8 @@ from .base.magic import MagicArea
 from .config.entity_names import EntityNames
 from .const import (
     AGGREGATE_MODE_SUM,
+    AGGREGATE_MODE_TOTAL_INCREASING_SENSOR,
+    AGGREGATE_MODE_TOTAL_SENSOR,
     CONF_AGGREGATES_MIN_ENTITIES,
     CONF_FEATURE_GROUP_CREATION,
     DATA_AREA_OBJECT,
@@ -69,6 +71,7 @@ async def async_setup_entry(
     # Check SENSOR_DOMAIN entities, count by device_class
     if area.has_entities(SENSOR_DOMAIN):
         entities_by_device_class: dict[str, list[str]] = {}
+        unit_of_measurement_map: dict[str, list[str | None]] = {}
 
         for entity in area.entities[SENSOR_DOMAIN]:
             if ATTR_DEVICE_CLASS not in entity:
@@ -79,7 +82,16 @@ async def async_setup_entry(
                 )
                 continue
 
-            if ATTR_UNIT_OF_MEASUREMENT not in entity:
+            device_class = entity[ATTR_DEVICE_CLASS]
+            try:
+                dev_class_enum = SensorDeviceClass(device_class)
+                allowed_units = DEVICE_CLASS_UNITS.get(dev_class_enum, set())
+            except ValueError:
+                allowed_units = set()
+
+            # Disqualify only if unit is missing AND device_class requires a unit.
+            # Intentionally unitless classes (e.g. AQI, pH) have None in allowed_units.
+            if ATTR_UNIT_OF_MEASUREMENT not in entity and None not in allowed_units:
                 _LOGGER.debug(
                     "%s: Entity %s does not have unit_of_measurement defined",
                     area.name,
@@ -88,10 +100,14 @@ async def async_setup_entry(
                 continue
 
             # Dictionary of sensors by device class.
-            device_class = entity[ATTR_DEVICE_CLASS]
             if device_class not in entities_by_device_class:
                 entities_by_device_class[device_class] = []
+                unit_of_measurement_map[device_class] = []
+
             entities_by_device_class[device_class].append(entity[ATTR_ENTITY_ID])
+            unit_of_measurement_map[device_class].append(
+                entity.get(ATTR_UNIT_OF_MEASUREMENT)
+            )
 
         # Create aggregates/illuminance sensor or illuminance ones.
         for item in entities_by_device_class.items():
@@ -106,8 +122,11 @@ async def async_setup_entry(
                 ):
                     continue
 
+            unit_counts = Counter(unit_of_measurement_map[device_class])
+            most_common_unit = unit_counts.most_common(1)[0][0] if unit_counts else None
+
             _LOGGER.debug(
-                "%s: reating aggregate sensor for device_class '%s' with %d entities ",
+                "%s: creating aggregate sensor for device_class '%s' with %d entities",
                 area.slug,
                 device_class,
                 len(entities),
@@ -117,6 +136,7 @@ async def async_setup_entry(
                     area=area,
                     device_class=SensorDeviceClass(device_class),
                     entity_ids=entities,
+                    unit_of_measurement=most_common_unit,
                 )
             )
 
@@ -158,12 +178,28 @@ class AreaSensorGroupSensor(MagicEntity, SensorGroup):
         area: MagicArea,
         device_class: SensorDeviceClass,
         entity_ids: list[str],
+        unit_of_measurement: str | None = None,
     ) -> None:
         """Initialize an area sensor group sensor."""
 
         MagicEntity.__init__(
             self, area=area, domain=SENSOR_DOMAIN, translation_key=device_class
         )
+
+        unit: str | None = unit_of_measurement
+        if unit is None and device_class in DEVICE_CLASS_UNITS:
+            allowed = DEVICE_CLASS_UNITS[device_class]
+            valid_units = [u for u in allowed if u is not None]
+            if valid_units:
+                unit = str(valid_units[0])
+
+        if device_class in AGGREGATE_MODE_TOTAL_INCREASING_SENSOR:
+            state_class = SensorStateClass.TOTAL_INCREASING
+        elif device_class in AGGREGATE_MODE_TOTAL_SENSOR:
+            state_class = SensorStateClass.TOTAL
+        else:
+            state_class = SensorStateClass.MEASUREMENT
+
         sensor_group_params: dict[str, Any] = {
             "device_class": device_class,
             "entity_ids": entity_ids,
@@ -171,16 +207,8 @@ class AreaSensorGroupSensor(MagicEntity, SensorGroup):
             "name": None,
             "unique_id": self._attr_unique_id,
             "sensor_type": ATTR_SUM if device_class in AGGREGATE_MODE_SUM else ATTR_MEAN,
-            "state_class": (
-                SensorStateClass.TOTAL
-                if device_class in AGGREGATE_MODE_SUM
-                else SensorStateClass.MEASUREMENT
-            ),
-            "unit_of_measurement": str(
-                UNIT_CONVERTERS[device_class].NORMALIZED_UNIT
-                if device_class in UNIT_CONVERTERS
-                else next(iter(DEVICE_CLASS_UNITS[device_class]))
-            ),
+            "state_class": state_class,
+            "unit_of_measurement": unit,
         }
         if "hass" in inspect.signature(SensorGroup.__init__).parameters:
             sensor_group_params["hass"] = area.hass

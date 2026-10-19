@@ -44,6 +44,8 @@ from .const import (
     ATTR_MANUAL_CONTROL,
     ATTR_MANUAL_TIMEOUT_TS,
     ATTR_REFERENCE_HUMIDITY,
+    CONF_FAN_SUPPRESS_IN_SLEEP,
+    CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_HUMIDITY,
     CONF_HUMIDITY_DEADBAND,
     CONF_HUMIDITY_DELTA_SHUTOFF,
@@ -54,8 +56,10 @@ from .const import (
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
     CONF_MANUAL_TIMEOUT,
+    CONF_REFERENCE_BRIGHT_AREA,
     CONF_REFERENCE_HUMIDITY_SENSOR,
     DATA_AREA_OBJECT,
+    DEFAULT_FAN_SUPPRESS_IN_SLEEP,
     DEFAULT_HUMIDITY_DEADBAND,
     DEFAULT_HUMIDITY_DELTA_SHUTOFF,
     DEFAULT_HUMIDITY_DELTA_THRESHOLD,
@@ -277,6 +281,36 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 )
             )
 
+        # Track sleep entity if configured
+        sleep_conf = self.area.all_state_configs().get(AreaState.AREA_STATE_SLEEP)
+        sleep_entity = (
+            sleep_conf.entity if sleep_conf else self.area.config.get("sleep_entity")
+        )
+        if sleep_entity and self.hass.states.get(sleep_entity) is not None:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [sleep_entity], self._sleep_state_change
+                )
+            )
+
+        # Track reference area state if configured
+        ref_area = self.area.config.get(
+            CONF_REFERENCE_BRIGHT_AREA,
+            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_REFERENCE_BRIGHT_AREA
+            ),
+        )
+        if ref_area:
+            ref_state_entity = self.area.simply_magic_entity_id(
+                SENSOR_DOMAIN, EntityNames.STATE, area_name=ref_area
+            )
+            if self.hass.states.get(ref_state_entity) is not None:
+                self.async_on_remove(
+                    async_track_state_change_event(
+                        self.hass, [ref_state_entity], self._sleep_state_change
+                    )
+                )
+
     ### State Change Handling
     def _area_state_change(self, event: Event[EventStateChangedData]) -> None:
         if event.data["old_state"] is None or event.data["new_state"] is None:
@@ -309,13 +343,99 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         # For fans we only worry about the extended state.
         if to_state == AreaState.AREA_STATE_EXTENDED:
-            self._turn_on_fan()
+            if (
+                self._is_fan_suppressed_in_sleep()
+                and not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            ):
+                _LOGGER.debug(
+                    "%s: Sleep suppression active, suppressing fan in extended state",
+                    self.name,
+                )
+                if self.is_on:
+                    self._turn_off_fan()
+            else:
+                self._turn_on_fan()
         elif self.is_on and not self._attr_extra_state_attributes.get(
             ATTR_HUMIDITY_ON, False
         ):
             self._turn_off_fan()
         else:
             _LOGGER.debug("Ignoring state change")
+
+    def _is_fan_suppressed_in_sleep(self) -> bool:
+        """Check if fan should be suppressed due to sleep mode."""
+        if not self.area.config.get(
+            CONF_FAN_SUPPRESS_IN_SLEEP, DEFAULT_FAN_SUPPRESS_IN_SLEEP
+        ):
+            return False
+
+        # 1. Current area sleep state or sleep entity
+        if self.area.state == AreaState.AREA_STATE_SLEEP:
+            return True
+
+        sleep_conf = self.area.all_state_configs().get(AreaState.AREA_STATE_SLEEP)
+        sleep_entity = (
+            sleep_conf.entity if sleep_conf else self.area.config.get("sleep_entity")
+        )
+        if sleep_entity:
+            entity_state = self.hass.states.get(sleep_entity)
+            check_state = sleep_conf.entity_state_on if sleep_conf else STATE_ON
+            if entity_state and entity_state.state.lower() == check_state.lower():
+                return True
+
+        # 2. Reference area sleep state (e.g. Master Bedroom for Ensuite)
+        ref_area = self.area.config.get(
+            CONF_REFERENCE_BRIGHT_AREA,
+            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_REFERENCE_BRIGHT_AREA
+            ),
+        )
+        if ref_area:
+            if MODULE_DATA in self.hass.data:
+                for entry in self.hass.data[MODULE_DATA].values():
+                    area_obj = entry.get(DATA_AREA_OBJECT)
+                    if (
+                        area_obj
+                        and (
+                            area_obj.id == ref_area
+                            or area_obj.slug == ref_area
+                            or area_obj.name == ref_area
+                        )
+                        and area_obj.state == AreaState.AREA_STATE_SLEEP
+                    ):
+                        return True
+            ref_state_entity = self.area.simply_magic_entity_id(
+                SENSOR_DOMAIN, EntityNames.STATE, area_name=ref_area
+            )
+            state_obj = self.hass.states.get(ref_state_entity)
+            if state_obj and state_obj.state == AreaState.AREA_STATE_SLEEP:
+                return True
+
+        return False
+
+    def _sleep_state_change(self, event: Event[EventStateChangedData]) -> None:
+        """Handle changes to sleep entities or reference area states."""
+        if event.data.get("new_state") is None:
+            return
+
+        if self.area.state == AreaState.AREA_STATE_EXTENDED:
+            # If humidity is forcing the fan on, do not suppress
+            if self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
+                return
+
+            if self._is_fan_suppressed_in_sleep():
+                if self.is_on:
+                    _LOGGER.debug(
+                        "%s: Sleep became active during extended state, suppressing fan",
+                        self.name,
+                    )
+                    self._turn_off_fan()
+            elif not self.is_on:
+                _LOGGER.debug(
+                    "%s: Sleep cleared during extended state, turning fan on",
+                    self.name,
+                )
+                self._turn_on_fan()
 
     def _trend_state_change(self, event: Event[EventStateChangedData]):
         if event.data["old_state"] is None or event.data["new_state"] is None:
@@ -538,7 +658,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
         )
         if fans_on:
             self._turn_on_fan()
-        elif self.area.state != AreaState.AREA_STATE_EXTENDED:
+        elif self.area.state == AreaState.AREA_STATE_EXTENDED:
+            if self._is_fan_suppressed_in_sleep():
+                self._turn_off_fan()
+        else:
             self._turn_off_fan()
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:

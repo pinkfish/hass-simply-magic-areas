@@ -46,6 +46,7 @@ ALL_BINARY_SENSOR_DEVICE_CLASSES = [cls.value for cls in BinarySensorDeviceClass
 DATA_AREA_OBJECT = "area_object"
 DATA_UNDO_UPDATE_LISTENER = "undo_update_listener"
 DATA_ENTITY_LISTENER = "entity_listener"
+DATA_DEVICE_LISTENER = "device_listener"
 
 # Attributes
 ATTR_STATE = "state"
@@ -177,6 +178,10 @@ CONF_MAX_BRIGHTNESS_LEVEL, DEFAULT_MAX_BRIGHTNESS_LEVEL = ("max_brightness_level
 # Controlling the lights and the fan.
 CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL = ("light_control", True)
 CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL = ("fan_control", True)
+CONF_FAN_SUPPRESS_IN_SLEEP, DEFAULT_FAN_SUPPRESS_IN_SLEEP = (
+    "fan_suppress_in_sleep",
+    False,
+)
 # Direct lux and referenced brightness
 CONF_BRIGHT_LUX_THRESHOLD, DEFAULT_BRIGHT_LUX_THRESHOLD = "bright_lux_threshold", 0
 CONF_BRIGHT_LUX_HYSTERESIS, DEFAULT_BRIGHT_LUX_HYSTERESIS = "bright_lux_hysteresis", 25
@@ -337,6 +342,17 @@ AGGREGATE_MODE_SUM = [
     SensorDeviceClass.POWER,
     SensorDeviceClass.CURRENT,
     SensorDeviceClass.ENERGY,
+    SensorDeviceClass.GAS,
+    SensorDeviceClass.WATER,
+]
+
+AGGREGATE_MODE_TOTAL_SENSOR = [
+    SensorDeviceClass.ENERGY,
+]
+
+AGGREGATE_MODE_TOTAL_INCREASING_SENSOR = [
+    SensorDeviceClass.GAS,
+    SensorDeviceClass.WATER,
 ]
 
 # Config Schema
@@ -482,6 +498,9 @@ REGULAR_AREA_SCHEMA = vol.Schema(
         vol.Optional(CONF_ICON, default=DEFAULT_ICON): cv.string,
         vol.Optional(CONF_LIGHT_CONTROL, default=DEFAULT_LIGHT_CONTROL): bool,
         vol.Optional(CONF_FAN_CONTROL, default=DEFAULT_FAN_CONTROL): bool,
+        vol.Optional(
+            CONF_FAN_SUPPRESS_IN_SLEEP, default=DEFAULT_FAN_SUPPRESS_IN_SLEEP
+        ): bool,
         vol.Optional(CONF_MQTT_ROOM_PRESENCE, default=DEFAULT_MQTT_ROOM_PRESENCE): bool,
         vol.Optional(CONF_MIN_BRIGHTNESS_LEVEL, default=DEFAULT_MIN_BRIGHTNESS_LEVEL): cv.positive_int,
         vol.Optional(CONF_MAX_BRIGHTNESS_LEVEL, default=DEFAULT_MAX_BRIGHTNESS_LEVEL): cv.positive_int,
@@ -512,6 +531,7 @@ OPTIONS_AREA = [
     (CONF_ICON, DEFAULT_ICON, str),
     (CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL, bool),
     (CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL, bool),
+    (CONF_FAN_SUPPRESS_IN_SLEEP, DEFAULT_FAN_SUPPRESS_IN_SLEEP, bool),
     (CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE, bool),
 ]
 for item in ALL_LIGHT_ENTITIES:

@@ -6,19 +6,13 @@ This document tracks all active, planned, and completed tasks for the **Simply M
 
 ## 📋 Open Tasks (Planned & In Progress)
 
-### 1. Acoustic Fan Suppression in Sleep Mode
-- **Feature**: `CONF_FAN_SUPPRESS_IN_SLEEP`
-- **Description**: In en-suite bathrooms, suppress loud exhaust fans during `extended` mode when the bedroom or en-suite area is in the `sleep` substate, unless actively forced by elevated differential humidity (`humidity_on`).
-- **Target Platform**: `fan.py`, `config_flow.py`, `const.py`
-- **Status**: ⏳ Open / Proposed
-
-### 2. Door Contact Interlocking for Bathroom Occupancy
+### 1. Door Contact Interlocking for Bathroom Occupancy
 - **Feature**: Contact sensor occupancy extension
 - **Description**: If a bathroom is occupied when the door contact sensor closes, maintain the `occupied` state regardless of motion sensor dead zones (e.g., behind shower glass/curtains) until the door opens again.
 - **Target Platform**: `area_state_sensor.py`, `config_flow.py`, `const.py`
 - **Status**: ⏳ Open / Proposed
 
-### 3. Multi-Speed Exhaust Fan Support
+### 2. Multi-Speed Exhaust Fan Support
 - **Feature**: Proportional ventilation speed control
 - **Description**: Allow configuration of distinct percentage fan speeds for background post-occupancy `extended` ventilation (e.g. 40%) versus high-speed steam extraction (`humidity_on`, 100%).
 - **Target Platform**: `fan.py`, `config_flow.py`, `const.py`
@@ -43,7 +37,11 @@ This document tracks all active, planned, and completed tasks for the **Simply M
 - [x] **Direct Numeric Lux & Inter-Area Brightness**: Added 3-tier brightness evaluation with direct lux threshold, hysteresis band, reference area inheritance, and reference lux sensor fallback.
 
 ### Ventilation & Climate
+- [x] **Acoustic Fan Suppression in Sleep Mode**: Implemented `CONF_FAN_SUPPRESS_IN_SLEEP` in [fan.py](custom_components/simply_magic_areas/fan.py), [config_flow.py](custom_components/simply_magic_areas/config_flow.py), and [const.py](custom_components/simply_magic_areas/const.py). In en-suite bathrooms, loud exhaust fans are suppressed during `extended` mode when sleep mode is active (either locally or in a configured reference/sleep entity), shuts off running extended fans if sleep activates dynamically, re-engages fans if sleep ends while still extended, and safely allows elevated differential humidity (`humidity_on`) to override sleep suppression for moisture control.
 - [x] **Differential Humidity Fan Control**: Replaced absolute humidity triggers with reference baseline delta comparison (`CONF_REFERENCE_HUMIDITY_SENSOR`, `CONF_HUMIDITY_DELTA_THRESHOLD`, `CONF_HUMIDITY_DELTA_SHUTOFF`).
+- [x] **Stationary Derivative Deadband Flatline Shutoff**: Added continuous rate-of-change deadband detection (`CONF_HUMIDITY_DEADBAND`, `CONF_HUMIDITY_ZERO_WAIT_TIME`) to prevent fans sticking on during post-shower humidity plateaus.
+- [x] **Ventilation Presence Gating**: Added configurable presence gating window (`CONF_HUMIDITY_PRESENCE_GATE_TIME`) preventing weather humidity shifts from activating fans in vacant rooms.
+- [x] **Safety Maximum Runtime Cutoff**: Enforced hard runtime cap (`CONF_HUMIDITY_MAX_FAN_TIME`) to protect fan motors and prevent excessive conditioned air exhaustion.
 - [x] **Stationary Derivative Deadband Flatline Shutoff**: Added continuous rate-of-change deadband detection (`CONF_HUMIDITY_DEADBAND`, `CONF_HUMIDITY_ZERO_WAIT_TIME`) to prevent fans sticking on during post-shower humidity plateaus.
 - [x] **Ventilation Presence Gating**: Added configurable presence gating window (`CONF_HUMIDITY_PRESENCE_GATE_TIME`) preventing weather humidity shifts from activating fans in vacant rooms.
 - [x] **Safety Maximum Runtime Cutoff**: Enforced hard runtime cap (`CONF_HUMIDITY_MAX_FAN_TIME`) to protect fan motors and prevent excessive conditioned air exhaustion.
@@ -51,3 +49,9 @@ This document tracks all active, planned, and completed tasks for the **Simply M
 ### Persistence & Reliability
 - [x] **Timer Rehydration Across Restarts**: Added state attribute persistence for countdown timestamps (`clear_timeout_ts`, `extended_timeout_ts`, `manual_timeout_ts`) with automatic timer rehydration upon Home Assistant restart.
 - [x] **Linter & Code Hygiene**: Purged dead methods (`_async_update_state`), unreferenced constants, duplicate dictionary keys, and fixed legacy platform dependencies (`DEPENDENCIES = ["cover"]`). Zero warnings under `ruff check`.
+
+### Upstream Enhancements & Bugfixes (jseidl/magic-areas)
+- [x] **Unitless Sensor Aggregation (AQI)**: Enabled aggregation of unitless device classes (such as `SensorDeviceClass.AQI` and `SensorDeviceClass.PH`), resolving entity rejection and handling `unit_of_measurement=None` safely in [sensor.py](custom_components/simply_magic_areas/sensor.py).
+- [x] **Device Registry Change Tracking**: Added `EVENT_DEVICE_REGISTRY_UPDATED` listener in [__init__.py](custom_components/simply_magic_areas/__init__.py) so moving a physical device to a different area triggers automatic reload of affected areas without requiring a Home Assistant restart.
+- [x] **Energy & Utility Meter Long-Term Statistics**: Added `SensorStateClass.TOTAL_INCREASING` mapping for `gas` and `water` aggregates (and `TOTAL` for `energy`), enabling full native integration with the Home Assistant Energy Dashboard in [const.py](custom_components/simply_magic_areas/const.py) and [sensor.py](custom_components/simply_magic_areas/sensor.py).
+- [x] **Self-Healing State Consistency & Restart Recovery**: Added `_validate_state_consistency()` guard in [base/area_state_sensor.py](custom_components/simply_magic_areas/base/area_state_sensor.py) to automatically detect and clear orphaned occupied states when all sensors are off and no timeout is pending. Tested with 4 dedicated unit tests (60/60 total tests passing).

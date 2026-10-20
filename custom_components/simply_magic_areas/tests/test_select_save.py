@@ -66,6 +66,10 @@ async def test_save_select(
             LightingProfile.BRIGHT,
             LightingProfile.ACCENTED,
         ],
+        "dark_lux_floor": 10,
+        "historical_daylight_lux": None,
+        "is_windowless": False,
+        "effective_illuminance": None,
     }
 
     await hass.config_entries.async_unload(config_entry.entry_id)

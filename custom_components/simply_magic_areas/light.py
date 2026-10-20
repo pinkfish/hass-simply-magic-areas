@@ -41,13 +41,20 @@ from .base.magic import ControlType, MagicArea, StateConfigData
 from .config.area_state import AreaState, LightingProfile
 from .config.entity_names import EntityNames
 from .const import (
+    ATTR_DARK_LUX_FLOOR,
+    ATTR_DARKNESS_RATIO,
+    ATTR_HISTORICAL_DAYLIGHT_LUX,
+    ATTR_IS_WINDOWLESS,
     ATTR_LAST_UPDATE_FROM_ENTITY,
     ATTR_MANUAL_CONTROL,
     ATTR_MANUAL_TIMEOUT_TS,
+    CONF_DARK_LUX_FLOOR,
+    CONF_DAYLIGHT_LUX_LEVEL,
     CONF_MANUAL_TIMEOUT,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
     DATA_AREA_OBJECT,
+    DEFAULT_DARK_LUX_FLOOR,
     DEFAULT_MANUAL_TIMEOUT,
     DEFAULT_MAX_BRIGHTNESS_LEVEL,
     DEFAULT_MIN_BRIGHTNESS_LEVEL,
@@ -454,49 +461,102 @@ class AreaLightGroup(MagicEntity, LightGroup):
             return
 
         luminesence = self._get_illuminance()
-        min_brightness = self.area.config.get(
-            CONF_MIN_BRIGHTNESS_LEVEL, DEFAULT_MIN_BRIGHTNESS_LEVEL
+
+        # Determine effective floor and daylight levels
+        dark_lux_floor = float(
+            getattr(self.area, "dark_lux_floor", None)
+            or self.area.config.get(CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR)
         )
-        _LOGGER.debug(
-            "%s: Checking brightness to %s %s,  %s, %s -- %s",
-            self.name,
-            self.is_on,
-            luminesence,
-            min_brightness,
-            self.area.config.get(
-                CONF_MAX_BRIGHTNESS_LEVEL, DEFAULT_MAX_BRIGHTNESS_LEVEL
-            ),
-            self._attr_extra_state_attributes.get(ATTR_LAST_ON_ILLUMINANCE, 0),
-        )
-        if luminesence > min_brightness:
-            max_brightness = self.area.config.get(
-                CONF_MAX_BRIGHTNESS_LEVEL, DEFAULT_MAX_BRIGHTNESS_LEVEL
+        is_windowless = bool(getattr(self.area, "is_windowless", False))
+        historical_daylight = getattr(self.area, "historical_daylight_lux", None)
+
+        # Check for windowless room or absolute dark floor guarantee
+        if is_windowless or luminesence <= dark_lux_floor:
+            darkness_ratio = 1.0
+            _LOGGER.debug(
+                "%s: Ambient lux %s is at or below dark floor %s (or windowless: %s) -> full brightness %s",
+                self.name,
+                luminesence,
+                dark_lux_floor,
+                is_windowless,
+                brightness,
             )
-            if luminesence > max_brightness:
-                brightness = 0
+        else:
+            manual_daylight = float(
+                self.area.config.get(CONF_DAYLIGHT_LUX_LEVEL, 0)
+            )
+            if manual_daylight > (dark_lux_floor + 5.0):
+                lower_lux = dark_lux_floor
+                upper_lux = manual_daylight
+            elif (
+                historical_daylight is not None
+                and historical_daylight > (dark_lux_floor + 5.0)
+            ):
+                # Autonomously learned daylight baseline for this specific room's sensor
+                lower_lux = dark_lux_floor
+                upper_lux = float(historical_daylight)
             else:
-                diff = luminesence - min_brightness
-                brightness = int(
-                    brightness * (1.0 - diff / (max_brightness - min_brightness))
+                # Configured / fallback thresholds
+                lower_lux = float(
+                    self.area.config.get(
+                        CONF_MIN_BRIGHTNESS_LEVEL, DEFAULT_MIN_BRIGHTNESS_LEVEL
+                    )
                 )
+                upper_lux = float(
+                    self.area.config.get(
+                        CONF_MAX_BRIGHTNESS_LEVEL, DEFAULT_MAX_BRIGHTNESS_LEVEL
+                    )
+                )
+
+            if luminesence >= upper_lux:
+                darkness_ratio = 0.0
+                brightness = 0
                 _LOGGER.debug(
-                    "%s: Updating brightness to %s 1.0 - %s / %s",
+                    "%s: Ambient lux %s exceeds daylight level %s -> brightness 0",
                     self.name,
-                    brightness,
-                    diff,
-                    (max_brightness - min_brightness),
+                    luminesence,
+                    upper_lux,
                 )
+            elif luminesence > lower_lux:
+                darkness_ratio = (upper_lux - luminesence) / (upper_lux - lower_lux)
+                brightness = int(brightness * darkness_ratio)
+                _LOGGER.debug(
+                    "%s: Proportional darkness compensation: lux=%s, range=[%s, %s], ratio=%.2f -> brightness %s",
+                    self.name,
+                    luminesence,
+                    lower_lux,
+                    upper_lux,
+                    darkness_ratio,
+                    brightness,
+                )
+            else:
+                darkness_ratio = 1.0
+
+        self._attr_extra_state_attributes.update(
+            {
+                ATTR_LAST_ON_ILLUMINANCE: luminesence,
+                ATTR_DARK_LUX_FLOOR: dark_lux_floor,
+                ATTR_DARKNESS_RATIO: round(darkness_ratio, 2),
+                ATTR_IS_WINDOWLESS: is_windowless,
+            }
+        )
+        if historical_daylight is not None:
+            self._attr_extra_state_attributes[ATTR_HISTORICAL_DAYLIGHT_LUX] = round(
+                float(historical_daylight), 1
+            )
+
         if not self.area.is_control_enabled(ControlType.System):
             return
 
         if brightness == 0:
             _LOGGER.debug("%s: Brightness is 0", self.name)
-            self._turn_off_light()
+            self._turn_off_light(force=True)
             return
 
         _LOGGER.debug("Turning on lights")
         self.last_update_from_entity = True
         self._attr_is_on = True
+        self.schedule_update_ha_state()
         service_data = {
             ATTR_ENTITY_ID: self.entity_id,
             ATTR_BRIGHTNESS: brightness,
@@ -507,7 +567,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         return
 
-    def _turn_off_light(self) -> None:
+    def _turn_off_light(self, force: bool = False) -> None:
         """Turn off the light group."""
         occupied_states = {
             AreaState.AREA_STATE_OCCUPIED,
@@ -515,8 +575,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
             AreaState.AREA_STATE_SLEEP,
             AreaState.AREA_STATE_ACCENTED,
         }
-        # Safety check: Never turn off lights if the area is currently in an occupied state
-        if self.area.state in occupied_states:
+        # Safety check: Never turn off lights if the area is currently in an occupied state (unless forced)
+        if not force and self.area.state in occupied_states:
             _LOGGER.debug(
                 "%s: Area is in occupied state %s, aborting turn off",
                 self.name,

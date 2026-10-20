@@ -271,21 +271,24 @@ Rooms never abruptly drop from `occupied` to `clear`. Departure follows a multi-
 - **Anti-Fighting Wall Switch Resilience**: If an external command or physical switch turns off lights while human presence remains affirmatively verified (and no manual override was set), the system automatically re-asserts lighting to protect occupants from accidental deactivation.
 - **Context Isolation**: Substates (`sleep`, `bright`, `accented`) modulate *how* the room is illuminated, but never influence *whether* human presence exists. Presence detection is completely decoupled from contextual scene profiles.
 
-### 3.6 Direct Lux & Inter-Area Brightness Reference Architecture
+### 3.6 Adaptive Lux, In-Situ Daylight Learning & Dark Floor Architecture
 
-To evaluate the `bright` daytime substate without forcing synthetic helper entities across every room, Simply Magic Areas uses a three-tier brightness resolution hierarchy:
+To evaluate the `bright` daytime profile and modulate illumination levels without requiring tedious manual calibration across inconsistent hardware sensors, Simply Magic Areas combines historical daylight learning, a guaranteed dark lux floor, and a three-tier brightness resolution hierarchy:
 
 ```mermaid
 flowchart TD
     A[Evaluate Area Bright State] --> B{Explicit bright_entity configured?}
     B -- Yes --> C{Entity state == on?}
-    C -- Yes --> Bright[State: BRIGHT]
-    C -- No --> D{Local Illuminance Sensor exists?}
-    B -- No --> D
+    C -- Yes --> Bright[Profile: BRIGHT]
+    C -- No --> FloorCheck
+    B -- No --> FloorCheck{Local Lux <= Dark Lux Floor OR is_windowless?}
 
-    D -- Yes --> E{Local Lux >= Bright Threshold?}
+    FloorCheck -- Yes --> ForceDark[Enforce Standard Profile<br/>is_bright = False<br/>darkness_ratio = 1.0]
+    FloorCheck -- No --> D{Local Illuminance Sensor exists?}
+
+    D -- Yes --> E{Local Lux >= Effective Bright Threshold?}
     E -- Yes --> Bright
-    E -- No --> NotBright[State: OCCUPIED / Standard Lighting]
+    E -- No --> NotBright[Profile: STANDARD / Accented]
 
     D -- No --> F{Reference Area or Sensor configured?}
     F -- Reference Sensor --> G{Reference Lux >= Bright Threshold?}
@@ -301,14 +304,28 @@ flowchart TD
     I -- No --> NotBright
 ```
 
+#### 3.6.1 The Dark Lux Floor (`CONF_DARK_LUX_FLOOR`, Default: `10` lx) & Windowless Spaces
+- **Asymmetric Safety Invariant**: A room whose illuminance is at or below the dark lux floor ($L \le L_{floor}$) or identified as windowless (`is_windowless = True`) is **strictly prohibited from entering the `bright` profile**, regardless of solar elevation, daytime binary helpers, or bright states in parent meta-areas.
+- **Windowless Space Detection**: Rooms that consistently read at or below $L_{floor}$ during solar midday when artificial lights are off are automatically categorized as windowless (`ATTR_IS_WINDOWLESS: true`). Entering occupants are guaranteed 100% illumination without false suppression from exterior daytime conditions.
+
+#### 3.6.2 Autonomous Historical Daylight Baseline Learning (`CONF_LEARN_DAYLIGHT_LUX`)
+- **Hardware Sensor Variance Mitigation**: Real-world residential lux sensors exhibit massive variances (300%–500% hardware skew, differing window orientations, tinted glass). Hardcoded static thresholds cause north-facing rooms to never register daylight and south-facing rooms to extinguish lights prematurely.
+- **Uncontaminated Ambient Sampling**: During daytime hours (`sun.sun == above_horizon`), whenever artificial lights in the area are completely **OFF**, `AreaLightingProfileSensor` samples natural ambient daylight without fixture back-scatter.
+- **Asymmetric Peak & Seasonal Filter**:
+  $$\Delta L = L_{sample} - L_{day}$$
+  $$L_{day}^{(t+1)} = \begin{cases} L_{day}^{(t)} + \alpha_{up} \cdot \Delta L & \text{if } \Delta L > 0 \quad (\alpha_{up} = 0.25) \\ L_{day}^{(t)} + \alpha_{down} \cdot \Delta L & \text{if } \Delta L < 0 \quad (\alpha_{down} = 0.05) \end{cases}$$
+  Tracks bright clear sky peaks rapidly while drifting down smoothly with seasonal cloud cover and winter solar angles.
+- **Zero-Configuration Operation**: If `bright_lux_threshold` is left at default `0`, the integration automatically adopts the learned `historical_daylight_lux` as its bright cutoff threshold.
+
+#### 3.6.3 Three-Tier Brightness Resolution Hierarchy
 1. **Tier 1 — Local Illuminance Sensor (`sensor.simply_magic_areas_illuminance_<area>`)**:
-   - Rooms with their own illuminance sensor evaluate directly against `CONF_BRIGHT_LUX_THRESHOLD` (default: `200` lx).
+   - Rooms with their own illuminance sensor evaluate directly against configured or learned bright threshold.
    - A configurable hysteresis band (`CONF_BRIGHT_LUX_HYSTERESIS`, default: `25` lx) prevents flickering during twilight or passing cloud cover (turn on at `threshold`, turn off at `threshold - hysteresis`).
 2. **Tier 2 — Referenced Illuminance or Sibling Area**:
    - For rooms without an illuminance sensor (hallways, closets, interior bathrooms):
      - **Reference Area (`CONF_REFERENCE_BRIGHT_AREA`)**: Mirrors the `bright` state of an adjacent room with windows (e.g. `living_room`).
      - **Reference Illuminance Sensor (`CONF_REFERENCE_ILLUMINANCE_SENSOR`)**: Borrows a lux reading from another room or outdoor weather station.
-     - **Automatic Meta-Area Fallback**: If no specific reference is configured, interior rooms inherit brightness from the parent `interior` or `global` meta-area.
+     - **Automatic Meta-Area Fallback**: If no specific reference is configured, interior rooms inherit brightness from parent `interior` or `global` meta-area (unless protected by windowless dark floor).
 3. **Tier 3 — Explicit Binary Entity (`bright_entity`) Fallback**:
    - Configured binary entities (`sun.sun`, `input_boolean.daytime`, or threshold helpers) are evaluated for full backward compatibility.
 
@@ -327,6 +344,17 @@ flowchart TD
   - **Lights ON (`occupied`)**: If the lights are on (`occupied`) and the contextual substate changes between `sleep`, `bright`, and `accented`, the lights **immediately update to the new values** (brightness level, color temperature, and active entity subset).
   - **Lights OFF (`clear`, `manual`, or `bright` at 0%)**: If the lights are off, substate changes (e.g. `bright` to `sleep` at night) do **not** trigger any light command. The lights remain off and the state remains `clear` or `manual` without change.
   - **New Presence Detected**: When the area transitions from `clear` or `extended` into `occupied`, the lights turn ON using the active substate's configured settings.
+- **Proportional Darkness Compensation (Adaptive Turn-On Brightness)**:
+  - When lights turn on, the controller inspects local illuminance $L$, learned daylight baseline $L_{day}$, and the dark lux floor $L_{floor}$.
+  - Computes the darkness ratio:
+    $$\text{darkness\_ratio} = \min\left(1.0, \max\left(0.0, \frac{L_{day} - L}{L_{day} - L_{floor}}\right)\right)$$
+  - Applies perceptual Stevens' power-law curve ($\gamma = 0.65$) matching human visual perception:
+    $$\text{target\_brightness} = \text{round}\left(\text{base\_brightness} \times (\text{darkness\_ratio})^{0.65}\right)$$
+  - **Threshold Boundary Guarantees**:
+    - If $L \le L_{floor}$ or `is_windowless`: $\text{darkness\_ratio} = 1.0 \implies 100\%$ target profile brightness.
+    - If $L \ge L_{day}$: $\text{darkness\_ratio} = 0.0 \implies$ lights remain off or turn off (`force=True`).
+    - Between $L_{floor}$ and $L_{day}$: Delivers smooth, natural twilight compensation without over-illuminating partially lit rooms.
+  - Exposes `darkness_ratio` as a live state attribute on `AreaLightGroup`.
 - **Manual Light State & Override (`CONF_MANUAL_TIMEOUT`)**:
   - **Transition to Manual State**: If someone manually adjusts a light (turns a light on or off, adjusts brightness, or changes color via a physical wall switch, smart dimmer, external integration, or Home Assistant UI), the light entity automatically transitions into a **Manual State** (exposing `manual_control: true` in its extra state attributes).
   - **Override Automatic State**: While in this manual state, the automatic lighting control is completely overridden and suspended. Automatic area state changes, substate context shifts (e.g. transitioning from `bright` to `sleep`), or clearance timeout transitions will **not** modify, turn off, or turn on the lights. This guarantees that automated routines do not "fight" human manual preferences.

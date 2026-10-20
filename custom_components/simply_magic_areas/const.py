@@ -189,6 +189,15 @@ CONF_BRIGHT_LUX_THRESHOLD, DEFAULT_BRIGHT_LUX_THRESHOLD = "bright_lux_threshold"
 CONF_BRIGHT_LUX_HYSTERESIS, DEFAULT_BRIGHT_LUX_HYSTERESIS = "bright_lux_hysteresis", 25
 CONF_REFERENCE_ILLUMINANCE_SENSOR = "reference_illuminance_sensor"
 CONF_REFERENCE_BRIGHT_AREA = "reference_bright_area"
+CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR = "dark_lux_floor", 10
+CONF_LEARN_DAYLIGHT_LUX, DEFAULT_LEARN_DAYLIGHT_LUX = "learn_daylight_lux", True
+CONF_DAYLIGHT_LUX_LEVEL, DEFAULT_DAYLIGHT_LUX_LEVEL = "daylight_lux_level", 0
+
+# State attributes for lux and daylight calibration
+ATTR_DARK_LUX_FLOOR = "dark_lux_floor"
+ATTR_HISTORICAL_DAYLIGHT_LUX = "historical_daylight_lux"
+ATTR_IS_WINDOWLESS = "is_windowless"
+ATTR_DARKNESS_RATIO = "darkness_ratio"
 # Controls for the humidity stats sensor.
 CONF_HUMIDITY_TREND_DOWN_CUT_OFF, DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF = (
     "humidity_down",
@@ -443,6 +452,9 @@ ADVANCED_LIGHT_GROUP_FEATURE_SCHEMA: vol.Schema = vol.Schema(
             default=DEFAULT_PRESENCE_DEVICE_SENSOR_CLASS,
         ): cv.ensure_list,
         vol.Optional(CONF_ON_STATES, default=DEFAULT_ON_STATES): cv.ensure_list,
+        vol.Optional(CONF_DARK_LUX_FLOOR, default=DEFAULT_DARK_LUX_FLOOR): cv.positive_int,
+        vol.Optional(CONF_LEARN_DAYLIGHT_LUX, default=DEFAULT_LEARN_DAYLIGHT_LUX): bool,
+        vol.Optional(CONF_DAYLIGHT_LUX_LEVEL, default=DEFAULT_DAYLIGHT_LUX_LEVEL): cv.positive_int,
     }
 )
 
@@ -506,6 +518,9 @@ REGULAR_AREA_SCHEMA = vol.Schema(
         vol.Optional(CONF_MQTT_ROOM_PRESENCE, default=DEFAULT_MQTT_ROOM_PRESENCE): bool,
         vol.Optional(CONF_MIN_BRIGHTNESS_LEVEL, default=DEFAULT_MIN_BRIGHTNESS_LEVEL): cv.positive_int,
         vol.Optional(CONF_MAX_BRIGHTNESS_LEVEL, default=DEFAULT_MAX_BRIGHTNESS_LEVEL): cv.positive_int,
+        vol.Optional(CONF_DARK_LUX_FLOOR, default=DEFAULT_DARK_LUX_FLOOR): cv.positive_int,
+        vol.Optional(CONF_LEARN_DAYLIGHT_LUX, default=DEFAULT_LEARN_DAYLIGHT_LUX): bool,
+        vol.Optional(CONF_DAYLIGHT_LUX_LEVEL, default=DEFAULT_DAYLIGHT_LUX_LEVEL): cv.positive_int,
     }
 ).extend(
     {k: v for lg in ALL_LIGHT_ENTITIES for k, v in lg.config_flow_schema().items()}
@@ -535,6 +550,9 @@ OPTIONS_AREA = [
     (CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL, bool),
     (CONF_FAN_SUPPRESS_IN_SLEEP, DEFAULT_FAN_SUPPRESS_IN_SLEEP, bool),
     (CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE, bool),
+    (CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR, int),
+    (CONF_LEARN_DAYLIGHT_LUX, DEFAULT_LEARN_DAYLIGHT_LUX, bool),
+    (CONF_DAYLIGHT_LUX_LEVEL, DEFAULT_DAYLIGHT_LUX_LEVEL, int),
 ]
 for item in ALL_LIGHT_ENTITIES:
     OPTIONS_AREA.extend(item.config_flow_options())
@@ -558,6 +576,9 @@ OPTIONS_AREA_ADVANCED = [
         DEFAULT_ON_STATES,
         cv.ensure_list,
     ),
+    (CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR, int),
+    (CONF_LEARN_DAYLIGHT_LUX, DEFAULT_LEARN_DAYLIGHT_LUX, bool),
+    (CONF_DAYLIGHT_LUX_LEVEL, DEFAULT_DAYLIGHT_LUX_LEVEL, int),
 ]
 
 OPTIONS_AREA_META = [

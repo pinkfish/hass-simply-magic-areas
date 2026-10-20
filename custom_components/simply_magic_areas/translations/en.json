@@ -114,7 +114,10 @@
           "sleep_entity": "Entity used to put area into sleep when occupied",
           "light_control": "Control the lights",
           "fan_control": "Control the fans",
-          "fan_suppress_in_sleep": "Suppress exhaust fan in sleep mode"
+          "fan_suppress_in_sleep": "Suppress exhaust fan in sleep mode",
+          "dark_lux_floor": "Dark Lux Floor: ambient lux at or below which room is dark and lights always turn on",
+          "learn_daylight_lux": "Autonomously learn the daylight lux baseline from room sensor history",
+          "daylight_lux_level": "Manual daylight lux level override (0 = auto-learn from sensor history)"
         }
       }
     },

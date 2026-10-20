@@ -18,6 +18,8 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from ..const import (
     AREA_TYPE_INTERIOR,
     CONF_CLEAR_TIMEOUT,
+    CONF_DARK_LUX_FLOOR,
+    CONF_DAYLIGHT_LUX_LEVEL,
     CONF_ENABLED_FEATURES,
     CONF_EXCLUDE_ENTITIES,
     CONF_EXTENDED_TIMEOUT,
@@ -36,6 +38,7 @@ from ..const import (
     CONF_ICON,
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
+    CONF_LEARN_DAYLIGHT_LUX,
     CONF_LIGHT_CONTROL,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
@@ -87,6 +90,9 @@ async def test_form(hass: HomeAssistant) -> None:
         CONF_FAN_SUPPRESS_IN_SLEEP: False,
         CONF_MAX_BRIGHTNESS_LEVEL: 200,
         CONF_MIN_BRIGHTNESS_LEVEL: 100,
+        CONF_DARK_LUX_FLOOR: 10,
+        CONF_LEARN_DAYLIGHT_LUX: True,
+        CONF_DAYLIGHT_LUX_LEVEL: 0,
     }
     # assert len(mock_setup_entry.mock_calls) == 1
     await hass.async_block_till_done()
@@ -133,6 +139,9 @@ async def test_options(hass: HomeAssistant, config_entry: MockConfigEntry) -> No
         CONF_MQTT_ROOM_PRESENCE: False,
         CONF_MAX_BRIGHTNESS_LEVEL: 200,
         CONF_MIN_BRIGHTNESS_LEVEL: 100,
+        CONF_DARK_LUX_FLOOR: 10,
+        CONF_LEARN_DAYLIGHT_LUX: True,
+        CONF_DAYLIGHT_LUX_LEVEL: 0,
         "bright_entity": "",
         "sleep_entity": "",
     }
@@ -171,6 +180,9 @@ async def test_options_enable_advanced_lights(
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
         CONF_FAN_SUPPRESS_IN_SLEEP: False,
+        CONF_DARK_LUX_FLOOR: 10.0,
+        CONF_LEARN_DAYLIGHT_LUX: True,
+        CONF_DAYLIGHT_LUX_LEVEL: 0.0,
     }
 
     # submit form with options
@@ -238,6 +250,9 @@ async def test_options_enable_advanced_lights(
                 ],
                 CONF_ON_STATES: [STATE_ON, STATE_OPEN],
                 CONF_INCLUDE_ENTITIES: [],
+                CONF_DARK_LUX_FLOOR: 10,
+                CONF_LEARN_DAYLIGHT_LUX: True,
+                CONF_DAYLIGHT_LUX_LEVEL: 0,
             },
         },
         CONF_ICON: "mdi:texture-box",
@@ -245,6 +260,9 @@ async def test_options_enable_advanced_lights(
         CONF_MQTT_ROOM_PRESENCE: False,
         CONF_MIN_BRIGHTNESS_LEVEL: 100,
         CONF_MAX_BRIGHTNESS_LEVEL: 200,
+        CONF_DARK_LUX_FLOOR: 10,
+        CONF_LEARN_DAYLIGHT_LUX: True,
+        CONF_DAYLIGHT_LUX_LEVEL: 0,
         "bright_entity": "",
         "sleep_entity": "",
     }
@@ -282,6 +300,9 @@ async def test_options_enable_humidity(
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
         CONF_FAN_SUPPRESS_IN_SLEEP: False,
+        CONF_DARK_LUX_FLOOR: 10.0,
+        CONF_LEARN_DAYLIGHT_LUX: True,
+        CONF_DAYLIGHT_LUX_LEVEL: 0.0,
     }
 
     # submit form with options
@@ -335,6 +356,9 @@ async def test_options_enable_humidity(
         "sleep_entity": "",
         CONF_MAX_BRIGHTNESS_LEVEL: 200,
         CONF_MIN_BRIGHTNESS_LEVEL: 100,
+        CONF_DARK_LUX_FLOOR: 10,
+        CONF_LEARN_DAYLIGHT_LUX: True,
+        CONF_DAYLIGHT_LUX_LEVEL: 0,
     }
     await hass.async_block_till_done()
     await hass.config_entries.async_unload(config_entry.entry_id)

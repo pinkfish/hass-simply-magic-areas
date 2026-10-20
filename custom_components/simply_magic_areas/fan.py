@@ -35,7 +35,7 @@ from homeassistant.util import slugify
 
 from .base.entities import MagicEntity
 from .base.magic import ControlType, MagicArea
-from .config.area_state import AreaState
+from .config.area_state import AreaState, LightingProfile
 from .config.entity_names import EntityNames
 from .const import (
     ATTR_HUMIDITY_DELTA,
@@ -281,6 +281,16 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 )
             )
 
+        # Track local lighting profile sensor if configured
+        local_profile_sensor = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.LIGHTING_PROFILE
+        )
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [local_profile_sensor], self._sleep_state_change
+            )
+        )
+
         # Track sleep entity if configured
         sleep_conf = self.area.all_state_configs().get(AreaState.AREA_STATE_SLEEP)
         sleep_entity = (
@@ -293,7 +303,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 )
             )
 
-        # Track reference area state if configured
+        # Track reference area state and profile if configured
         ref_area = self.area.config.get(
             CONF_REFERENCE_BRIGHT_AREA,
             self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
@@ -304,10 +314,18 @@ class AreaFanGroup(MagicEntity, FanGroup):
             ref_state_entity = self.area.simply_magic_entity_id(
                 SENSOR_DOMAIN, EntityNames.STATE, area_name=ref_area
             )
-            if self.hass.states.get(ref_state_entity) is not None:
+            ref_profile_entity = self.area.simply_magic_entity_id(
+                SENSOR_DOMAIN, EntityNames.LIGHTING_PROFILE, area_name=ref_area
+            )
+            entities_to_track = [
+                e
+                for e in [ref_state_entity, ref_profile_entity]
+                if self.hass.states.get(e) is not None
+            ]
+            if entities_to_track:
                 self.async_on_remove(
                     async_track_state_change_event(
-                        self.hass, [ref_state_entity], self._sleep_state_change
+                        self.hass, entities_to_track, self._sleep_state_change
                     )
                 )
 
@@ -369,7 +387,9 @@ class AreaFanGroup(MagicEntity, FanGroup):
         ):
             return False
 
-        # 1. Current area sleep state or sleep entity
+        # 1. Current area lighting profile is sleep, or area state is sleep
+        if getattr(self.area, "lighting_profile", None) == LightingProfile.SLEEP:
+            return True
         if self.area.state == AreaState.AREA_STATE_SLEEP:
             return True
 
@@ -401,14 +421,27 @@ class AreaFanGroup(MagicEntity, FanGroup):
                             or area_obj.slug == ref_area
                             or area_obj.name == ref_area
                         )
-                        and area_obj.state == AreaState.AREA_STATE_SLEEP
+                        and (
+                            getattr(area_obj, "lighting_profile", None)
+                            == LightingProfile.SLEEP
+                            or area_obj.state == AreaState.AREA_STATE_SLEEP
+                        )
                     ):
                         return True
+            ref_profile_entity = self.area.simply_magic_entity_id(
+                SENSOR_DOMAIN, EntityNames.LIGHTING_PROFILE, area_name=ref_area
+            )
+            state_obj = self.hass.states.get(ref_profile_entity)
+            if state_obj and state_obj.state == LightingProfile.SLEEP:
+                return True
             ref_state_entity = self.area.simply_magic_entity_id(
                 SENSOR_DOMAIN, EntityNames.STATE, area_name=ref_area
             )
             state_obj = self.hass.states.get(ref_state_entity)
-            if state_obj and state_obj.state == AreaState.AREA_STATE_SLEEP:
+            if state_obj and state_obj.state in (
+                AreaState.AREA_STATE_SLEEP,
+                LightingProfile.SLEEP,
+            ):
                 return True
 
         return False
@@ -488,6 +521,21 @@ class AreaFanGroup(MagicEntity, FanGroup):
                         SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
                     )
                     state = self.hass.states.get(interior_sensor_id)
+                    if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                        try:
+                            return float(state.state)
+                        except (ValueError, TypeError):
+                            pass
+
+        # Fallback to any other interior area humidity sensor if available
+        if MODULE_DATA in self.hass.data:
+            for entry in self.hass.data[MODULE_DATA].values():
+                area = entry.get(DATA_AREA_OBJECT)
+                if area and not area.is_meta() and area.id != self.area.id:
+                    sensor_id = area.simply_magic_entity_id(
+                        SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
+                    )
+                    state = self.hass.states.get(sensor_id)
                     if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                         try:
                             return float(state.state)
@@ -594,33 +642,35 @@ class AreaFanGroup(MagicEntity, FanGroup):
             )
             self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
 
-        # 4. Falling Trend Check (Below DOWN_CUT_OFF)
+        # 4. Falling Trend Check (Standalone fallback when reference baseline is unavailable)
         trend_down_cutoff = humidity_feature_config.get(
             CONF_HUMIDITY_TREND_DOWN_CUT_OFF, DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF
         )
-        if trend_val < trend_down_cutoff:
+        if humidity_delta is None and trend_val < trend_down_cutoff:
             self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
 
         # 5. Rising Trend / Activation Check
         trend_up_cutoff = humidity_feature_config.get(
             CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF
         )
-        if trend_val >= trend_up_cutoff and not max_runtime_exceeded:
-            can_activate = True
+        delta_threshold = humidity_feature_config.get(
+            CONF_HUMIDITY_DELTA_THRESHOLD, DEFAULT_HUMIDITY_DELTA_THRESHOLD
+        )
 
-            # Differential check: require delta >= threshold if reference baseline is available
-            delta_threshold = humidity_feature_config.get(
-                CONF_HUMIDITY_DELTA_THRESHOLD, DEFAULT_HUMIDITY_DELTA_THRESHOLD
-            )
-            if humidity_delta is not None and humidity_delta < delta_threshold:
-                _LOGGER.debug(
-                    "%s: Humidity rising (%s) but delta (%s%%) < threshold (%s%%), rejecting activation",
-                    self.name,
-                    trend_val,
-                    humidity_delta,
-                    delta_threshold,
-                )
-                can_activate = False
+        activation_triggered = False
+        if not max_runtime_exceeded:
+            # Trigger A: Rapid rising trend (catches showers early)
+            if trend_val >= trend_up_cutoff and (
+                humidity_delta is None or humidity_delta >= delta_threshold
+            ):
+                activation_triggered = True
+
+            # Trigger B: Sustained elevated differential (warm baths, gradual steam accumulation)
+            if humidity_delta is not None and humidity_delta >= delta_threshold:
+                activation_triggered = True
+
+        if activation_triggered:
+            can_activate = True
 
             # Presence gating check: require recent occupancy if gate window is configured
             gate_time = humidity_feature_config.get(
@@ -642,12 +692,12 @@ class AreaFanGroup(MagicEntity, FanGroup):
                     self._attr_extra_state_attributes[ATTR_HUMIDITY_START_TS] = now_ts
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = True
 
-        # Determine whether fan should be on based on humidity_on and down trend
+        # Determine whether fan should be on based on humidity_on
         if self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
-            if trend_val > trend_down_cutoff:
-                fans_on = True
-            else:
+            if humidity_delta is None and trend_val <= trend_down_cutoff:
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+            else:
+                fans_on = True
         else:
             self._attr_extra_state_attributes.pop(ATTR_HUMIDITY_START_TS, None)
 

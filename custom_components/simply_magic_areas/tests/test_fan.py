@@ -473,6 +473,7 @@ async def test_fan_max_runtime_cutoff(
 
     assert len(calls) >= 1
     one_fan[0].turn_on()
+    await hass.async_block_till_done()
 
     fan_group = None
     for entity in hass.data["entity_components"]["fan"].entities:
@@ -657,7 +658,7 @@ async def test_fan_suppress_in_sleep_mode(
     one_motion[1].turn_on()
     await hass.async_block_till_done()
 
-    # 2. Trigger motion -> area enters sleep state
+    # 2. Trigger motion -> area enters occupied state with sleep lighting profile
     one_motion[0].turn_on()
     await hass.async_block_till_done()
     await asyncio.sleep(1)
@@ -666,7 +667,14 @@ async def test_fan_suppress_in_sleep_mode(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
     assert area_state_sensor is not None
-    assert area_state_sensor.state == "sleep"
+    assert area_state_sensor.state == "occupied"
+    assert area_state_sensor.attributes["lighting_profile"] == "sleep"
+
+    area_profile_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_kitchen"
+    )
+    assert area_profile_sensor is not None
+    assert area_profile_sensor.state == "sleep"
 
     # 3. Motion turns off -> wait for clear timeout (2s) to transition to extended
     one_motion[0].turn_off()
@@ -742,6 +750,75 @@ async def test_fan_suppress_in_sleep_dynamic_shutoff(
 
     # Fan must shut off immediately due to acoustic suppression
     assert len(calls_fan_off) >= 1
+
+
+async def test_fan_shower_lifecycle(
+    hass: HomeAssistant,
+    differential_humidity_config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_sensor_humidity: list[MockSensor],
+    _setup_differential_humidity: None,
+) -> None:
+    """Test realistic bathroom shower lifecycle: activation, equilibrium plateau, negative drying slope sustain, and baseline shutoff."""
+    calls_on = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+    calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
+
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+
+    # Step 1: Pre-shower baseline: room at 50%, reference at 50%
+    hass.states.async_set("sensor.reference_humidity", "50.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "50.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+    assert len(calls_on) == 0
+
+    # Step 2: Shower turns on -> rapid rise to 75% (delta = 25% >= 10% threshold)
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "75.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    assert len(calls_on) >= 1
+    assert fan_group._attr_extra_state_attributes.get("humidity_on") is True
+    one_fan[0].turn_on()
+    await hass.async_block_till_done()
+
+    # Step 3: Mid-shower saturated equilibrium: humidity at 78% (delta = 28%), derivative flatlines (0.0001)
+    calls_off.clear()
+    stats_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+    hass.states.async_set(stats_entity_id, "0.0001")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    # Fan MUST remain ON during saturated plateau
+    assert fan_group._attr_extra_state_attributes.get("humidity_on") is True
+    assert len(calls_off) == 0
+
+    # Step 4: Shower water turned off -> humidity begins falling (70%, delta = 20% > 3% shutoff)
+    # Derivative is strongly negative (-0.025 %/s) as steam begins evacuating
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "70.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(stats_entity_id, "-0.025")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    # CRITICAL: Fan MUST NOT shut off on negative slope while room is still wet!
+    assert fan_group._attr_extra_state_attributes.get("humidity_on") is True
+    assert len(calls_off) == 0
+
+    # Step 5: Exhaust completes, room reaches 52% (delta = 2% <= 3% shutoff threshold)
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "52.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(stats_entity_id, "-0.005")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    # Once back to ambient baseline, fan shuts off cleanly
+    assert fan_group._attr_extra_state_attributes.get("humidity_on") is False
+    assert len(calls_off) >= 1
+
 
 
 

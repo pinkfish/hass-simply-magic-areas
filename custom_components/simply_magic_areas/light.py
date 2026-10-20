@@ -38,7 +38,7 @@ from homeassistant.helpers.event import (
 
 from .base.entities import MagicEntity
 from .base.magic import ControlType, MagicArea, StateConfigData
-from .config.area_state import AreaState
+from .config.area_state import AreaState, LightingProfile
 from .config.entity_names import EntityNames
 from .const import (
     ATTR_LAST_UPDATE_FROM_ENTITY,
@@ -229,6 +229,17 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 self._area_state_change,
             )
         )
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass,
+                [
+                    self.area.simply_magic_entity_id(
+                        SENSOR_DOMAIN, EntityNames.LIGHTING_PROFILE
+                    )
+                ],
+                self._profile_change,
+            )
+        )
 
     ### State Change Handling
     def _area_state_change(self, event: Event[EventStateChangedData]) -> None:
@@ -260,13 +271,6 @@ class AreaLightGroup(MagicEntity, LightGroup):
             from_state,
         )
 
-        occupied_states = {
-            AreaState.AREA_STATE_OCCUPIED,
-            AreaState.AREA_STATE_BRIGHT,
-            AreaState.AREA_STATE_SLEEP,
-            AreaState.AREA_STATE_ACCENTED,
-        }
-
         if to_state == AreaState.AREA_STATE_CLEAR:
             self._turn_off_light()
             return
@@ -275,29 +279,15 @@ class AreaLightGroup(MagicEntity, LightGroup):
             _LOGGER.debug("%s: In manual mode, leaving lights as is", self.name)
             return
 
-        if to_state in occupied_states:
-            # If changing between occupied/substates (e.g. bright to sleep)
-            if from_state in occupied_states:
-                # If lights are on, update to the new substate values
-                if self.is_on:
-                    if self.area.has_configured_state(to_state):
-                        conf = self.area.state_config(to_state)
-                        if conf is not None:
-                            self._turn_on_light(conf)
-                else:
-                    _LOGGER.debug(
-                        "%s: Lights are off; maintaining state on transition from %s to %s",
-                        self.name,
-                        from_state,
-                        to_state,
-                    )
-                return
-
-            # Transition from non-occupied (clear/extended) to occupied/substate: turn on lights
-            if self.area.has_configured_state(to_state):
-                conf = self.area.state_config(to_state)
-                if conf is not None:
-                    self._turn_on_light(conf, force=True)
+        if to_state in (
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_BRIGHT,
+            AreaState.AREA_STATE_SLEEP,
+            AreaState.AREA_STATE_ACCENTED,
+        ):
+            conf = self._get_active_profile_config()
+            if conf is not None:
+                self._turn_on_light(conf, force=True)
             return
 
         if to_state == AreaState.AREA_STATE_EXTENDED:
@@ -308,6 +298,56 @@ class AreaLightGroup(MagicEntity, LightGroup):
             else:
                 self._turn_off_light()
             return
+
+    def _get_active_profile_config(self) -> StateConfigData | None:
+        """Resolve the active lighting profile configuration."""
+        profile = getattr(self.area, "lighting_profile", LightingProfile.STANDARD)
+        if self.area.has_configured_state(profile):
+            return self.area.state_config(profile)
+        if self.area.has_configured_state(AreaState.AREA_STATE_OCCUPIED):
+            return self.area.state_config(AreaState.AREA_STATE_OCCUPIED)
+        return None
+
+    def _profile_change(self, event: Event[EventStateChangedData]) -> None:
+        """Handle changes to the area's lighting profile."""
+        if event.data.get("new_state") is None:
+            return
+        new_profile = event.data["new_state"].state
+        old_profile = (
+            event.data["old_state"].state
+            if event.data.get("old_state") is not None
+            else None
+        )
+        if new_profile == old_profile:
+            return
+
+        _LOGGER.debug(
+            "%s: Lighting profile changed from %s to %s",
+            self.name,
+            old_profile,
+            new_profile,
+        )
+
+        occupied_states = {
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_BRIGHT,
+            AreaState.AREA_STATE_SLEEP,
+            AreaState.AREA_STATE_ACCENTED,
+        }
+
+        # Profile change only updates lights when area is occupied
+        if self.area.state in occupied_states:
+            if self.is_on:
+                conf = self._get_active_profile_config()
+                if conf is not None:
+                    self._turn_on_light(conf)
+            else:
+                _LOGGER.debug(
+                    "%s: Lights are off; maintaining state on profile change from %s to %s",
+                    self.name,
+                    old_profile,
+                    new_profile,
+                )
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
         new_state = event.data.get("new_state")
@@ -343,9 +383,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
             new_state.state == STATE_OFF
             and self.area.state in occupied_states
             and not self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, False)
-            and self.area.has_configured_state(self.area.state)
         ):
-            conf = self.area.state_config(self.area.state)
+            conf = self._get_active_profile_config()
             if conf is not None and conf.dim_level > 0:
                 _LOGGER.info(
                     "%s: Light turned off while area is %s, re-asserting turn on",

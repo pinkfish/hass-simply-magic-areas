@@ -123,33 +123,41 @@ async def test_direct_lux_threshold_and_hysteresis(
     await hass.async_block_till_done()
 
     state_sensor_id = f"{SENSOR_DOMAIN}.simply_magic_areas_state_{area_name}"
+    profile_sensor_id = f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_{area_name}"
 
     # 1. Initially clear
     assert hass.states.get(state_sensor_id).state == "clear"
+    assert hass.states.get(profile_sensor_id).state == "standard"
 
-    # 2. Motion triggered with lux = 200 (< threshold 300) -> state is occupied
+    # 2. Motion triggered with lux = 200 (< threshold 300) -> state is occupied, profile is standard
     motion_sensor.turn_on()
     await hass.async_block_till_done()
     await asyncio.sleep(0.1)
     assert hass.states.get(state_sensor_id).state == "occupied"
+    assert hass.states.get(profile_sensor_id).state == "standard"
 
-    # 3. Lux increases to 300 (>= threshold 300) -> state transitions to bright
+    # 3. Lux increases to 300 (>= threshold 300) -> profile transitions to bright, state remains occupied
     lux_sensor.set_state(300)
     await hass.async_block_till_done()
     await asyncio.sleep(0.1)
-    assert hass.states.get(state_sensor_id).state == "bright"
+    assert hass.states.get(state_sensor_id).state == "occupied"
+    assert hass.states.get(profile_sensor_id).state == "bright"
+    assert hass.states.get(state_sensor_id).attributes["lighting_profile"] == "bright"
 
     # 4. Lux drops to 285. Since it's already bright and 285 >= (300 - 25 = 275), hysteresis holds bright!
     lux_sensor.set_state(285)
     await hass.async_block_till_done()
     await asyncio.sleep(0.1)
-    assert hass.states.get(state_sensor_id).state == "bright"
+    assert hass.states.get(state_sensor_id).state == "occupied"
+    assert hass.states.get(profile_sensor_id).state == "bright"
 
-    # 5. Lux drops to 270 (< 275) -> below hysteresis margin, state drops back to occupied
+    # 5. Lux drops to 270 (< 275) -> below hysteresis margin, profile drops back to standard
     lux_sensor.set_state(270)
     await hass.async_block_till_done()
     await asyncio.sleep(0.1)
     assert hass.states.get(state_sensor_id).state == "occupied"
+    assert hass.states.get(profile_sensor_id).state == "standard"
+    assert hass.states.get(state_sensor_id).attributes["lighting_profile"] == "standard"
 
 
 async def test_reference_illuminance_sensor(
@@ -218,18 +226,22 @@ async def test_reference_illuminance_sensor(
     await hass.async_block_till_done()
 
     state_sensor_id = f"{SENSOR_DOMAIN}.simply_magic_areas_state_{area_name}"
+    profile_sensor_id = f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_{area_name}"
 
     motion_sensor.turn_on()
     await hass.async_block_till_done()
     await asyncio.sleep(0.1)
-    # Lux is 150 < 250 -> occupied
+    # Lux is 150 < 250 -> occupied, standard profile
     assert hass.states.get(state_sensor_id).state == "occupied"
+    assert hass.states.get(profile_sensor_id).state == "standard"
 
-    # External lux sensor rises to 260 >= 250 -> becomes bright
+    # External lux sensor rises to 260 >= 250 -> profile becomes bright
     external_lux_sensor.set_state(260)
     await hass.async_block_till_done()
     await asyncio.sleep(0.1)
-    assert hass.states.get(state_sensor_id).state == "bright"
+    assert hass.states.get(state_sensor_id).state == "occupied"
+    assert hass.states.get(profile_sensor_id).state == "bright"
+    assert hass.states.get(state_sensor_id).attributes["lighting_profile"] == "bright"
 
 
 async def test_reference_bright_area(
@@ -337,6 +349,8 @@ async def test_reference_bright_area(
 
     lr_state_id = f"{SENSOR_DOMAIN}.simply_magic_areas_state_{living_room_name}"
     hw_state_id = f"{SENSOR_DOMAIN}.simply_magic_areas_state_{hallway_name}"
+    lr_profile_id = f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_{living_room_name}"
+    hw_profile_id = f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_{hallway_name}"
 
     # Both occupied
     lr_motion.turn_on()
@@ -346,15 +360,19 @@ async def test_reference_bright_area(
 
     assert hass.states.get(lr_state_id).state == "occupied"
     assert hass.states.get(hw_state_id).state == "occupied"
+    assert hass.states.get(lr_profile_id).state == "standard"
+    assert hass.states.get(hw_profile_id).state == "standard"
 
-    # Living room bright switch turned ON -> Living room becomes bright
+    # Living room bright switch turned ON -> Living room profile becomes bright
     lr_bright_switch.turn_on()
     await hass.async_block_till_done()
     await asyncio.sleep(0.1)
 
-    assert hass.states.get(lr_state_id).state == "bright"
-    # Hallway inherits bright state from living_room reference area!
-    assert hass.states.get(hw_state_id).state == "bright"
+    assert hass.states.get(lr_state_id).state == "occupied"
+    assert hass.states.get(lr_profile_id).state == "bright"
+    # Hallway inherits bright profile from living_room reference area!
+    assert hass.states.get(hw_state_id).state == "occupied"
+    assert hass.states.get(hw_profile_id).state == "bright"
 
 
 async def test_light_illuminance_reference_sensor(

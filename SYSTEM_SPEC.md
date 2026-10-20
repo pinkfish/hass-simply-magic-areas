@@ -95,88 +95,116 @@ sequenceDiagram
 
 ---
 
-## 3. Core State Machine Engine (`AreaStateSensor`)
+## 3. Dual-Sensor Orthogonal State Architecture
 
-The area state is exposed as an enum sensor (`sensor.simply_magic_areas_state_<area_slug>`) backed by `SensorDeviceClass.ENUM`. The state machine operates on a two-tier hierarchy: **Main States** (governing area presence and automation lifecycle) and **Substates** (governing lighting levels and scenes while the area is occupied).
+To eliminate ambiguity between physical occupancy and contextual lighting scenes, Simply Magic Areas decouples environmental awareness into two distinct, orthogonal sensors for each area:
 
-### 3.1 Main States (Presence & Lifecycle)
+1. **Primary Area Presence Sensor (`sensor.simply_magic_areas_state_<area_slug>`)**:
+   - **Device Class**: `SensorDeviceClass.ENUM`
+   - **States**: `clear`, `occupied`, `extended`, `manual`
+   - **Responsibility**: Pure presence and automation lifecycle. Answers the fundamental question: *"Is a human present in this area?"*
+   - **Attributes**: In addition to presence attributes, exposes `lighting_profile` as an attribute for seamless backward compatibility.
 
-The main state defines whether the room is occupied or vacant, and whether automated control is enabled. **The `occupied` state is based entirely on the presence of the presence sensors in the room.**
+2. **Secondary Lighting Profile Sensor (`sensor.simply_magic_areas_lighting_profile_<area_slug>`)**:
+   - **Device Class**: `SensorDeviceClass.ENUM`
+   - **States**: `standard`, `sleep`, `bright`, `accented`
+   - **Responsibility**: Environmental and contextual scene profile. Answers the question: *"When illuminated, how should this room look?"*
+   - **Continuous Operation**: Evaluates continuously regardless of occupancy. A bedroom maintains the `sleep` profile all night long, whether empty (`clear`), active (`occupied`), or transitioning (`extended`).
+
+```mermaid
+flowchart LR
+    subgraph Sensors["Sensory Inputs"]
+        Motion["Motion / Presence / Media / Micro-Climate"]
+        Env["Lux / Solar / Sleep Entities / Accent Scenes"]
+    end
+
+    subgraph StateMachine["Dual-Sensor Engine"]
+        State["Presence Sensor<br/>(sensor.simply_magic_areas_state_<area>)<br/>[clear | occupied | extended | manual]"]
+        Profile["Lighting Profile Sensor<br/>(sensor.simply_magic_areas_lighting_profile_<area>)<br/>[standard | sleep | bright | accented]"]
+    end
+
+    subgraph Actuators["Actuators"]
+        Lights["Area Light Group<br/>(Power from State; Levels from Profile)"]
+        Fans["Area Fan Group<br/>(Ventilation from State; Sleep Suppression from Profile)"]
+    end
+
+    Motion --> State
+    Env --> Profile
+    State --> Actuators
+    Profile --> Actuators
+```
+
+### 3.1 Primary Presence States (`sensor.simply_magic_areas_state_<area>`)
+
+The presence state defines whether the room is occupied, clearing, or manually bypassed:
 
 | State | Identifier | Description |
 | :--- | :--- | :--- |
 | **Clear** | `clear` | Idle base state. No presence detected by presence sensors and all timeout buffers have expired. Automated lights turn off or dim to clear level. |
-| **Occupied** | `occupied` | Primary presence state. **Based entirely on active detection from presence sensors** (motion sensors, occupancy sensors, media playback, or room presence sensors). Acts as the parent container for lighting substates. |
+| **Occupied** | `occupied` | Primary presence state. **Based entirely on active detection from presence sensors** (motion sensors, occupancy sensors, media playback, or room presence sensors). |
 | **Extended** | `extended` | Transitionary timeout grace period after presence sensors cease detecting presence before reverting to `clear`. Keeps area ready or dimly lit for quick re-entry. |
 | **Manual** | `manual` | Override state entered when the area system control switch is turned OFF (`switch.simply_magic_areas_system_control_<area>`). Suspends all automated state transitions and device controls across the area. *(Note: Individual light manual override also transitions lights into a manual state for a configurable timeout; see Section 4.1).* |
 
 - **Self-Healing State Consistency Guard**: During startup or reload, `AreaStateSensor._validate_state_consistency()` confirms that if all presence sensors are off and no clear/extended timeout is active, any stale or orphaned occupied state is automatically corrected back to `clear`.
 
-### 3.2 Occupied Substates (Lighting Context Modifiers)
+### 3.2 Secondary Lighting Profiles (`sensor.simply_magic_areas_lighting_profile_<area>`)
 
-Substates (`sleep`, `bright`, `accented`) are contextual modifiers that take effect **only when the area is in the `occupied` main state**. They dictate what light fixtures turn on and what dimming levels to apply:
+Lighting profiles dictate which fixtures activate and what dimming levels or color temperatures to apply when the area is illuminated:
 
-| Substate | Identifier | Context & Lighting Behavior |
+| Profile | Identifier | Context & Lighting Behavior |
 | :--- | :--- | :--- |
-| **Standard Occupied** | `occupied` | Default active profile when no secondary context overrides apply. Activates standard task and ambient lighting at configured daytime/occupied brightness. |
+| **Standard** | `standard` | Default active profile when no secondary context overrides apply. Activates standard task and ambient lighting at configured daytime/occupied brightness. |
 | **Sleep** | `sleep` | Bedtime/nighttime mode is active (e.g., bed presence or night mode helper). Configures low-level pathway lighting or night-lights at minimal brightness. |
 | **Bright** | `bright` | High ambient lux / daylight threshold is active. Keeps lights off or dialed down to avoid redundant daytime illumination. |
 | **Accented** | `accented` | Accent entity is active (e.g. party mode, dinner scene, decorative lighting). Prioritizes accent and architectural lighting fixtures. |
 
-### 3.3 Substate Evaluation & Interaction with Main States
+### 3.3 Orthogonal Interaction Matrix
 
-Substates (`sleep`, `bright`, `accented`) control **what happens when the state is occupied in terms of what levels to set the lights at and which fixtures to activate**.
+The presence state and lighting profile operate concurrently. The matrix below defines actuator responses to their combinatorial states:
 
-> [!IMPORTANT]
-> **Substate Transition Rule for Lights:**
-> - When the contextual state changes (e.g. from `bright` to `sleep` at sunset or bedtime), the state of the lights **must stay as `occupied`, `clear`, `extended`, or `manual` and not change**.
-> - If the lights are currently ON (`occupied`), transitioning between substates (`sleep`, `bright`, `accented`) causes the lights to **immediately update to the new target values and fixtures**.
-> - If the lights are currently OFF (`clear`, `extended`, `manual`), transitioning between substates does **not** turn lights on; they remain off until presence is detected.
+| Presence State | Lighting Profile | Resulting Light Group State | Action & Actuator Behavior |
+| :--- | :--- | :--- | :--- |
+| **`clear`** | Any (`standard`, `sleep`, `bright`, `accented`) | OFF (or Clear Dim Level) | Lights remain off. Profile changes in empty rooms do NOT turn lights on. |
+| **`extended`** | Any | OFF (or Extended Dim Level) | Extended countdown proceeds. Exhaust fans ventilate (unless sleep suppressed). |
+| **`manual`** | Any | Unchanged | Automation completely suspended. Human switch controls respected. |
+| **`occupied`** | `standard` | ON | Standard task/ambient fixtures illuminated at default daytime dim level. |
+| **`occupied`** | `sleep` | ON | Low-level pathway/night-light fixtures illuminated at sleep dim level (e.g. 10–30%). |
+| **`occupied`** | `bright` | OFF (or Daylight Dim Level) | Ambient daylight suffices; lights kept off or dialed to zero to save energy. |
+| **`occupied`** | `accented` | ON | Architectural accent fixtures illuminated at configured accent dim level. |
+| **`occupied`** | Dynamic change (e.g. `standard` ➔ `sleep` at bedtime) | ON (Immediately Updated) | If lights are ON, transitioning profile **immediately cross-fades** to new fixtures and brightness. |
 
-#### State & Lighting Transition Matrix
-
-| Current Main State | Current Light State | Context / Substate Change | Resulting Main State | Resulting Light State | Action Taken |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`clear`** | OFF | `bright` ➔ `sleep` (or any substate change) | `clear` (Unchanged) | OFF (Unchanged) | None. Lights remain off. No unprompted illumination. |
-| **`extended`** | OFF / Dim | `bright` ➔ `sleep` (or any substate change) | `extended` (Unchanged) | Unchanged | None. Extended countdown continues unaffected. |
-| **`manual`** | Any | `bright` ➔ `sleep` (or any substate change) | `manual` (Unchanged) | Unchanged | None. Automation remains completely suspended. |
-| **`occupied`** | ON | `bright` ➔ `sleep` | `occupied` (Unchanged) | ON (Unchanged) | **Immediately updates** brightness to sleep level & activates sleep fixtures. |
-| **`occupied`** | ON | `sleep` ➔ `bright` | `occupied` (Unchanged) | ON (or OFF if 0% lux cutoff) | **Immediately updates** brightness to daylight level (or off if 0%). |
-| **`occupied`** | ON | `occupied` ➔ `accented` | `occupied` (Unchanged) | ON (Unchanged) | **Immediately updates** to accent scene/dim levels and accent fixtures. |
-| **`clear`** ➔ **`occupied`** | OFF | Motion / Presence detected in `sleep` mode | `occupied` | ON | Turns ON lights configured specifically for `sleep` mode. |
-
-### 3.4 State Transition Diagram
+### 3.4 State & Profile Lifecycle Diagrams
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Clear
+    direction TB
 
-    Clear --> Occupied: Presence Detected
-    Occupied --> Extended: Presence Ceases (Clear Timeout Elapsed)
-    Extended --> Clear: Extended Timeout Elapsed
-    Extended --> Occupied: Presence Re-detected
-
-    state Occupied {
-        [*] --> StandardOccupied
-        note right of StandardOccupied: Standard lights & daytime dim level
+    state "Presence Lifecycle (sensor.state)" as PresenceMachine {
+        [*] --> Clear
+        Clear --> Occupied: Presence Detected
+        Occupied --> Extended: Sensors Clear (clear_timeout elapsed)
+        Extended --> Clear: extended_timeout elapsed
+        Extended --> Occupied: Motion Re-detected (Immediate Reactivity)
         
-        StandardOccupied --> Sleep: Sleep Entity Active
-        StandardOccupied --> Bright: High Lux / Bright Entity Active
-        StandardOccupied --> Accented: Accent Entity Active
-
-        Sleep --> StandardOccupied: Sleep Entity Inactive
-        Bright --> StandardOccupied: Bright Entity Inactive
-        Accented --> StandardOccupied: Accent Entity Inactive
+        Clear --> Manual: System Switch OFF
+        Occupied --> Manual: System Switch OFF
+        Extended --> Manual: System Switch OFF
+        Manual --> Clear: System Switch ON
     }
 
-    state AnyMainState {
-        Clear
-        Occupied
-        Extended
+    state "Lighting Profile Evaluation (sensor.lighting_profile)" as ProfileMachine {
+        [*] --> Standard
+        Standard --> Bright: Ambient Lux >= Threshold (or bright_entity ON)
+        Bright --> Standard: Ambient Lux < (Threshold - Hysteresis)
+        
+        Standard --> Sleep: Sleep Entity ON
+        Bright --> Sleep: Sleep Entity ON
+        Sleep --> Standard: Sleep Entity OFF
+        
+        Standard --> Accented: Accent Entity ON
+        Sleep --> Accented: Accent Entity ON
+        Accented --> Standard: Accent Entity OFF
     }
-
-    AnyMainState --> Manual: System Control Switch turned OFF
-    Manual --> Clear: System Control Switch turned ON
 ```
 
 ### 3.5 Safe & Reliable Occupancy Derivation ("Fail-Safe" Occupancy Engineering)
@@ -324,21 +352,26 @@ flowchart TD
   - **Dynamic State Reactivity**: If sleep activates while the fan is actively running in `extended` mode, the fan is immediately turned OFF. Conversely, if sleep mode ends while the room remains in `extended` mode, the fan automatically turns ON for the remaining extended timeout.
   - **Humidity Extraction Precedence**: Steam and moisture extraction take safety precedence over acoustic suppression. If differential humidity triggers ventilation (`humidity_on: true`), the fan activates regardless of sleep state to protect against mold and condensation buildup.
 - **Enhanced Humidity & Climate Differential Ventilation**:
-  - **Reference Baseline Comparison (`CONF_REFERENCE_HUMIDITY_SENSOR`)**:
-    - Compares room humidity against a reference entity (e.g., climate entity `current_humidity`, outdoor weather humidity sensor, hallway sensor, or `Interior` Meta-Area average).
-    - **Activation Delta (`CONF_HUMIDITY_DELTA_THRESHOLD`, default: `10.0%`)**: Area humidity must be at least 10% above the reference humidity baseline to trigger shower ventilation, preventing whole-house weather shifts from triggering exhaust fans.
-    - **Shut-off Delta (`CONF_HUMIDITY_DELTA_SHUTOFF`, default: `3.0%`)**: The fan turns off once room humidity returns to within 3% of the reference baseline, even if ambient weather keeps absolute indoor humidity elevated.
-  - **Shower Spike vs. Weather Gradient Recognition**:
-    - Continuously monitors rate-of-rise via `MagicStatisticsSensor` using Home Assistant's `change_second` metric (`%/s`). Fast steam generation from a shower (exceeding `CONF_HUMIDITY_TREND_UP_CUT_OFF`, default `0.03 %/s` ≈ 108%/hr) is distinguished from gradual weather drift (+1–3%/hr).
-  - **Deadband Flatline Deactivation (Fix for `!= 0.0`)**:
-    - Replaces exact `0.0` derivative checks with a configurable deadband `CONF_HUMIDITY_DEADBAND` (default: `0.001 %/s` ≈ 3.6 %/hr).
-    - When the derivative hovers within `[-0.001, +0.001] %/s` continuously for `CONF_HUMIDITY_ZERO_WAIT_TIME` (default: `900s` / 15 minutes), the humidity curve is confirmed stabilized and the fan turns off.
-  - **Falling Trend Deactivation**:
-    - The fan turns off if rate-of-change drops below `CONF_HUMIDITY_TREND_DOWN_CUT_OFF` (default: `-0.003 %/s` ≈ -10.8 %/hr), confirming rapid drying.
+  - Detailed physical and empirical calculations, rate-of-change models, and shower dynamics are codified in the [Bathroom Humidity Dynamics & Adaptive Shower Fan Control Design Document](bathroom_humidity_fan_design.md).
+  - **Autonomous Multi-Tier Reference Resolution (Zero-Config)**:
+    - To eliminate mandatory configuration while guaranteeing differential accuracy, Simply Magic Areas resolves baseline indoor humidity automatically:
+      1. Configured `reference_humidity_sensor` (if explicitly provided).
+      2. Parent `Interior` Meta-Area humidity sensor (automatic average of indoor rooms).
+      3. Any neighboring interior area humidity sensor (e.g. hallway, living room).
+      4. Area climate entity `current_humidity` attribute.
+  - **Dual-Trigger Shower Activation**:
+    - **Trigger A (Dynamic Rapid Rise)**: Rate-of-change from `MagicStatisticsSensor` (`change_second`) exceeds `CONF_HUMIDITY_TREND_UP_CUT_OFF` (default: `0.03 %/s` ≈ 1.8%/min) with humidity above baseline, turning the fan on within the first 30–60 seconds of a shower to prevent mirror fogging and wall condensation.
+    - **Trigger B (Sustained Differential Delta)**: If room humidity exceeds baseline by `CONF_HUMIDITY_DELTA_THRESHOLD` (default: `10.0%`), the fan activates regardless of whether the derivative is spiking (protecting against soaking baths, gradual warm moisture build-up, or delayed wireless sensor intervals).
+  - **Drying Slope Sustain Invariant (Negative Trend Protection)**:
+    - While moisture extraction is active (`humidity_on: true`), a falling derivative ($dRH/dt < 0$) indicates successful moisture exhaustion and **does NOT shut off the fan** while `humidity_delta > delta_shutoff`.
+    - The fan runs continuously throughout the negative drying slope until the moisture is actually cleared.
+  - **Shut-off Criteria & Safety Boundaries**:
+    - **Baseline Normalization**: The fan shuts off once room humidity returns to `humidity_delta <= delta_shutoff` (default: `3.0%` above reference), verifying that dry ambient conditions have been restored.
+    - **Deadband Flatline Deactivation**: Replaces brittle `0.0` checks with a configurable deadband `CONF_HUMIDITY_DEADBAND` (default: `0.001 %/s` ≈ 3.6 %/hr). When the derivative hovers within `[-0.001, +0.001] %/s` continuously for `CONF_HUMIDITY_ZERO_WAIT_TIME` (default: `900s` / 15 minutes), the plateau is confirmed stabilized and the fan turns off.
+    - **Standalone Fallback**: If no baseline reference entity exists in the home, falling trend (`trend_val < trend_down_cutoff`) or deadband flatline terminates extraction.
+    - **Safety Maximum Runtime (`CONF_HUMIDITY_MAX_FAN_TIME`, default: `3600s` / 60 minutes)**: Hard safety cutoff capping continuous humidity-driven fan runtime to protect fan motors and prevent excessive conditioned air exhaustion.
   - **Presence Gating (`CONF_HUMIDITY_PRESENCE_GATE_TIME`, default: `0s` / disabled)**:
-    - Prevents ambient climate changes from triggering fans in empty bathrooms when no shower has occurred. When configured (> 0), humidity activation is only allowed if the room is currently occupied or was occupied within the gate window.
-  - **Safety Maximum Runtime (`CONF_HUMIDITY_MAX_FAN_TIME`, default: `3600s` / 60 minutes)**:
-    - A hard safety cutoff capping continuous humidity-driven fan runtime to prevent fan motor burnout or continuous conditioned air exhaustion under sustained weather events.
+    - Optional gating window ensuring humidity spikes only activate fans if the area is currently occupied or was occupied within the gate window, filtering out weather infiltration in vacant homes.
   - **State Precedence & Area State Synchronization**:
     - While the room is actively in `extended` state, the fan will not be turned off prematurely by humidity normalization. Similarly, humidity-driven ventilation stays active across `extended` -> `clear` transitions until all shutoff criteria or timeouts are met.
     - `AreaStateSensor` synchronizes its occupancy derivation and attributes (`humidity_on`, `humidity_delta`, `humidity_zero_ts`) with the differential threshold, deadband, and presence gating so climate humidity drift does not falsely force areas into `occupied`.
@@ -400,6 +433,7 @@ flowchart TD
 | Domain | Entity Translation Key | Entity ID Format | Unique ID Format |
 | :--- | :--- | :--- | :--- |
 | `sensor` | `state` | `sensor.simply_magic_areas_state_<area_slug>` | `simply_magic_areas_state_<area_slug>` |
+| `sensor` | `lighting_profile` | `sensor.simply_magic_areas_lighting_profile_<area_slug>` | `simply_magic_areas_lighting_profile_<area_slug>` |
 | `switch` | `system_control` | `switch.simply_magic_areas_system_control_<area_slug>` | `simply_magic_areas_system_control_<area_slug>` |
 | `light` | `light` | `light.simply_magic_areas_light_<area_slug>` | `simply_magic_areas_light_<area_slug>` |
 | `fan` | `fan` | `fan.simply_magic_areas_fan_<area_slug>` | `simply_magic_areas_fan_<area_slug>` |

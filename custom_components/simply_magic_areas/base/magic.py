@@ -30,7 +30,7 @@ from homeassistant.helpers.entity_registry import (
 )
 from homeassistant.util import slugify
 
-from ..config.area_state import AreaState
+from ..config.area_state import AreaState, LightingProfile
 from ..config.entity_names import EntityNames
 from ..const import (
     ALL_LIGHT_ENTITIES,
@@ -125,7 +125,8 @@ class MagicArea(object):  # noqa: UP004
 
         self.last_changed: int = datetime.now(UTC)  # type: ignore
         self.state: AreaState = AreaState.AREA_STATE_CLEAR
-        self._state_config: dict[AreaState, StateConfigData] = {}
+        self.lighting_profile: LightingProfile = LightingProfile.STANDARD
+        self._state_config: dict[AreaState | LightingProfile | str, StateConfigData] = {}
 
         self.loaded_platforms: list[str] = []
 
@@ -162,17 +163,17 @@ class MagicArea(object):  # noqa: UP004
         area_type = "Meta-Area" if self.is_meta() else "Area"
         _LOGGER.debug("%s: %s initialized", self.slug, area_type)  # type: ignore
 
-    def state_config(self, state: AreaState) -> StateConfigData | None:
-        """Return the light entity config for the current state."""
-        return self._state_config[state]
-
-    def all_state_configs(self) -> dict[AreaState, StateConfigData]:
+    def all_state_configs(self) -> dict[AreaState | LightingProfile | str, StateConfigData]:
         """Return the dictionary with all the currently configured state configs."""
         return self._state_config
 
-    def has_configured_state(self, state: AreaState) -> bool:
+    def has_configured_state(self, state: AreaState | LightingProfile | str) -> bool:
         """If the area has the specified configured state."""
         return state in self._state_config
+
+    def state_config(self, state: AreaState | LightingProfile | str) -> StateConfigData | None:
+        """Return the state config for the given state if configured."""
+        return self._state_config.get(state)
 
     def has_feature(self, feature: str) -> bool:
         """If the area has the specified feature."""
@@ -420,6 +421,22 @@ class MagicArea(object):  # noqa: UP004
                 ),
                 lights=lights,
             )
+            if lg.enable_state == AreaState.AREA_STATE_OCCUPIED:
+                self._state_config[LightingProfile.STANDARD] = self._state_config[
+                    lg.enable_state
+                ]
+            elif lg.enable_state == AreaState.AREA_STATE_BRIGHT:
+                self._state_config[LightingProfile.BRIGHT] = self._state_config[
+                    lg.enable_state
+                ]
+            elif lg.enable_state == AreaState.AREA_STATE_SLEEP:
+                self._state_config[LightingProfile.SLEEP] = self._state_config[
+                    lg.enable_state
+                ]
+            elif lg.enable_state == AreaState.AREA_STATE_ACCENTED:
+                self._state_config[LightingProfile.ACCENTED] = self._state_config[
+                    lg.enable_state
+                ]
 
     def is_control_enabled(self, control_type: ControlType) -> bool:
         """If the area has controled turned on for simply magic areas."""

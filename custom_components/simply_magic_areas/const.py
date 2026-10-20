@@ -30,7 +30,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers import config_validation as cv
 
-from .config.area_state import AreaState
+from .config.area_state import AreaState, LightingProfile
 from .config.light_entity_config import LightEntityConf
 
 DOMAIN = "simply_magic_areas"
@@ -50,6 +50,7 @@ DATA_DEVICE_LISTENER = "device_listener"
 
 # Attributes
 ATTR_STATE = "state"
+ATTR_LIGHTING_PROFILE = "lighting_profile"
 ATTR_AREAS = "areas"
 ATTR_ACTIVE_AREAS = "active_areas"
 ATTR_TYPE = "type"
@@ -64,6 +65,7 @@ ATTR_ACTIVE_SENSORS = "active_sensors"
 ATTR_LAST_ACTIVE_SENSORS = "last_active_sensors"
 ATTR_PRESENCE_SENSORS = "presence_sensors"
 ATTR_LAST_UPDATE_FROM_ENTITY: str = "last_update_from_entity"
+DEFAULT_LIGHTING_PROFILE = LightingProfile.STANDARD
 
 # Icons
 ICON_SYSTEM_CONTROL = "mdi:head-cog"

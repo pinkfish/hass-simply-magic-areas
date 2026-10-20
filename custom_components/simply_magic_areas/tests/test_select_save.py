@@ -13,7 +13,7 @@ from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from ..config.area_state import AreaState
+from ..config.area_state import AreaState, LightingProfile
 from ..const import DOMAIN
 from .mocks import MockFan, MockSensor
 
@@ -41,14 +41,30 @@ async def test_save_select(
         "state": AreaState.AREA_STATE_CLEAR,
         "type": "interior",
         "device_class": "enum",
+        "lighting_profile": LightingProfile.STANDARD,
+        "clear_timeout": 3,
+        "extended_timeout": 2,
         "options": [
             AreaState.AREA_STATE_CLEAR,
             AreaState.AREA_STATE_OCCUPIED,
             AreaState.AREA_STATE_EXTENDED,
-            AreaState.AREA_STATE_BRIGHT,
-            AreaState.AREA_STATE_SLEEP,
-            AreaState.AREA_STATE_ACCENTED,
             AreaState.AREA_STATE_MANUAL,
+        ],
+    }
+
+    area_profile_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_kitchen"
+    )
+    assert area_profile_sensor is not None
+    assert area_profile_sensor.state == LightingProfile.STANDARD
+    assert area_profile_sensor.attributes == {
+        "friendly_name": "kitchen kitchen Lighting Profile (Simply Magic Areas)",
+        "device_class": "enum",
+        "options": [
+            LightingProfile.STANDARD,
+            LightingProfile.SLEEP,
+            LightingProfile.BRIGHT,
+            LightingProfile.ACCENTED,
         ],
     }
 

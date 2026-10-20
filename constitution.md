@@ -43,3 +43,10 @@ This document establishes the governing development standards, architectural inv
 ## 5. Testing & Quality Gate
 - **100% Test Stability**: All changes must be backed by automated unit and integration tests under `custom_components/simply_magic_areas/tests/`.
 - **Zero Linter Warnings**: Every commit must pass `ruff check` with zero errors or warnings.
+
+---
+
+## 6. Continuous Specification & Task Invariant
+- **Always Update the Spec**: Any change to features, configurations, entities, state models, or integration behavior must immediately be updated in [SYSTEM_SPEC.md](SYSTEM_SPEC.md). Code and specification must never drift out of sync.
+- **Synchronous Task Tracking**: Tasks, roadmaps, and progress must be maintained synchronously in [tasks.md](tasks.md).
+

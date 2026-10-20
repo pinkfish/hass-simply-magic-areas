@@ -23,7 +23,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
-from .config.area_state import AreaState
+from .config.area_state import AreaState, LightingProfile
 from .config.entity_names import EntityNames
 from .const import (
     CONF_FEATURE_AREA_AWARE_MEDIA_PLAYER,
@@ -240,7 +240,10 @@ class AreaAwareMediaPlayer(MagicEntity, MediaPlayerEntity):
 
             # Check sleep
             if (
-                area_binary_sensor_state.state == AreaState.AREA_STATE_SLEEP
+                (
+                    area_binary_sensor_state.state == AreaState.AREA_STATE_SLEEP
+                    or getattr(area, "lighting_profile", None) == LightingProfile.SLEEP
+                )
                 and AreaState.AREA_STATE_SLEEP not in notification_states
             ):
                 continue

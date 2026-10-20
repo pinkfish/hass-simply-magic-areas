@@ -158,12 +158,22 @@
       "state": {
         "name": "{area_name} State (Simply Magic Areas)",
         "state": {
-          "sleep": "Sleep",
-          "occupied": "Occupied",
-          "bright": "Bright",
           "clear": "Clear",
-          "accented": "Accented",
-          "manual": "Manual"
+          "occupied": "Occupied",
+          "extended": "Extended",
+          "manual": "Manual",
+          "sleep": "Sleep",
+          "bright": "Bright",
+          "accented": "Accented"
+        }
+      },
+      "lighting_profile": {
+        "name": "{area_name} Lighting Profile (Simply Magic Areas)",
+        "state": {
+          "standard": "Standard",
+          "sleep": "Sleep",
+          "bright": "Bright",
+          "accented": "Accented"
         }
       },
       "humidity_statistics": {

@@ -31,6 +31,7 @@ from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_utc_time_change
 
+from .base.area_lighting_profile_sensor import AreaLightingProfileSensor
 from .base.area_state_sensor import AreaStateSensor
 from .base.entities import MagicEntity
 from .base.magic import MagicArea
@@ -164,6 +165,13 @@ async def async_setup_entry(
         area.slug,
     )
     aggregates.append(AreaStateSensor(area))
+
+    # Make the area lighting profile sensor.
+    _LOGGER.debug(
+        "%s: Creating lighting profile sensor",
+        area.slug,
+    )
+    aggregates.append(AreaLightingProfileSensor(area))
 
     cleanup_magic_entities(area.hass, aggregates, existing_sensor_entities)
 

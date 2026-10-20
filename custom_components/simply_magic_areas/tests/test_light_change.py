@@ -156,7 +156,12 @@ async def test_light_entity_change(
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_binary_sensor.state == "sleep"
+    area_profile_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_kitchen"
+    )
+    assert area_binary_sensor.state == "occupied"
+    assert area_binary_sensor.attributes["lighting_profile"] == "sleep"
+    assert area_profile_sensor.state == "sleep"
 
     # Set the bright entity on.
     one_motion[1].turn_off()
@@ -166,7 +171,12 @@ async def test_light_entity_change(
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_binary_sensor.state == "bright"
+    area_profile_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_kitchen"
+    )
+    assert area_binary_sensor.state == "occupied"
+    assert area_binary_sensor.attributes["lighting_profile"] == "bright"
+    assert area_profile_sensor.state == "bright"
 
     # Set the accented entity on.
     one_motion[2].turn_off()
@@ -176,7 +186,12 @@ async def test_light_entity_change(
     area_binary_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_binary_sensor.state == "accented"
+    area_profile_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_kitchen"
+    )
+    assert area_binary_sensor.state == "occupied"
+    assert area_binary_sensor.attributes["lighting_profile"] == "accented"
+    assert area_profile_sensor.state == "accented"
 
 
 @pytest.mark.parametrize(
@@ -373,7 +388,12 @@ async def test_substate_transition_lights_off_vs_on(
     area_state_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_state_sensor.state == "sleep"
+    area_profile_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_kitchen"
+    )
+    assert area_state_sensor.state == "occupied"
+    assert area_state_sensor.attributes["lighting_profile"] == "sleep"
+    assert area_profile_sensor.state == "sleep"
     assert len(calls) == 1
     # Sleep mode sets dim_level 30% -> 76 brightness
     assert calls[-1].data["brightness"] == 76
@@ -387,7 +407,12 @@ async def test_substate_transition_lights_off_vs_on(
     area_state_sensor = hass.states.get(
         f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
     )
-    assert area_state_sensor.state == "bright"
+    area_profile_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_kitchen"
+    )
+    assert area_state_sensor.state == "occupied"
+    assert area_state_sensor.attributes["lighting_profile"] == "bright"
+    assert area_profile_sensor.state == "bright"
     # Lights update to bright values (dim level 0% -> turns off)
     assert len(calls) >= 1
 

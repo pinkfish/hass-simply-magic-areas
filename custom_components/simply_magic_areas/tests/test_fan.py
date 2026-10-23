@@ -23,6 +23,15 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from ..const import (
+    ATTR_HISTORICAL_HUMIDITY_BASELINE,
+    ATTR_HISTORICAL_SHOWER_COUNT,
+    ATTR_HISTORICAL_SHOWER_DELTA_PEAK,
+    ATTR_HISTORICAL_SHOWER_RATE_PEAK,
+    ATTR_HUMIDITY_DELTA,
+    ATTR_HUMIDITY_ON,
+    ATTR_LEARNED_HUMIDITY_DELTA_SHUTOFF,
+    ATTR_LEARNED_HUMIDITY_DELTA_THRESHOLD,
+    ATTR_LEARNED_HUMIDITY_TREND_UP_CUTOFF,
     CONF_ENABLED_FEATURES,
     CONF_FAN_SUPPRESS_IN_SLEEP,
     CONF_FEATURE_HUMIDITY,
@@ -818,6 +827,183 @@ async def test_fan_shower_lifecycle(
     # Once back to ambient baseline, fan shuts off cleanly
     assert fan_group._attr_extra_state_attributes.get("humidity_on") is False
     assert len(calls_off) >= 1
+
+
+async def test_fan_historical_humidity_baseline_tracking(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_sensor_humidity: list[MockSensor],
+    _setup_integration: None,
+) -> None:
+    """Test autonomous resting ambient humidity baseline tracking when area is idle."""
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+
+    stats_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+
+    # Step 1: Initial idle reading initializes the baseline
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "45.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.0")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert (
+        fan_group._attr_extra_state_attributes.get(ATTR_HISTORICAL_HUMIDITY_BASELINE)
+        == 45.0
+    )
+
+    # Step 2: Second idle reading adapts baseline via EMA (alpha = 0.05)
+    # Expected: 45.0 * 0.95 + 46.0 * 0.05 = 45.05
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "46.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.001")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    baseline = fan_group._attr_extra_state_attributes.get(
+        ATTR_HISTORICAL_HUMIDITY_BASELINE
+    )
+    assert baseline == 45.05
+
+    # Step 3: Standalone delta computation without reference sensor
+    # At 52% room humidity, autonomous delta = 52.0 - 45.05 = 6.95%
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "52.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.002")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    delta = fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_DELTA)
+    assert delta == round(52.0 - 45.05, 1)
+
+
+async def test_fan_historical_shower_learning_and_threshold_adaptation(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_sensor_humidity: list[MockSensor],
+    _setup_integration: None,
+) -> None:
+    """Test that shower events update historical metrics and adapt trigger/shutoff thresholds."""
+    calls_on = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+    calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
+
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+
+    stats_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+
+    # Step 1: Establish steady baseline at 40%
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "40.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.0")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HISTORICAL_SHOWER_COUNT) == 0
+    initial_delta_thresh = fan_group._attr_extra_state_attributes.get(
+        ATTR_LEARNED_HUMIDITY_DELTA_THRESHOLD
+    )
+    initial_trend_thresh = fan_group._attr_extra_state_attributes.get(
+        ATTR_LEARNED_HUMIDITY_TREND_UP_CUTOFF
+    )
+    assert initial_delta_thresh == 10.0
+    assert initial_trend_thresh == 0.03
+
+    # Step 2: Trigger strong shower event: delta climbs to +35% (75%), trend reaches 0.12 %/s
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "75.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.12")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert len(calls_on) >= 1
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is True
+    one_fan[0].turn_on()
+
+    # Step 3: Conclude shower event: humidity falls back to 42% (delta = 2.0% <= shutoff)
+    hass.states.async_set(
+        one_sensor_humidity[0].entity_id,
+        "42.0",
+        attributes={"unit_of_measurement": "%"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "-0.01")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is False
+    assert len(calls_off) >= 1
+
+    # Verify historical metrics adapted
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HISTORICAL_SHOWER_COUNT) == 1
+    learned_delta_peak = fan_group._attr_extra_state_attributes.get(
+        ATTR_HISTORICAL_SHOWER_DELTA_PEAK
+    )
+    learned_rate_peak = fan_group._attr_extra_state_attributes.get(
+        ATTR_HISTORICAL_SHOWER_RATE_PEAK
+    )
+
+    # Learned peaks should have moved upward from default (15.0 delta, 0.033 rate) towards observed (35.0, 0.12)
+    # EMA update: 0.75 * 15.0 + 0.25 * 35.0 = 20.0
+    assert learned_delta_peak == 20.0
+    assert learned_rate_peak > 0.033
+
+    # Verify derived dynamic thresholds:
+    # delta_threshold = 0.40 * 20.0 = 8.0%
+    # delta_shutoff = 0.25 * 8.0 = 2.0%
+    # trend_up_cutoff = min(0.040, 0.40 * rate_peak) = 0.040
+    adapted_delta_thresh = fan_group._attr_extra_state_attributes.get(
+        ATTR_LEARNED_HUMIDITY_DELTA_THRESHOLD
+    )
+    assert adapted_delta_thresh == 8.0
+    assert (
+        fan_group._attr_extra_state_attributes.get(
+            ATTR_LEARNED_HUMIDITY_TREND_UP_CUTOFF
+        )
+        == 0.04
+    )
+    assert (
+        fan_group._attr_extra_state_attributes.get(ATTR_LEARNED_HUMIDITY_DELTA_SHUTOFF)
+        == 2.0
+    )
+
 
 
 

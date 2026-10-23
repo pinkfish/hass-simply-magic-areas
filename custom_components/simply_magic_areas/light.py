@@ -50,6 +50,7 @@ from .const import (
     ATTR_MANUAL_TIMEOUT_TS,
     CONF_DARK_LUX_FLOOR,
     CONF_DAYLIGHT_LUX_LEVEL,
+    CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_MANUAL_TIMEOUT,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
@@ -463,8 +464,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
         luminesence = self._get_illuminance()
 
         # Determine effective floor and daylight levels
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
         dark_lux_floor = float(
             getattr(self.area, "dark_lux_floor", None)
+            or adv_conf.get(CONF_DARK_LUX_FLOOR)
             or self.area.config.get(CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR)
         )
         is_windowless = bool(getattr(self.area, "is_windowless", False))
@@ -483,7 +486,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
             )
         else:
             manual_daylight = float(
-                self.area.config.get(CONF_DAYLIGHT_LUX_LEVEL, 0)
+                adv_conf.get(CONF_DAYLIGHT_LUX_LEVEL)
+                or self.area.config.get(CONF_DAYLIGHT_LUX_LEVEL, 0)
             )
             if manual_daylight > (dark_lux_floor + 5.0):
                 lower_lux = dark_lux_floor

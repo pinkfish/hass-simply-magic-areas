@@ -37,6 +37,7 @@ from ..const import (
     ATTR_CLEAR_TIMEOUT_TS,
     ATTR_EXTENDED_TIMEOUT,
     ATTR_EXTENDED_TIMEOUT_TS,
+    ATTR_HUMIDITY_ON,
     ATTR_LAST_ACTIVE_SENSORS,
     ATTR_LAST_OFF_TIME,
     ATTR_LIGHTING_PROFILE,
@@ -80,7 +81,6 @@ from .magic import ControlType, MagicArea
 
 _LOGGER = logging.getLogger(__name__)
 
-ATTR_HUMIDITY_ON = "humidity_on"
 ATTR_HUMIDITY_ZERO_TS = "humidity_zero_ts"
 
 

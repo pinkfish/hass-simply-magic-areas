@@ -38,9 +38,17 @@ from .base.magic import ControlType, MagicArea
 from .config.area_state import AreaState, LightingProfile
 from .config.entity_names import EntityNames
 from .const import (
+    ATTR_HISTORICAL_HUMIDITY_BASELINE,
+    ATTR_HISTORICAL_SHOWER_COUNT,
+    ATTR_HISTORICAL_SHOWER_DELTA_PEAK,
+    ATTR_HISTORICAL_SHOWER_RATE_PEAK,
     ATTR_HUMIDITY_DELTA,
+    ATTR_HUMIDITY_ON,
     ATTR_HUMIDITY_START_TS,
     ATTR_LAST_UPDATE_FROM_ENTITY,
+    ATTR_LEARNED_HUMIDITY_DELTA_SHUTOFF,
+    ATTR_LEARNED_HUMIDITY_DELTA_THRESHOLD,
+    ATTR_LEARNED_HUMIDITY_TREND_UP_CUTOFF,
     ATTR_MANUAL_CONTROL,
     ATTR_MANUAL_TIMEOUT_TS,
     ATTR_REFERENCE_HUMIDITY,
@@ -55,6 +63,7 @@ from .const import (
     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
+    CONF_LEARN_SHOWER_HUMIDITY,
     CONF_MANUAL_TIMEOUT,
     CONF_REFERENCE_BRIGHT_AREA,
     CONF_REFERENCE_HUMIDITY_SENSOR,
@@ -68,6 +77,7 @@ from .const import (
     DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
     DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
     DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
+    DEFAULT_LEARN_SHOWER_HUMIDITY,
     DEFAULT_MANUAL_TIMEOUT,
     DOMAIN,
     META_AREA_INTERIOR,
@@ -77,7 +87,6 @@ from .util import call_service_non_blocking
 
 _LOGGER = logging.getLogger(__name__)
 ATTR_FANS: str = "fans"
-ATTR_HUMIDITY_ON: str = "humidity_on"
 ATTR_HUMIDITY_ZERO_TS: str = "humidity_zero_ts"
 
 
@@ -161,10 +170,26 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self._controled_by_entity = True
         self._last_occupied_ts: float | None = None
 
+        # Historical humidity learning attributes
+        self._historical_baseline_humidity: float | None = None
+        self._historical_shower_count: int = 0
+        self._historical_shower_delta_peak: float = 15.0
+        self._historical_shower_rate_peak: float = 0.033
+        self._current_shower_rate_peak: float = 0.0
+        self._current_shower_delta_peak: float = 0.0
+        self._current_shower_start_baseline: float | None = None
+
         # Add static attributes
         self.last_update_from_entity: bool = False
         self._attr_extra_state_attributes[ATTR_FANS] = self._entity_ids
         self._attr_extra_state_attributes[ATTR_LAST_UPDATE_FROM_ENTITY] = False
+
+    @property
+    def is_on(self) -> bool:
+        """Return true if fan is on."""
+        if self._attr_is_on is not None:
+            return self._attr_is_on
+        return super().is_on
 
     @property
     def icon(self) -> str:
@@ -199,6 +224,34 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_START_TS] = (
                     last_state.attributes[ATTR_HUMIDITY_START_TS]
                 )
+            if ATTR_HISTORICAL_HUMIDITY_BASELINE in last_state.attributes:
+                try:
+                    self._historical_baseline_humidity = float(
+                        last_state.attributes[ATTR_HISTORICAL_HUMIDITY_BASELINE]
+                    )
+                except (ValueError, TypeError):
+                    pass
+            if ATTR_HISTORICAL_SHOWER_COUNT in last_state.attributes:
+                try:
+                    self._historical_shower_count = int(
+                        last_state.attributes[ATTR_HISTORICAL_SHOWER_COUNT]
+                    )
+                except (ValueError, TypeError):
+                    pass
+            if ATTR_HISTORICAL_SHOWER_DELTA_PEAK in last_state.attributes:
+                try:
+                    self._historical_shower_delta_peak = float(
+                        last_state.attributes[ATTR_HISTORICAL_SHOWER_DELTA_PEAK]
+                    )
+                except (ValueError, TypeError):
+                    pass
+            if ATTR_HISTORICAL_SHOWER_RATE_PEAK in last_state.attributes:
+                try:
+                    self._historical_shower_rate_peak = float(
+                        last_state.attributes[ATTR_HISTORICAL_SHOWER_RATE_PEAK]
+                    )
+                except (ValueError, TypeError):
+                    pass
             if ATTR_MANUAL_CONTROL in last_state.attributes:
                 is_manual = bool(last_state.attributes[ATTR_MANUAL_CONTROL])
                 if is_manual:
@@ -545,39 +598,139 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
     def _humidity_fan_control(self) -> None:
         fans_on: bool = False
-        humidity_trend = self.hass.states.get(
-            self.area.simply_magic_entity_id(
-                SENSOR_DOMAIN,
-                EntityNames.HUMIDITY_STATISTICS,
-            )
+        trend_entity = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN,
+            EntityNames.HUMIDITY_STATISTICS,
         )
-        if (
-            humidity_trend is None
-            or humidity_trend.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+        humidity_trend = self.hass.states.get(trend_entity)
+        trend_val = 0.0
+        if humidity_trend is not None and humidity_trend.state not in (
+            STATE_UNAVAILABLE,
+            STATE_UNKNOWN,
         ):
-            return
+            try:
+                trend_val = float(humidity_trend.state)
+            except (ValueError, TypeError):
+                trend_val = 0.0
 
         humidity_feature_config = self.area.feature_config(CONF_FEATURE_HUMIDITY)
-        trend_val = float(humidity_trend.state)
         now_ts = datetime.now(UTC).timestamp()
 
-        # Compute differential baseline if available
+        learn_shower = humidity_feature_config.get(
+            CONF_LEARN_SHOWER_HUMIDITY, DEFAULT_LEARN_SHOWER_HUMIDITY
+        )
+
+        # Determine effective thresholds (autonomous learned vs explicit override)
+        user_trend_up = humidity_feature_config.get(
+            CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF
+        )
+        user_delta_thresh = humidity_feature_config.get(
+            CONF_HUMIDITY_DELTA_THRESHOLD, DEFAULT_HUMIDITY_DELTA_THRESHOLD
+        )
+        user_delta_shutoff = humidity_feature_config.get(
+            CONF_HUMIDITY_DELTA_SHUTOFF, DEFAULT_HUMIDITY_DELTA_SHUTOFF
+        )
+
+        trend_up_cutoff = user_trend_up
+        delta_threshold = user_delta_thresh
+        delta_shutoff = user_delta_shutoff
+
+        if learn_shower and self._historical_shower_count > 0:
+            if user_trend_up == DEFAULT_HUMIDITY_TREND_UP_CUT_OFF:
+                trend_up_cutoff = max(
+                    0.010, min(0.040, 0.40 * self._historical_shower_rate_peak)
+                )
+            if user_delta_thresh == DEFAULT_HUMIDITY_DELTA_THRESHOLD:
+                delta_threshold = max(
+                    4.0, min(12.0, 0.40 * self._historical_shower_delta_peak)
+                )
+            if user_delta_shutoff == DEFAULT_HUMIDITY_DELTA_SHUTOFF:
+                delta_shutoff = max(1.5, min(4.0, 0.25 * delta_threshold))
+
+        # Baseline & differential calculations
         area_humidity = self._get_area_humidity()
         ref_humidity = self._get_reference_humidity()
+
+        # Update historical resting baseline when fan is not forced by humidity and room is idle
+        if (
+            not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            and area_humidity is not None
+            and abs(trend_val) < trend_up_cutoff
+        ):
+            if self._historical_baseline_humidity is None:
+                self._historical_baseline_humidity = area_humidity
+            elif area_humidity <= (self._historical_baseline_humidity + 5.0):
+                self._historical_baseline_humidity = round(
+                    0.95 * self._historical_baseline_humidity + 0.05 * area_humidity, 2
+                )
+
+        # Compute differential baseline if available
         humidity_delta: float | None = None
-        if area_humidity is not None and ref_humidity is not None:
-            humidity_delta = area_humidity - ref_humidity
-            self._attr_extra_state_attributes[ATTR_HUMIDITY_DELTA] = round(
-                humidity_delta, 1
-            )
-            self._attr_extra_state_attributes[ATTR_REFERENCE_HUMIDITY] = round(
-                ref_humidity, 1
-            )
-        else:
+        if area_humidity is not None:
+            if ref_humidity is not None:
+                humidity_delta = area_humidity - ref_humidity
+                self._attr_extra_state_attributes[ATTR_REFERENCE_HUMIDITY] = round(
+                    ref_humidity, 1
+                )
+            elif (
+                learn_shower
+                and self._historical_baseline_humidity is not None
+            ):
+                humidity_delta = area_humidity - self._historical_baseline_humidity
+                self._attr_extra_state_attributes[ATTR_REFERENCE_HUMIDITY] = round(
+                    self._historical_baseline_humidity, 1
+                )
+
+            if humidity_delta is not None:
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_DELTA] = round(
+                    humidity_delta, 1
+                )
+        if humidity_delta is None:
             self._attr_extra_state_attributes.pop(ATTR_HUMIDITY_DELTA, None)
             self._attr_extra_state_attributes.pop(ATTR_REFERENCE_HUMIDITY, None)
 
-        # 1. Deadband Flatline Detection (replaces strict != 0.0)
+        # Track in-progress shower metrics
+        if self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
+            self._current_shower_rate_peak = max(
+                self._current_shower_rate_peak, trend_val
+            )
+            if humidity_delta is not None:
+                self._current_shower_delta_peak = max(
+                    self._current_shower_delta_peak, humidity_delta
+                )
+            elif (
+                area_humidity is not None
+                and self._current_shower_start_baseline is not None
+            ):
+                self._current_shower_delta_peak = max(
+                    self._current_shower_delta_peak,
+                    max(0.0, area_humidity - self._current_shower_start_baseline),
+                )
+
+        def _conclude_shower_event() -> None:
+            if not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
+                return
+            self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+            if (
+                self._current_shower_delta_peak >= 4.0
+                or self._current_shower_rate_peak >= 0.010
+            ):
+                self._historical_shower_delta_peak = round(
+                    0.75 * self._historical_shower_delta_peak
+                    + 0.25 * max(self._current_shower_delta_peak, 4.0),
+                    2,
+                )
+                self._historical_shower_rate_peak = round(
+                    0.75 * self._historical_shower_rate_peak
+                    + 0.25 * max(self._current_shower_rate_peak, 0.010),
+                    4,
+                )
+                self._historical_shower_count += 1
+            self._current_shower_rate_peak = 0.0
+            self._current_shower_delta_peak = 0.0
+            self._current_shower_start_baseline = None
+
+        # 1. Deadband Flatline Detection
         deadband = humidity_feature_config.get(
             CONF_HUMIDITY_DEADBAND, DEFAULT_HUMIDITY_DEADBAND
         )
@@ -602,7 +755,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
                     zero_time,
                     wait_time,
                 )
-                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+                _conclude_shower_event()
 
         # 2. Maximum Fan Runtime Check (Safety Timeout)
         max_runtime_exceeded = False
@@ -622,13 +775,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
                     self.name,
                     max_fan_time,
                 )
-                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+                _conclude_shower_event()
                 max_runtime_exceeded = True
 
         # 3. Reference Delta Shutoff Check
-        delta_shutoff = humidity_feature_config.get(
-            CONF_HUMIDITY_DELTA_SHUTOFF, DEFAULT_HUMIDITY_DELTA_SHUTOFF
-        )
         if (
             humidity_delta is not None
             and self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
@@ -640,33 +790,36 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 humidity_delta,
                 delta_shutoff,
             )
-            self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+            _conclude_shower_event()
 
-        # 4. Falling Trend Check (Standalone fallback when reference baseline is unavailable)
+        # 4. Falling Trend Check (Standalone fallback when reference delta is unavailable)
         trend_down_cutoff = humidity_feature_config.get(
             CONF_HUMIDITY_TREND_DOWN_CUT_OFF, DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF
         )
         if humidity_delta is None and trend_val < trend_down_cutoff:
-            self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+            _conclude_shower_event()
 
         # 5. Rising Trend / Activation Check
-        trend_up_cutoff = humidity_feature_config.get(
-            CONF_HUMIDITY_TREND_UP_CUT_OFF, DEFAULT_HUMIDITY_TREND_UP_CUT_OFF
-        )
-        delta_threshold = humidity_feature_config.get(
-            CONF_HUMIDITY_DELTA_THRESHOLD, DEFAULT_HUMIDITY_DELTA_THRESHOLD
-        )
-
         activation_triggered = False
         if not max_runtime_exceeded:
             # Trigger A: Rapid rising trend (catches showers early)
+            # Requires exceeding the resting shutoff noise floor (Delta H > delta_shutoff)
+            # If explicit reference sensor is configured, respect differential threshold gating.
             if trend_val >= trend_up_cutoff and (
-                humidity_delta is None or humidity_delta >= delta_threshold
+                (humidity_delta is None or humidity_delta > delta_shutoff)
+                and (
+                    ref_humidity is None
+                    or (humidity_delta is not None and humidity_delta >= delta_threshold)
+                )
             ):
                 activation_triggered = True
 
             # Trigger B: Sustained elevated differential (warm baths, gradual steam accumulation)
             if humidity_delta is not None and humidity_delta >= delta_threshold:
+                activation_triggered = True
+
+            # Trigger C: High absolute limit failsafe
+            if area_humidity is not None and area_humidity >= 80.0:
                 activation_triggered = True
 
         if activation_triggered:
@@ -690,16 +843,55 @@ class AreaFanGroup(MagicEntity, FanGroup):
             if can_activate:
                 if not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
                     self._attr_extra_state_attributes[ATTR_HUMIDITY_START_TS] = now_ts
+                    self._current_shower_rate_peak = trend_val
+                    self._current_shower_delta_peak = (
+                        humidity_delta if humidity_delta is not None else 0.0
+                    )
+                    self._current_shower_start_baseline = (
+                        self._historical_baseline_humidity or area_humidity
+                    )
+                else:
+                    self._current_shower_rate_peak = max(
+                        self._current_shower_rate_peak, trend_val
+                    )
+                    if humidity_delta is not None:
+                        self._current_shower_delta_peak = max(
+                            self._current_shower_delta_peak, humidity_delta
+                        )
                 self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = True
 
         # Determine whether fan should be on based on humidity_on
         if self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
             if humidity_delta is None and trend_val <= trend_down_cutoff:
-                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+                _conclude_shower_event()
             else:
                 fans_on = True
         else:
             self._attr_extra_state_attributes.pop(ATTR_HUMIDITY_START_TS, None)
+
+        # Expose historical and learned state attributes
+        if self._historical_baseline_humidity is not None:
+            self._attr_extra_state_attributes[ATTR_HISTORICAL_HUMIDITY_BASELINE] = (
+                self._historical_baseline_humidity
+            )
+        self._attr_extra_state_attributes[ATTR_HISTORICAL_SHOWER_COUNT] = (
+            self._historical_shower_count
+        )
+        self._attr_extra_state_attributes[ATTR_HISTORICAL_SHOWER_DELTA_PEAK] = (
+            self._historical_shower_delta_peak
+        )
+        self._attr_extra_state_attributes[ATTR_HISTORICAL_SHOWER_RATE_PEAK] = (
+            self._historical_shower_rate_peak
+        )
+        self._attr_extra_state_attributes[ATTR_LEARNED_HUMIDITY_DELTA_THRESHOLD] = (
+            round(delta_threshold, 1)
+        )
+        self._attr_extra_state_attributes[ATTR_LEARNED_HUMIDITY_TREND_UP_CUTOFF] = (
+            round(trend_up_cutoff, 4)
+        )
+        self._attr_extra_state_attributes[ATTR_LEARNED_HUMIDITY_DELTA_SHUTOFF] = (
+            round(delta_shutoff, 1)
+        )
 
         _LOGGER.debug(
             "Fans on %s (humidity_on: %s)",
@@ -713,6 +905,8 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 self._turn_off_fan()
         else:
             self._turn_off_fan()
+
+        self.schedule_update_ha_state()
 
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
         old_state = event.data.get("old_state")
@@ -744,6 +938,8 @@ class AreaFanGroup(MagicEntity, FanGroup):
             STATE_OFF,
         ]:
             return
+
+        self._attr_is_on = new_state.state == STATE_ON
 
         if self.last_update_from_entity:
             self.last_update_from_entity = False
@@ -781,6 +977,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         _LOGGER.debug("%s: Turning on fans", self.name)
         self.last_update_from_entity = True
+        self._attr_is_on = True
         service_data = {
             ATTR_ENTITY_ID: self.entity_id,
         }
@@ -796,6 +993,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             return
         _LOGGER.debug("%s: Turning fan off", self.name)
         self.last_update_from_entity = True
+        self._attr_is_on = False
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         call_service_non_blocking(
             self.hass, FAN_DOMAIN, SERVICE_TURN_OFF, service_data

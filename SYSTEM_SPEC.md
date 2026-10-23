@@ -15,7 +15,9 @@ A guiding invariant of Simply Magic Areas is **Convention Over Configuration**: 
   - *Automatic Daylight / Illuminance Detection*: Rooms automatically derive their daytime/bright state using local illuminance sensors; if none exist, they dynamically borrow illuminance from an adjacent referenced room, the parent meta-area average, or solar sun elevation (`sun.sun`) without requiring manual daylight helper configuration.
   - *Automatic Differential Humidity Baselines*: En-suite and bathroom ventilation automatically pairs local humidity against interior baseline averages or climate sensors if an explicit reference entity is omitted.
   - *Automated Presence Sensor Fusion*: Native motion, occupancy, and presence sensors assigned to an area are fused into a unified presence tracker with zero manual mapping.
-- **Sensible Human-Centric Defaults**: All timeouts, deadbands, thresholds, and hysteresis bands are pre-tuned based on empirical real-world dwelling use. Advanced options exist strictly for optional customization, never as prerequisites for basic operation.
+- **Sensible Human-Centric Defaults & Radical Simplicity**:
+  - **Adaptive by Default**: Complex calibration is eliminated from the user journey. Both **Adaptive Lighting** (`learn_daylight_lux`) and **Adaptive Ventilation** (`learn_shower_humidity`) are **always enabled by default** (`default: True`). The system autonomously learns room-specific lux baselines and shower humidity signatures from sensor history without any setup.
+  - **Simple Setup with Advanced Overrides Only**: The basic area configuration form contains only essential high-level intent (e.g. Area Type, Timeouts, Light Control, Fan Control). Detailed numerical calibrations, threshold overrides, and options to disable adaptive learning (`learn_daylight_lux`, `learn_shower_humidity`, `dark_lux_floor`, `daylight_lux_level`, and humidity rate cutoffs) are strictly encapsulated within dedicated **Advanced Settings** (`advanced_light_groups` and `humidity` feature configs). Everyday users never have to configure numerical thresholds.
 
 ---
 
@@ -309,6 +311,7 @@ flowchart TD
 - **Windowless Space Detection**: Rooms that consistently read at or below $L_{floor}$ during solar midday when artificial lights are off are automatically categorized as windowless (`ATTR_IS_WINDOWLESS: true`). Entering occupants are guaranteed 100% illumination without false suppression from exterior daytime conditions.
 
 #### 3.6.2 Autonomous Historical Daylight Baseline Learning (`CONF_LEARN_DAYLIGHT_LUX`)
+- Detailed photometric, empirical, and mathematical models are codified in the [Adaptive Lux & Historical Daylight Learning Design Document](designs/adaptive_lux_lighting_design.md).
 - **Hardware Sensor Variance Mitigation**: Real-world residential lux sensors exhibit massive variances (300%–500% hardware skew, differing window orientations, tinted glass). Hardcoded static thresholds cause north-facing rooms to never register daylight and south-facing rooms to extinguish lights prematurely.
 - **Uncontaminated Ambient Sampling**: During daytime hours (`sun.sun == above_horizon`), whenever artificial lights in the area are completely **OFF**, `AreaLightingProfileSensor` samples natural ambient daylight without fixture back-scatter.
 - **Asymmetric Peak & Seasonal Filter**:
@@ -380,7 +383,7 @@ flowchart TD
   - **Dynamic State Reactivity**: If sleep activates while the fan is actively running in `extended` mode, the fan is immediately turned OFF. Conversely, if sleep mode ends while the room remains in `extended` mode, the fan automatically turns ON for the remaining extended timeout.
   - **Humidity Extraction Precedence**: Steam and moisture extraction take safety precedence over acoustic suppression. If differential humidity triggers ventilation (`humidity_on: true`), the fan activates regardless of sleep state to protect against mold and condensation buildup.
 - **Enhanced Humidity & Climate Differential Ventilation**:
-  - Detailed physical and empirical calculations, rate-of-change models, and shower dynamics are codified in the [Bathroom Humidity Dynamics & Adaptive Shower Fan Control Design Document](bathroom_humidity_fan_design.md).
+  - Detailed physical and empirical calculations, rate-of-change models, and shower dynamics are codified in the [Bathroom Humidity Dynamics & Adaptive Shower Fan Control Design Document](designs/bathroom_humidity_fan_design.md).
   - **Autonomous Multi-Tier Reference Resolution (Zero-Config)**:
     - To eliminate mandatory configuration while guaranteeing differential accuracy, Simply Magic Areas resolves baseline indoor humidity automatically:
       1. Configured `reference_humidity_sensor` (if explicitly provided).
@@ -403,10 +406,37 @@ flowchart TD
   - **State Precedence & Area State Synchronization**:
     - While the room is actively in `extended` state, the fan will not be turned off prematurely by humidity normalization. Similarly, humidity-driven ventilation stays active across `extended` -> `clear` transitions until all shutoff criteria or timeouts are met.
     - `AreaStateSensor` synchronizes its occupancy derivation and attributes (`humidity_on`, `humidity_delta`, `humidity_zero_ts`) with the differential threshold, deadband, and presence gating so climate humidity drift does not falsely force areas into `occupied`.
+  - **Autonomous Historical Humidity & Adaptive Shower Signature Learning (`CONF_LEARN_SHOWER_HUMIDITY`)**:
+    - Detailed physical, thermodynamic, and mathematical models are codified in the [Adaptive Humidity & Historical Shower Signature Learning Design Document](designs/adaptive_humidity_shower_design.md).
+    - **Problem Solved**: Sensor placement variations (ceiling vs. vanity vs. wall outlet) and bathroom volumes cause empirical peak rates of rise ($(dRH/dt)_{peak}$) to vary by over an order of magnitude ($0.03\text{--}0.35\ \%/\text{s}$) and peak humidity deltas ($\Delta H_{peak}$) to range from $8\%$ to $45\%$. Static hardcoded thresholds cause false triggers in small half-baths or failure to detect showers in large master ensuites.
+    - **Autonomous Ambient Baseline Tracking ($H_{base}$)**:
+      - Whenever the room is idle ($|dRH/dt| < \text{trend\_up\_cutoff}$ and $RH_{room} \le H_{base} + 5.0\%$), the controller samples the ambient background humidity and updates $H_{base}$ via Exponential Moving Average:
+        $$H_{base}^{(t+1)} = (1 - \alpha_{base}) \cdot H_{base}^{(t)} + \alpha_{base} \cdot RH_{sample} \quad (\alpha_{base} = 0.05)$$
+      - Eliminates requirement for an external reference humidity sensor. If no external sensor is configured, $\Delta H = RH_{room} - H_{base}$.
+    - **Empirical Shower Signature Learning**:
+      - During active shower extraction sessions, the controller continuously tracks the peak derivative reached ($(dRH/dt)_{peak, event}$) and peak delta reached ($\Delta H_{peak, event}$).
+      - Upon session conclusion, historical peak metrics are adapted via EMA ($\alpha_{shower} = 0.30$):
+        $$\Delta H_{peak} \leftarrow (1 - \alpha_{shower}) \cdot \Delta H_{peak} + \alpha_{shower} \cdot \Delta H_{peak, event}$$
+        $$(dRH/dt)_{peak} \leftarrow (1 - \alpha_{shower}) \cdot (dRH/dt)_{peak} + \alpha_{shower} \cdot (dRH/dt)_{peak, event}$$
+    - **Dynamic Threshold Adaptation**:
+      - If historical learning is enabled (`learn_shower_humidity: true`), thresholds automatically scale to match the room's empirical signature:
+        $$\Delta H_{trigger} = \max\left(5.0\%, 0.50 \cdot \Delta H_{peak}\right)$$
+        $$Trend_{trigger} = \max\left(0.015\ \%/\text{s}, 0.50 \cdot (dRH/dt)_{peak}\right)$$
+        $$\Delta H_{shutoff} = \max\left(2.0\%, 0.25 \cdot \Delta H_{trigger}\right)$$
+    - **Failsafe Boundaries & Noise Floor Guard**:
+      - **Noise Floor Rejection**: Trigger A (rapid derivative rise) requires $\Delta H > \Delta H_{shutoff}$ before activating, rejecting sensor jitter or minor ambient perturbations when the absolute delta is tiny.
+      - **Absolute Ceiling Guard**: If $RH_{room} \ge 80\%$, the fan unconditionally activates regardless of trend rate or baseline differential, guaranteeing anti-mold protection during extreme condensation.
   - **Exposed Fan State Attributes**:
     - `humidity_on`: Boolean indicating whether humidity ventilation is active.
-    - `humidity_delta`: Floating-point difference between room humidity and reference humidity.
-    - `reference_humidity`: Current value of the reference baseline sensor.
+    - `humidity_delta`: Floating-point difference between room humidity and baseline.
+    - `reference_humidity`: Current value of the reference or learned baseline sensor.
+    - `historical_humidity_baseline`: Idle ambient baseline humidity ($H_{base}$).
+    - `historical_shower_count`: Cumulative number of showers observed and adapted.
+    - `historical_shower_delta_peak`: Learned typical peak humidity rise ($\Delta H_{peak}$).
+    - `historical_shower_rate_peak`: Learned typical peak rate of rise ($(dRH/dt)_{peak}$).
+    - `learned_humidity_delta_threshold`: Dynamically scaled activation delta threshold.
+    - `learned_humidity_trend_up_cutoff`: Dynamically scaled activation derivative threshold.
+    - `learned_humidity_delta_shutoff`: Dynamically scaled normalization recovery shutoff delta.
     - `humidity_start_ts`: Epoch timestamp when current humidity ventilation session began.
     - `humidity_zero_ts`: Epoch timestamp when humidity derivative entered the stationary deadband.
     - `max_runtime_exceeded`: Safety flag set when the fan is stopped due to exceeding `humidity_max_fan_time`.
@@ -476,30 +506,34 @@ flowchart TD
 
 ## 6. Configuration & Feature Schema
 
-### 6.1 Core Config Flow Options
-
+### 6.1 Basic Area Configuration (`area_config` / `OPTIONS_AREA`)
 > [!TIP]
-> **Zero-Config Guarantee:** Every configuration option below is strictly optional. All settings are pre-configured with production-grade defaults, allowing Simply Magic Areas to operate fully autonomously immediately upon installation without requiring user tuning.
+> **Radical Simplicity:** The basic setup presents only essential intent. All adaptive daylight learning and shower humidity learning algorithms run autonomously out of the box with zero user configuration required.
 
 - `type`: Area classification (`interior`, `exterior`, `meta`).
 - `clear_timeout`: Seconds of sensor inactivity before transitioning `occupied` -> `extended` (default: `60s`).
 - `extended_timeout`: Seconds of sensor inactivity before transitioning `extended` -> `clear` (default: `120s`).
-- `manual_timeout`: Seconds to remain in manual override mode when a light is manually adjusted before returning to automatic control (default: `60s`).
-- `fan_suppress_in_sleep`: Suppresses exhaust fan operation during `extended` state when sleep mode is active (default: `False`).
-- `update_interval`: Periodic heartbeat re-evaluation interval (default: `60s`).
+- `icon`: Icon for the area.
+- `light_control`: Enable automatic lighting automation for this area (default: `True`).
+- `fan_control`: Enable automatic exhaust fan automation for this area (default: `True`).
+- `fan_suppress_in_sleep`: Suppress exhaust fan operation during `extended` state when sleep mode is active (default: `False`).
+- `mqtt_room`: Enable MQTT room presence tracking (default: `False`).
 
-### 6.2 Feature Flags (`CONF_ENABLED_FEATURES`)
-- `advanced_light_groups`: Enables scene-driven brightness and entity controls for lights.
-- `fan_control`: Enables automatic occupancy and humidity-based fan operation.
-- `climate_control`: Enables climate group entity and presence-based temperature setpoint coordination.
-- `media_player_groups`: Enables area speaker synchronization.
-- `area_aware_media_player`: Enables global dynamic media routing (Global Meta-Area only).
-- `cover_groups`: Enables cover grouping by device class.
-- `aggregation`: Enables numeric/binary sensor grouping.
-- `health`: Enables distress/problem aggregation for environmental safety.
-- `humidity`: Enables humidity rate-of-change statistics sensor.
+### 6.2 Advanced Options & Feature Overrides
 
-### 6.3 Fan & Humidity Control Options (`CONF_FEATURE_HUMIDITY`)
+Advanced calibration and overrides are strictly encapsulated in dedicated advanced feature menus:
+
+#### 6.2.1 Advanced Light Groups (`CONF_FEATURE_ADVANCED_LIGHT_GROUPS`)
+- `learn_daylight_lux`: Autonomously learn the daylight lux baseline from room sensor history (default: `True`). Toggle to `False` to turn off adaptive lighting.
+- `dark_lux_floor`: Ambient lux at or below which room is dark and lights always turn on (default: `10` lx).
+- `daylight_lux_level`: Manual daylight baseline override in lux (default: `0` = auto-learn from sensor history).
+- `include_entities` / `exclude_entities`: Explicit entity inclusion or exclusion lists.
+- `update_interval`: Heartbeat re-evaluation interval (default: `60s`).
+- `on_states`, `presence_device_platforms`, `presence_sensor_device_class`: Custom presence sensor definitions.
+- Light scenes: Custom dim levels and entity assignments for `occupied`, `sleep`, `bright`, `accented`, `clear`, and `extended` states.
+
+#### 6.2.2 Advanced Ventilation & Humidity (`CONF_FEATURE_HUMIDITY`)
+- `learn_shower_humidity`: Autonomously learn shower humidity signatures and baseline from room history (default: `True`). Toggle to `False` to disable adaptive fan learning and enforce hardcoded boundaries.
 - `reference_humidity_sensor`: Entity ID of baseline humidity (climate entity, outdoor weather, hallway, or interior average).
 - `humidity_delta_threshold`: Minimum humidity % above reference to trigger ventilation (default: `10.0%`).
 - `humidity_delta_shutoff`: Delta % above reference below which the fan turns off (default: `3.0%`).

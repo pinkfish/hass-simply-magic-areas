@@ -24,7 +24,8 @@
         "data": {
           "group_creation": "Creation of groups for sensors and media players",
           "climate_groups": "Create climate groups",
-          "advanced_light_groups": "Advanced light group options",
+          "advanced_light_groups": "Advanced light & illuminance options",
+          "humidity": "Advanced ventilation & humidity options",
           "area_aware_media_player": "Area aware media player",
           "health": "Create health sensors",
           "presence_hold": "Create presence hold switch"
@@ -64,13 +65,16 @@
       },
       "feature_conf_advanced_light_groups": {
         "title": "Advanced light states",
-        "description": "More settings for controlling the lights.",
+        "description": "More settings for controlling the lights and illuminance.",
         "data": {
           "include_entities": "Include entities to this area",
           "exclude_entities": "Exclude entities from being analyzed",
           "presence_sensor_device_class": "Presence sensors device classes",
           "presence_device_platforms": "Platforms to be used for presence sensing",
           "on_states": "Sensor states that indicate presence",
+          "dark_lux_floor": "Dark Lux Floor: ambient lux at or below which room is dark and lights always turn on",
+          "learn_daylight_lux": "Autonomously learn the daylight lux baseline from room sensor history",
+          "daylight_lux_level": "Manual daylight lux level override (0 = auto-learn from sensor history)",
           "bright_state_check": "State of bright state entity (for on)",
           "bright_lights": "The lights to control in the bright mode",
           "sleep_state_check": "State of sleep state entity (for on)",
@@ -87,8 +91,8 @@
         }
       },
       "feature_conf_humidity": {
-        "title": "Humidity & Ventilation Control",
-        "description": "Configure humidity trend thresholds and climate baseline comparison for ventilation",
+        "title": "Advanced Ventilation & Humidity",
+        "description": "Configure advanced humidity trend thresholds and shower detection (adaptive learning is enabled by default)",
         "data": {
           "humidity_down": "Humidity trend level below which room is not occupied",
           "humidity_up": "Humidity trend level above which room is occupied",
@@ -98,7 +102,8 @@
           "humidity_delta_shutoff": "Relative humidity delta (% above baseline) below which fan turns off",
           "humidity_deadband": "Rate of change deadband considered flatlined / no change",
           "humidity_max_fan_time": "Maximum continuous fan run time for humidity (seconds, 0 = disabled)",
-          "humidity_presence_gate_time": "Presence gate window: maximum seconds since last occupied to trigger (0 = disabled)"
+          "humidity_presence_gate_time": "Presence gate window: maximum seconds since last occupied to trigger (0 = disabled)",
+          "learn_shower_humidity": "Autonomously learn shower humidity signatures and baseline from room history"
         }
       },
       "area_config": {
@@ -114,10 +119,7 @@
           "sleep_entity": "Entity used to put area into sleep when occupied",
           "light_control": "Control the lights",
           "fan_control": "Control the fans",
-          "fan_suppress_in_sleep": "Suppress exhaust fan in sleep mode",
-          "dark_lux_floor": "Dark Lux Floor: ambient lux at or below which room is dark and lights always turn on",
-          "learn_daylight_lux": "Autonomously learn the daylight lux baseline from room sensor history",
-          "daylight_lux_level": "Manual daylight lux level override (0 = auto-learn from sensor history)"
+          "fan_suppress_in_sleep": "Suppress exhaust fan in sleep mode"
         }
       }
     },

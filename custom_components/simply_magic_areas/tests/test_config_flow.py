@@ -39,6 +39,7 @@ from ..const import (
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
     CONF_LEARN_DAYLIGHT_LUX,
+    CONF_LEARN_SHOWER_HUMIDITY,
     CONF_LIGHT_CONTROL,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
@@ -180,9 +181,6 @@ async def test_options_enable_advanced_lights(
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
         CONF_FAN_SUPPRESS_IN_SLEEP: False,
-        CONF_DARK_LUX_FLOOR: 10.0,
-        CONF_LEARN_DAYLIGHT_LUX: True,
-        CONF_DAYLIGHT_LUX_LEVEL: 0.0,
     }
 
     # submit form with options
@@ -300,9 +298,6 @@ async def test_options_enable_humidity(
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
         CONF_FAN_SUPPRESS_IN_SLEEP: False,
-        CONF_DARK_LUX_FLOOR: 10.0,
-        CONF_LEARN_DAYLIGHT_LUX: True,
-        CONF_DAYLIGHT_LUX_LEVEL: 0.0,
     }
 
     # submit form with options
@@ -347,6 +342,7 @@ async def test_options_enable_humidity(
                 CONF_HUMIDITY_DEADBAND: 0.001,
                 CONF_HUMIDITY_MAX_FAN_TIME: 3600,
                 CONF_HUMIDITY_PRESENCE_GATE_TIME: 0,
+                CONF_LEARN_SHOWER_HUMIDITY: True,
             },
         },
         CONF_ICON: "mdi:texture-box",

@@ -55,6 +55,7 @@ from .const import (
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
     CONF_LEARN_DAYLIGHT_LUX,
+    CONF_LEARN_SHOWER_HUMIDITY,
     CONF_LIGHT_CONTROL,
     CONF_MEDIA_PLAYER_GROUPS,
     CONF_MQTT_ROOM_PRESENCE,
@@ -679,6 +680,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
                 CONF_HUMIDITY_DEADBAND: float,
                 CONF_HUMIDITY_MAX_FAN_TIME: int,
                 CONF_HUMIDITY_PRESENCE_GATE_TIME: int,
+                CONF_LEARN_SHOWER_HUMIDITY: cv.boolean,
             },
             selectors={
                 CONF_HUMIDITY_TREND_UP_CUT_OFF: float,
@@ -690,6 +692,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
                 CONF_HUMIDITY_DEADBAND: float,
                 CONF_HUMIDITY_MAX_FAN_TIME: int,
                 CONF_HUMIDITY_PRESENCE_GATE_TIME: int,
+                CONF_LEARN_SHOWER_HUMIDITY: bool,
             },
             user_input=user_input,
         )

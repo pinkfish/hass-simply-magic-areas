@@ -206,11 +206,10 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
 
     def _update_historical_daylight(self) -> None:
         """Autonomously learn the room's daylight baseline from ambient lux when lights are off."""
-        learn_enabled = self.area.config.get(
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        learn_enabled = adv_conf.get(
             CONF_LEARN_DAYLIGHT_LUX,
-            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
-                CONF_LEARN_DAYLIGHT_LUX, DEFAULT_LEARN_DAYLIGHT_LUX
-            ),
+            self.area.config.get(CONF_LEARN_DAYLIGHT_LUX, DEFAULT_LEARN_DAYLIGHT_LUX),
         )
         if not learn_enabled:
             return
@@ -405,14 +404,10 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
         )
 
     def _get_dark_lux_floor(self) -> int:
-        return int(
-            self.area.config.get(
-                CONF_DARK_LUX_FLOOR,
-                self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
-                    CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR
-                ),
-            )
-        )
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        if CONF_DARK_LUX_FLOOR in adv_conf:
+            return int(adv_conf[CONF_DARK_LUX_FLOOR])
+        return int(self.area.config.get(CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR))
 
     def _is_bright_condition_met(self) -> bool:
         """Evaluate if bright condition is met via Direct Lux, Reference Area/Sensor, or binary entity."""
@@ -434,14 +429,15 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
         # If threshold is unconfigured (0), adapt to manual daylight level or learned historical daylight
         effective_threshold = threshold
         if effective_threshold <= 0:
-            manual_daylight = int(
-                self.area.config.get(
-                    CONF_DAYLIGHT_LUX_LEVEL,
-                    self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+            adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+            if CONF_DAYLIGHT_LUX_LEVEL in adv_conf:
+                manual_daylight = int(adv_conf[CONF_DAYLIGHT_LUX_LEVEL])
+            else:
+                manual_daylight = int(
+                    self.area.config.get(
                         CONF_DAYLIGHT_LUX_LEVEL, DEFAULT_DAYLIGHT_LUX_LEVEL
-                    ),
+                    )
                 )
-            )
             if manual_daylight > 0:
                 effective_threshold = manual_daylight
             else:

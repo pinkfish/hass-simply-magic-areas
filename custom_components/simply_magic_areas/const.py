@@ -578,7 +578,20 @@ META_AREA_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_CLEAR_TIMEOUT, default=DEFAULT_CLEAR_TIMEOUT
         ): cv.positive_int,
+        vol.Optional(
+            CONF_EXTENDED_TIMEOUT, default=DEFAULT_EXTENDED_TIMEOUT
+        ): cv.positive_int,
         vol.Optional(CONF_ICON, default=DEFAULT_ICON): cv.string,
+        vol.Optional(sleep_lights.entity_name(), default=""): vol.Any(cv.entity_id, ""),
+        vol.Optional(
+            sleep_lights.state_dim_level(), default=sleep_lights.default_dim_level
+        ): vol.Range(min=0, max=100),
+        vol.Optional(accented_lights.entity_name(), default=""): vol.Any(cv.entity_id, ""),
+        vol.Optional(
+            accented_lights.state_dim_level(), default=accented_lights.default_dim_level
+        ): vol.Range(min=0, max=100),
+        vol.Optional(CONF_DARK_LUX_FLOOR, default=DEFAULT_DARK_LUX_FLOOR): cv.positive_int,
+        vol.Optional(CONF_FAN_SUPPRESS_IN_SLEEP, default=DEFAULT_FAN_SUPPRESS_IN_SLEEP): bool,
     }
 )
 
@@ -626,8 +639,26 @@ OPTIONS_AREA_ADVANCED = [
 
 OPTIONS_AREA_META = [
     (CONF_CLEAR_TIMEOUT, DEFAULT_CLEAR_TIMEOUT, int),
+    (CONF_EXTENDED_TIMEOUT, DEFAULT_EXTENDED_TIMEOUT, int),
     (CONF_ICON, DEFAULT_ICON, str),
+    (sleep_lights.entity_name(), "", cv.entity_id),
+    (sleep_lights.state_dim_level(), sleep_lights.default_dim_level, float),
+    (accented_lights.entity_name(), "", cv.entity_id),
+    (accented_lights.state_dim_level(), accented_lights.default_dim_level, float),
+    (CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR, int),
+    (CONF_FAN_SUPPRESS_IN_SLEEP, DEFAULT_FAN_SUPPRESS_IN_SLEEP, bool),
 ]
+
+INHERITABLE_CONF_KEYS = {
+    sleep_lights.entity_name(),
+    sleep_lights.state_dim_level(),
+    accented_lights.entity_name(),
+    accented_lights.state_dim_level(),
+    CONF_CLEAR_TIMEOUT,
+    CONF_EXTENDED_TIMEOUT,
+    CONF_DARK_LUX_FLOOR,
+    CONF_FAN_SUPPRESS_IN_SLEEP,
+}
 
 
 OPTIONS_GROUP_CREATION = [

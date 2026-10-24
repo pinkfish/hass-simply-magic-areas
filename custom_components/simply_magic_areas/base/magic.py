@@ -44,6 +44,7 @@ from ..const import (
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_GROUP_CREATION,
     CONF_FEATURE_HUMIDITY,
+    CONF_ID,
     CONF_INCLUDE_ENTITIES,
     CONF_LIGHT_CONTROL,
     CONF_REFERENCE_BRIGHT_AREA,
@@ -56,10 +57,13 @@ from ..const import (
     DOMAIN,
     EVENT_MAGICAREAS_AREA_READY,
     EVENT_MAGICAREAS_READY,
+    INHERITABLE_CONF_KEYS,
     MAGIC_AREAS_COMPONENTS,
     MAGIC_AREAS_COMPONENTS_META,
     MAGIC_DEVICE_ID_PREFIX,
+    META_AREA_EXTERIOR,
     META_AREA_GLOBAL,
+    META_AREA_INTERIOR,
     MODULE_DATA,
 )
 from ..util import is_entity_list
@@ -96,6 +100,57 @@ class StateConfigData:
     lights: list[str]
 
 
+class InheritedConfig(dict):
+    """Dictionary proxy that falls back to parent meta-area configuration for inheritable keys."""
+
+    def __init__(self, area: "MagicArea", initial_data: dict) -> None:
+        """Initialize inherited config wrapper."""
+        super().__init__(initial_data)
+        self._area = area
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        """Get value with fallback to parent meta-area if key is inheritable."""
+        val = super().get(key)
+        if val not in (None, ""):
+            if isinstance(val, str) and val.lower() in ("none", "disabled"):
+                return None
+            return val
+
+        if key in INHERITABLE_CONF_KEYS:
+            inherited = self._area.get_inherited_value(key)
+            if inherited not in (None, ""):
+                return inherited
+
+        return default
+
+    def __getitem__(self, key: Any) -> Any:
+        """Get item with fallback to parent meta-area if key is inheritable."""
+        val = super().get(key)
+        if val not in (None, ""):
+            if isinstance(val, str) and val.lower() in ("none", "disabled"):
+                return None
+            return val
+
+        if key in INHERITABLE_CONF_KEYS:
+            inherited = self._area.get_inherited_value(key)
+            if inherited not in (None, ""):
+                return inherited
+
+        if key in self:
+            return super().__getitem__(key)
+
+        raise KeyError(key)
+
+    def __contains__(self, key: Any) -> bool:
+        """Check if key exists either locally or via inheritance."""
+        val = super().get(key)
+        if val not in (None, ""):
+            return not (isinstance(val, str) and val.lower() in ("none", "disabled"))
+        if key in INHERITABLE_CONF_KEYS:
+            return self._area.get_inherited_value(key) not in (None, "")
+        return super().__contains__(key)
+
+
 class MagicArea(object):  # noqa: UP004
     """The base class for the magic area integration."""
 
@@ -119,7 +174,7 @@ class MagicArea(object):  # noqa: UP004
         area_config = dict(config.data)
         if config.options:
             area_config.update(config.options)
-        self.config = area_config
+        self.config = InheritedConfig(self, area_config)
 
         self.entities: dict[str, list[dict[str, str]]] = {}
 
@@ -411,7 +466,8 @@ class MagicArea(object):  # noqa: UP004
                 ).get(lg.advanced_state_check(), "on"),
                 dim_level=int(
                     self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
-                        lg.state_dim_level(), lg.default_dim_level
+                        lg.state_dim_level(),
+                        base.get(lg.state_dim_level(), lg.default_dim_level),
                     )
                 ),
                 for_state=lg.enable_state,
@@ -550,6 +606,85 @@ class MagicArea(object):  # noqa: UP004
                                         pass
 
         return None
+
+    def get_parent_meta_areas(self) -> list["MagicArea"]:
+        """Return parent meta areas in priority order: zone meta area first, then global."""
+        if self.is_meta():
+            if self.id.lower() != META_AREA_GLOBAL.lower():
+                global_meta = self._get_meta_area_by_id(META_AREA_GLOBAL.lower())
+                return [global_meta] if global_meta else []
+            return []
+
+        parents = []
+        # Direct parent: Interior or Exterior
+        parent_id = (
+            META_AREA_EXTERIOR.lower()
+            if self.is_exterior()
+            else META_AREA_INTERIOR.lower()
+        )
+        parent_meta = self._get_meta_area_by_id(parent_id)
+        if parent_meta:
+            parents.append(parent_meta)
+
+        # Root parent: Global
+        global_meta = self._get_meta_area_by_id(META_AREA_GLOBAL.lower())
+        if global_meta and global_meta not in parents:
+            parents.append(global_meta)
+
+        return parents
+
+    def _get_meta_area_by_id(self, meta_id: str) -> "MagicArea | None":
+        """Get loaded meta area object by id."""
+        if MODULE_DATA in self.hass.data:
+            for entry in self.hass.data[MODULE_DATA].values():
+                area = entry.get(DATA_AREA_OBJECT)
+                if area and area.is_meta() and area.id.lower() == meta_id.lower():
+                    return area
+        return None
+
+    def get_inherited_value(self, key: str) -> Any:
+        """Look up a configuration key from parent meta areas."""
+        if not hasattr(self, "_resolving_inheritance"):
+            self._resolving_inheritance = set()
+
+        if key in self._resolving_inheritance:
+            return None
+
+        self._resolving_inheritance.add(key)
+        try:
+            # 1. Search loaded meta-areas in MODULE_DATA
+            for parent in self.get_parent_meta_areas():
+                val = parent.config.get(key)
+                if val not in (None, ""):
+                    return val
+
+            # 2. Fallback to config_entries in case parent meta-area instance is not in MODULE_DATA yet
+            parent_ids = []
+            if not self.is_meta():
+                parent_ids.append(
+                    META_AREA_EXTERIOR.lower()
+                    if self.is_exterior()
+                    else META_AREA_INTERIOR.lower()
+                )
+            if self.id.lower() != META_AREA_GLOBAL.lower():
+                parent_ids.append(META_AREA_GLOBAL.lower())
+
+            if hasattr(self.hass, "config_entries") and hasattr(
+                self.hass.config_entries, "async_entries"
+            ):
+                for entry in self.hass.config_entries.async_entries(DOMAIN):
+                    entry_id = str(entry.data.get(CONF_ID, "")).lower()
+                    if entry_id in parent_ids:
+                        merged = dict(entry.data)
+                        if entry.options:
+                            merged.update(entry.options)
+                        val = merged.get(key)
+                        if val not in (None, ""):
+                            return val
+
+            return None
+        finally:
+            self._resolving_inheritance.discard(key)
 
     def get_active_areas(self) -> list[str]:
         """Return the active areas for the magic area, always empty for non-meta area."""

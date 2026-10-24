@@ -19,12 +19,17 @@ from homeassistant.helpers.entity_registry import (
 
 from .base.magic import MagicArea, MagicMetaArea
 from .const import (
+    AREA_TYPE_EXTERIOR,
+    AREA_TYPE_INTERIOR,
+    AREA_TYPE_META,
     CONF_ID,
     CONF_NAME,
+    CONF_TYPE,
     DATA_AREA_OBJECT,
     DATA_DEVICE_LISTENER,
     DATA_ENTITY_LISTENER,
     DATA_UNDO_UPDATE_LISTENER,
+    DOMAIN,
     META_AREA_EXTERIOR,
     META_AREA_GLOBAL,
     META_AREA_INTERIOR,
@@ -142,7 +147,10 @@ async def async_setup_entry(
             if meta_area_key in meta_areas:
                 meta_area_object = meta_areas[meta_area_key]
 
-                if meta_area_object.initialized:
+                if (
+                    meta_area_object.initialized
+                    and not hass.data.get("simply_magic_areas_bulk_reload")
+                ):
                     await hass.config_entries.async_reload(
                         meta_area_object.hass_config.entry_id
                     )
@@ -153,6 +161,7 @@ async def async_setup_entry(
                 magic_area.id != META_AREA_GLOBAL_ID
                 and META_AREA_GLOBAL_ID in meta_areas
                 and meta_areas[META_AREA_GLOBAL_ID].initialized
+                and not hass.data.get("simply_magic_areas_bulk_reload")
             ):
                 await hass.config_entries.async_reload(
                     meta_areas[META_AREA_GLOBAL_ID].hass_config.entry_id
@@ -177,7 +186,44 @@ async def async_setup_entry(
 
 async def async_update_options(hass: HomeAssistant, config_entry: ConfigEntry):
     """Update options."""
-    await hass.config_entries.async_reload(config_entry.entry_id)
+    is_meta = config_entry.data.get(CONF_TYPE) == AREA_TYPE_META or str(
+        config_entry.data.get(CONF_ID, "")
+    ).lower() in [m.lower() for m in META_AREAS]
+
+    if is_meta:
+        hass.data["simply_magic_areas_bulk_reload"] = True
+        try:
+            await hass.config_entries.async_reload(config_entry.entry_id)
+
+            meta_id = str(config_entry.data.get(CONF_ID, "")).lower()
+            for entry in hass.config_entries.async_entries(DOMAIN):
+                if entry.entry_id == config_entry.entry_id:
+                    continue
+                entry_type = entry.data.get(CONF_TYPE, AREA_TYPE_INTERIOR)
+                entry_is_meta = entry.data.get(CONF_TYPE) == AREA_TYPE_META or str(
+                    entry.data.get(CONF_ID, "")
+                ).lower() in [m.lower() for m in META_AREAS]
+
+                should_reload = (
+                    meta_id == META_AREA_GLOBAL.lower()
+                    or (
+                        meta_id == META_AREA_INTERIOR.lower()
+                        and entry_type == AREA_TYPE_INTERIOR
+                        and not entry_is_meta
+                    )
+                    or (
+                        meta_id == META_AREA_EXTERIOR.lower()
+                        and entry_type == AREA_TYPE_EXTERIOR
+                        and not entry_is_meta
+                    )
+                )
+
+                if should_reload:
+                    await hass.config_entries.async_reload(entry.entry_id)
+        finally:
+            hass.data.pop("simply_magic_areas_bulk_reload", None)
+    else:
+        await hass.config_entries.async_reload(config_entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:

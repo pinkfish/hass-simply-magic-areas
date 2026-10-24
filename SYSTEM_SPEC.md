@@ -31,10 +31,11 @@ Simply Magic Areas categorizes spaces into two primary constructs:
    - **Interior (`interior`)**: Standard indoor rooms (living room, bedrooms, bathrooms).
    - **Exterior (`exterior`)**: Outdoor spaces (patio, backyard, driveway).
 2. **Meta-Areas**: Synthetic aggregations created at higher spatial levels.
-   - **Global (`Global`)**: Aggregates all interior and exterior areas across the entire home. Hosts global capabilities such as the Area-Aware Media Player (AAMP).
-   - **Interior Meta-Area (`Interior`)**: Aggregates all interior spaces.
-   - **Exterior Meta-Area (`Exterior`)**: Aggregates all exterior spaces.
+   - **Global (`Global`)**: Aggregates all interior and exterior areas across the entire home. Hosts global capabilities such as the Area-Aware Media Player (AAMP) and root configuration inheritance defaults.
+   - **Interior Meta-Area (`Interior`)**: Aggregates all interior spaces and provides zone-level configuration defaults.
+   - **Exterior Meta-Area (`Exterior`)**: Aggregates all exterior spaces and provides outdoor configuration defaults.
    - **Active Area Resolution (`get_active_areas()`)**: Meta-areas dynamically evaluate the states of all subordinate child areas and expose active non-clear child slugs in `get_active_areas()` and the state sensor's `active_areas` attribute (`ATTR_ACTIVE_AREAS`).
+   - **Hierarchical Configuration Inheritance (`InheritedConfig`)**: Meta-areas serve as the central source of truth for shared spatial policies (notably `sleep_entity`, `sleep_state_dim`, `accented_entity`, `accented_state_dim`, `clear_timeout`, `extended_timeout`, `dark_lux_floor`, `fan_suppress_in_sleep`). Subordinate rooms automatically inherit these settings when left empty (`""` or unset). A room can define a local override (e.g. Master Bedroom sleep switch) or explicitly opt out (`"none"` / `"disabled"`). Modifying a meta-area's options dynamically reloads child rooms to immediately propagate policy changes without requiring a Home Assistant restart. See [designs/meta_area_config_inheritance_design.md](designs/meta_area_config_inheritance_design.md).
 
 ```mermaid
 graph TD

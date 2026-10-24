@@ -448,10 +448,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
         # Apply options for given area type (regular/meta)
         option_keys = [option[0] for option in options]
         for option_key in option_keys:
-            selectors[option_key] = all_selectors[option_key]
+            if option_key in all_selectors:
+                selectors[option_key] = all_selectors[option_key]
         if not self.area.is_meta():
             for lg in ALL_LIGHT_ENTITIES:
                 selectors.update(lg.config_flow_selectors(self.all_entities))
+        else:
+            for lg in ALL_LIGHT_ENTITIES:
+                if lg.entity_name() in option_keys:
+                    selectors.update(lg.config_flow_selectors(self.all_entities))
 
         data_schema = self._build_options_schema(options=options, selectors=selectors)
 

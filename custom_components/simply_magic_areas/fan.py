@@ -349,7 +349,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         sleep_entity = (
             sleep_conf.entity if sleep_conf else self.area.config.get("sleep_entity")
         )
-        if sleep_entity and self.hass.states.get(sleep_entity) is not None:
+        if sleep_entity:
             self.async_on_remove(
                 async_track_state_change_event(
                     self.hass, [sleep_entity], self._sleep_state_change

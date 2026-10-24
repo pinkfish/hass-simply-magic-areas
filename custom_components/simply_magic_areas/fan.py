@@ -187,9 +187,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
     @property
     def is_on(self) -> bool:
         """Return true if fan is on."""
-        if self._attr_is_on is not None:
-            return self._attr_is_on
-        return super().is_on
+        group_is_on = super().is_on
+        if group_is_on is not None:
+            return group_is_on
+        return self._attr_is_on or False
 
     @property
     def icon(self) -> str:
@@ -387,8 +388,16 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if event.data["old_state"] is None or event.data["new_state"] is None:
             return
 
-        from_state = event.data["old_state"].state
-        to_state = event.data["new_state"].state
+        from_state = (
+            AreaState(event.data["old_state"].state)
+            if event.data["old_state"].state in AreaState
+            else None
+        )
+        to_state = (
+            AreaState(event.data["new_state"].state)
+            if event.data["new_state"].state in AreaState
+            else None
+        )
 
         _LOGGER.debug(
             "%s: Fan group New state: %s / Last state %s (Humidity %s On: %s)",
@@ -399,8 +408,40 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self.is_on,
         )
 
+        occupied_states = {
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_BRIGHT,
+            AreaState.AREA_STATE_SLEEP,
+            AreaState.AREA_STATE_ACCENTED,
+            AreaState.AREA_STATE_EXTENDED,
+        }
+
+        was_occupied = from_state in occupied_states
+        now_occupied = to_state in occupied_states
+        occupancy_changed = (was_occupied != now_occupied) or (
+            from_state == AreaState.AREA_STATE_MANUAL
+        )
+
         # Manual control, ignore all changes
         if to_state == AreaState.AREA_STATE_MANUAL:
+            return
+
+        if occupancy_changed:
+            if not self._is_controlled_by_this_entity():
+                _LOGGER.info(
+                    "%s: Occupancy state changed from %s to %s; resetting manual override",
+                    self.name,
+                    from_state,
+                    to_state,
+                )
+                self._reset_control()
+        elif not self._is_controlled_by_this_entity():
+            _LOGGER.debug(
+                "%s: In manual override and occupancy status did not change (%s -> %s); holding fan state",
+                self.name,
+                from_state,
+                to_state,
+            )
             return
 
         if to_state in (AreaState.AREA_STATE_OCCUPIED, AreaState.AREA_STATE_EXTENDED):
@@ -597,6 +638,13 @@ class AreaFanGroup(MagicEntity, FanGroup):
         return None
 
     def _humidity_fan_control(self) -> None:
+        if not self._is_controlled_by_this_entity():
+            _LOGGER.debug(
+                "%s: Fan group in manual override; ignoring humidity control",
+                self.name,
+            )
+            return
+
         fans_on: bool = False
         trend_entity = self.area.simply_magic_entity_id(
             SENSOR_DOMAIN,
@@ -929,7 +977,9 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 )
             return
 
-        # Skip non ON/OFF state changes
+        # Skip non ON/OFF state changes or attribute-only updates
+        if old_state.state == new_state.state:
+            return
         if old_state.state not in [
             STATE_ON,
             STATE_OFF,
@@ -945,19 +995,18 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self.last_update_from_entity = False
             return
 
-        manual_timeout = self.area.config.get(
-            CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
+        # External manual interaction (physical switch, UI, external integration)
+        _LOGGER.debug(
+            "%s: Fan turned %s externally; entering manual override until occupied state change",
+            self.name,
+            new_state.state,
         )
+
         self._set_controlled_by_this_entity(False)
         if self._manual_timeout_cb is not None:
             self._manual_timeout_cb()
-        now_ts = datetime.now(UTC).timestamp()
-        self._attr_extra_state_attributes[ATTR_MANUAL_TIMEOUT_TS] = (
-            now_ts + manual_timeout
-        )
-        self._manual_timeout_cb = async_call_later(
-            self.hass, manual_timeout, self._reset_manual_timeout
-        )
+            self._manual_timeout_cb = None
+        self.schedule_update_ha_state()
 
     def _reset_manual_timeout(self, dt: datetime | None = None) -> None:
         if self._manual_timeout_cb is not None:
@@ -975,6 +1024,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if not self.area.is_control_enabled(ControlType.System):
             return
 
+        if not self._is_controlled_by_this_entity():
+            _LOGGER.debug("%s: Fan in manual override, ignoring automatic turn on", self.name)
+            return
+
         _LOGGER.debug("%s: Turning on fans", self.name)
         self.last_update_from_entity = True
         self._attr_is_on = True
@@ -990,6 +1043,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
             return
 
         if not self.area.is_control_enabled(ControlType.System):
+            return
+
+        if not self._is_controlled_by_this_entity():
+            _LOGGER.debug("%s: Fan in manual override, ignoring automatic turn off", self.name)
             return
         _LOGGER.debug("%s: Turning fan off", self.name)
         self.last_update_from_entity = True

@@ -377,6 +377,34 @@ class AreaLightGroup(MagicEntity, LightGroup):
             AreaState.AREA_STATE_EXTENDED,
         }
 
+        was_occupied = from_state in occupied_states
+        now_occupied = to_state in occupied_states
+        occupancy_changed = (was_occupied != now_occupied) or (
+            from_state == AreaState.AREA_STATE_MANUAL
+        )
+
+        if to_state == AreaState.AREA_STATE_MANUAL:
+            _LOGGER.debug("%s: In manual mode, leaving lights as is", self.name)
+            return
+
+        if occupancy_changed:
+            if not self._is_controlled_by_this_entity():
+                _LOGGER.info(
+                    "%s: Occupancy state changed from %s to %s; resetting manual override",
+                    self.name,
+                    from_state,
+                    to_state,
+                )
+                self._reset_control()
+        elif not self._is_controlled_by_this_entity():
+            _LOGGER.debug(
+                "%s: In manual override and occupancy status did not change (%s -> %s); holding state",
+                self.name,
+                from_state,
+                to_state,
+            )
+            return
+
         if to_state == AreaState.AREA_STATE_CLEAR:
             if self.is_exterior:
                 if (
@@ -401,10 +429,6 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 ):
                     return
             self._turn_off_light()
-            return
-
-        if to_state == AreaState.AREA_STATE_MANUAL:
-            _LOGGER.debug("%s: In manual mode, leaving lights as is", self.name)
             return
 
         if to_state in (
@@ -485,6 +509,14 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         # Profile change only updates lights when area is occupied
         if self.area.state in occupied_states:
+            if not self._is_controlled_by_this_entity():
+                _LOGGER.debug(
+                    "%s: In manual override; ignoring profile change from %s to %s",
+                    self.name,
+                    old_profile,
+                    new_profile,
+                )
+                return
             if self.is_on:
                 conf = self._get_active_profile_config()
                 if conf is not None:
@@ -518,69 +550,43 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 )
             return
 
-        occupied_states = {
-            AreaState.AREA_STATE_OCCUPIED,
-            AreaState.AREA_STATE_BRIGHT,
-            AreaState.AREA_STATE_SLEEP,
-            AreaState.AREA_STATE_ACCENTED,
-        }
+        # Skip non ON/OFF state changes or attribute-only updates
+        if old_state.state == new_state.state:
+            return
+        if old_state.state not in [
+            STATE_ON,
+            STATE_OFF,
+        ] or new_state.state not in [
+            STATE_ON,
+            STATE_OFF,
+        ]:
+            return
 
-        # If light group turned off while the area is occupied and not in manual override,
-        # recover from any racing turn-off by immediately re-asserting turn on.
-        if (
-            new_state.state == STATE_OFF
-            and self.area.state in occupied_states
-            and not self._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL, False)
-        ):
-            if self.is_exterior and not self._is_nighttime():
-                return
-            conf = self._get_active_profile_config()
-            if conf is not None and conf.dim_level > 0:
-                _LOGGER.info(
-                    "%s: Light turned off while area is %s, re-asserting turn on",
-                    self.name,
-                    self.area.state,
-                )
-                self._turn_on_light(conf, force=True)
-                return
+        self._attr_is_on = new_state.state == STATE_ON
+
+        # If this update was initiated by internal automation, consume the flag and return
+        if self.last_update_from_entity:
+            self.last_update_from_entity = False
+            return
+
+        # External manual interaction (physical switch, UI, external integration)
+        _LOGGER.debug(
+            "%s: Light turned %s externally; entering manual override until occupied state change",
+            self.name,
+            new_state.state,
+        )
 
         if (
             self.is_exterior
             and new_state.state == STATE_OFF
-            and not self.last_update_from_entity
         ):
             self._clear_exterior_lighting()
 
-        if self.area.state != AreaState.AREA_STATE_CLEAR:
-            self._reset_control()
-        else:
-            # Skip non ON/OFF state changes
-            if old_state.state not in [
-                STATE_ON,
-                STATE_OFF,
-            ]:
-                return
-            if new_state.state not in [
-                STATE_ON,
-                STATE_OFF,
-            ]:
-                return
-            manual_timeout = self.area.config.get(
-                CONF_MANUAL_TIMEOUT, DEFAULT_MANUAL_TIMEOUT
-            )
-            if self.last_update_from_entity:
-                self.last_update_from_entity = False
-                return
-            self._set_controlled_by_this_entity(False)
-            if self._manual_timeout_cb is not None:
-                self._manual_timeout_cb()
-            now_ts = datetime.now(UTC).timestamp()
-            self._attr_extra_state_attributes[ATTR_MANUAL_TIMEOUT_TS] = (
-                now_ts + manual_timeout
-            )
-            self._manual_timeout_cb = async_call_later(
-                self.hass, manual_timeout, self._reset_manual_timeout
-            )
+        self._set_controlled_by_this_entity(False)
+        if self._manual_timeout_cb is not None:
+            self._manual_timeout_cb()
+            self._manual_timeout_cb = None
+        self.schedule_update_ha_state()
 
     def _reset_manual_timeout(self, now: datetime | None = None) -> None:
         if self._manual_timeout_cb is not None:
@@ -591,6 +597,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
     ####  Light Handling
     def _turn_on_light(self, conf: StateConfigData, force: bool = False) -> None:
         """Turn on the light group."""
+
+        if not force and not self._is_controlled_by_this_entity():
+            _LOGGER.debug(
+                "%s: Light in manual override, aborting automatic turn on",
+                self.name,
+            )
+            return
 
         self._entity_ids = conf.lights
         self.async_update_group_state()
@@ -727,6 +740,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     def _turn_off_light(self, force: bool = False) -> None:
         """Turn off the light group."""
+        if not force and not self._is_controlled_by_this_entity():
+            _LOGGER.debug(
+                "%s: Light in manual override, aborting automatic turn off",
+                self.name,
+            )
+            return
+
         occupied_states = {
             AreaState.AREA_STATE_OCCUPIED,
             AreaState.AREA_STATE_BRIGHT,

@@ -146,7 +146,7 @@ The presence state defines whether the room is occupied, clearing, or manually b
 | **Clear** | `clear` | Idle base state. No presence detected by presence sensors and all timeout buffers have expired. Automated lights turn off or dim to clear level. |
 | **Occupied** | `occupied` | Primary presence state. **Based entirely on active detection from presence sensors** (motion sensors, occupancy sensors, media playback, or room presence sensors). |
 | **Extended** | `extended` | Transitionary timeout grace period after presence sensors cease detecting presence before reverting to `clear`. Keeps area ready or dimly lit for quick re-entry. |
-| **Manual** | `manual` | Override state entered when the area system control switch is turned OFF (`switch.simply_magic_areas_system_control_<area>`). Suspends all automated state transitions and device controls across the area. *(Note: Individual light manual override also transitions lights into a manual state for a configurable timeout; see Section 4.1).* |
+| **Manual** | `manual` | Override state entered when the area system control switch is turned OFF (`switch.simply_magic_areas_system_control_<area>`). Suspends all automated state transitions and device controls across the area. *(Note: Individual light and fan manual overrides hold their manual state until an occupied state change occurs; see Section 4.1 and 4.2).* |
 
 - **Self-Healing State Consistency Guard**: During startup or reload, `AreaStateSensor._validate_state_consistency()` confirms that if all presence sensors are off and no clear/extended timeout is active, any stale or orphaned occupied state is automatically corrected back to `clear`.
 
@@ -359,15 +359,18 @@ flowchart TD
     - If $L \ge L_{day}$: $\text{darkness\_ratio} = 0.0 \implies$ lights remain off or turn off (`force=True`).
     - Between $L_{floor}$ and $L_{day}$: Delivers smooth, natural twilight compensation without over-illuminating partially lit rooms.
   - Exposes `darkness_ratio` as a live state attribute on `AreaLightGroup`.
-- **Manual Light State & Override (`CONF_MANUAL_TIMEOUT`)**:
+- **Manual Light State & Override (Occupancy-Hold)**:
   - **Transition to Manual State**: If someone manually adjusts a light (turns a light on or off, adjusts brightness, or changes color via a physical wall switch, smart dimmer, external integration, or Home Assistant UI), the light entity automatically transitions into a **Manual State** (exposing `manual_control: true` in its extra state attributes).
-  - **Override Automatic State**: While in this manual state, the automatic lighting control is completely overridden and suspended. Automatic area state changes, substate context shifts (e.g. transitioning from `bright` to `sleep`), or clearance timeout transitions will **not** modify, turn off, or turn on the lights. This guarantees that automated routines do not "fight" human manual preferences.
-  - **Configurable Override Duration**: The manual state persists for a user-configurable duration (`manual_timeout`, default: `60s`). Each subsequent manual adjustment resets the timeout back to the full configured duration.
-  - **Automatic Restoration**: When the configured `manual_timeout` period elapses without further manual interactions, the manual state automatically clears (`manual_control: false`). The light returns to automatic control and smoothly realigns with the current area state and active substate profile.
+  - **Override Automatic State**: While in this manual state, the automatic lighting control is completely overridden and suspended. Contextual lighting profile shifts (e.g. `standard` to `sleep` or `bright`) or ambient illuminance fluctuations will **not** modify, extinguish, or alter the light fixtures. This guarantees that automated routines never fight human manual preferences.
+  - **Occupancy-Hold Duration**: The manual state persists and is held steadily until an **occupied state change** occurs:
+    - **Clear $\to$ Occupied**: When presence is detected in a previously clear area, manual override resets and normal profile-based automated lighting engages.
+    - **Occupied / Extended $\to$ Clear**: When an occupied or extended room completely clears, manual override resets and lights extinguish in accordance with clear state automation.
+    - **Occupied $\leftrightarrow$ Extended**: Transitions between occupied and extended buffers (or vice-versa) do not reset manual override, preserving human intent while the room remains occupied.
+    - **Master Switch Reset**: Toggling the Area System Control Switch (`switch.simply_magic_areas_system_control_<area>`) back ON immediately clears any manual holds.
 - **Rapid Transition & Race Condition Resilience**:
   - **Forced Turn-On on Occupancy**: When transitioning into an occupied state from non-occupied (`clear` or `extended`), `_turn_on_light` enforces execution (`force=True`). It bypasses cached state checks (`is_on` / matching brightness) so that a pending in-flight turn-off never prevents the lights from being commanded on.
   - **Turn-Off Occupancy Guard**: `_turn_off_light` verifies that the area is not currently in an occupied state before issuing any off command. If the area has transitioned back to occupied, the turn-off is aborted immediately.
-  - **Automatic Recovery from Racing Extinguishment**: If the light group transitions to `off` while the area is in an active occupied state (and not in manual override mode), the state change handler intercepts the discrepancy and immediately re-asserts `_turn_on_light(force=True)`.
+  - **Respect for Manual Turn-Off**: External manual turn-off actions are recognized immediately without re-assertion or extinguishment fighting.
   - **Presence Timer Preemption**: When a presence sensor reports `on`, all running clear and extended timers in `AreaStateSensor` are cancelled synchronously, preventing background timer callbacks from clearing the area.
   - **Unoccupied State Preservation**: In `AreaStateSensor`, when the area is `clear` or `extended`, non-occupied sensor state updates do not reset off-time counters or cause premature occupancy fall-throughs.
   - **Extended State Sensor Reactivity**: If the area is in the `extended` state, any state change in the sensors (presence sensors or room tracking sensors) immediately moves the area state back to `occupied`, cancels running extended timeouts, restarts the clear countdown buffer, and re-engages lighting automations (turning off exhaust ventilation unless prolonged by high humidity).
@@ -457,8 +460,9 @@ For exterior spaces of the home (both concrete areas classified as `type: exteri
     - `humidity_start_ts`: Epoch timestamp when current humidity ventilation session began.
     - `humidity_zero_ts`: Epoch timestamp when humidity derivative entered the stationary deadband.
     - `max_runtime_exceeded`: Safety flag set when the fan is stopped due to exceeding `humidity_max_fan_time`.
-- **Manual Fan Override (`CONF_MANUAL_TIMEOUT`)**:
-  - Manual adjustments (wall switches, UI) transition the fan group into manual override mode (`manual_control: true`), suspending automated adjustments for `manual_timeout` seconds (default: `60s`).
+- **Manual Fan Override (Occupancy-Hold)**:
+  - Manual adjustments (wall switches, UI) transition the fan group into manual override mode (`manual_control: true`), holding the commanded state until an **occupied state change** occurs (e.g. `occupied/extended -> clear` or `clear -> occupied`).
+  - While in manual override, autonomous humidity ventilation and sleep suppression adjustments are suspended to respect user preferences.
 
 ### 4.3 Climate (`climate.py`)
 - **Entity**: `AreaClimateGroup` (`climate.simply_magic_areas_climate_<area>`).

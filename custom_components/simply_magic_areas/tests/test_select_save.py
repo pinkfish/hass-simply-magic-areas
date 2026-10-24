@@ -35,6 +35,7 @@ async def test_save_select(
     assert area_binary_sensor.state == AreaState.AREA_STATE_CLEAR
     assert area_binary_sensor.attributes == {
         "active_sensors": [],
+        "filtered_fan_sensors": [],
         "friendly_name": "kitchen kitchen State (Simply Magic Areas)",
         "last_active_sensors": [],
         "presence_sensors": [],
@@ -230,6 +231,10 @@ async def test_light(
         "rgb_color": None,
         "supported_features": 0,
         "last_update_from_entity": False,
+        "ml_adaptive_lighting_active": True,
+        "ml_preference_samples": 0,
+        "ml_confidence": 0.0,
+        "ml_predicted_brightness": None,
     }
 
     await hass.async_block_till_done()

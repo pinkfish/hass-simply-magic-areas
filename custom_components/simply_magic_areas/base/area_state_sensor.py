@@ -37,6 +37,7 @@ from ..const import (
     ATTR_CLEAR_TIMEOUT_TS,
     ATTR_EXTENDED_TIMEOUT,
     ATTR_EXTENDED_TIMEOUT_TS,
+    ATTR_FILTERED_FAN_SENSORS,
     ATTR_HUMIDITY_ON,
     ATTR_LAST_ACTIVE_SENSORS,
     ATTR_LAST_OFF_TIME,
@@ -55,6 +56,7 @@ from ..const import (
     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
+    CONF_MMWAVE_FAN_FILTER,
     CONF_MQTT_ROOM_PRESENCE,
     CONF_ON_STATES,
     CONF_PRESENCE_DEVICE_PLATFORMS,
@@ -69,6 +71,7 @@ from ..const import (
     DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
     DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
     DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
+    DEFAULT_MMWAVE_FAN_FILTER,
     DEFAULT_MQTT_ROOM_PRESENCE,
     DEFAULT_ON_STATES,
     DEFAULT_PRESENCE_DEVICE_PLATFORMS,
@@ -76,6 +79,7 @@ from ..const import (
     DEFAULT_UPDATE_INTERVAL,
     INVALID_STATES,
 )
+from ..ml.mmwave_filter import MMWaveFanFilter
 from .entities import MagicEntity
 from .magic import ControlType, MagicArea
 
@@ -112,6 +116,8 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self._mqqt_room_sensors: list[str] = []
         self._mode: str = "one"
         self._sensor_changed_in_extended: bool = False
+        self._filtered_fan_sensors: list[str] = []
+        self._mmwave_filter: MMWaveFanFilter = MMWaveFanFilter(area.hass, area)
 
     async def async_added_to_hass(self) -> None:
         """Call to add the system to hass."""
@@ -327,6 +333,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             {
                 ATTR_ACTIVE_SENSORS: [],
                 ATTR_LAST_ACTIVE_SENSORS: [],
+                ATTR_FILTERED_FAN_SENSORS: [],
                 ATTR_PRESENCE_SENSORS: self._sensors,
                 ATTR_TYPE: self.area.config.get(CONF_TYPE),
                 ATTR_LIGHTING_PROFILE: getattr(
@@ -345,6 +352,9 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         )
         self._attr_extra_state_attributes[ATTR_EXTENDED_TIMEOUT] = (
             self._get_extended_timeout()
+        )
+        self._attr_extra_state_attributes[ATTR_FILTERED_FAN_SENSORS] = getattr(
+            self, "_filtered_fan_sensors", []
         )
 
         if self.area.is_meta():
@@ -728,7 +738,13 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             valid_states = [STATE_ON]
 
         active_sensors: list[str] = []
+        filtered_fan_sensors: list[str] = []
         active_areas: set[str] = set()
+
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        enable_mmwave_filter = bool(
+            adv_conf.get(CONF_MMWAVE_FAN_FILTER, DEFAULT_MMWAVE_FAN_FILTER)
+        )
 
         # Loop over all entities and check their state
         for sensor in self._sensors:
@@ -760,6 +776,21 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                     continue
 
                 if entity.state in valid_states:
+                    if (
+                        enable_mmwave_filter
+                        and self._mmwave_filter
+                        and self._mmwave_filter.is_fan_interference(
+                            sensor, entity, self._sensors
+                        )
+                    ):
+                        _LOGGER.info(
+                            "[Area: %s] Sensor %s filtered as fan blade interference (fan is running)",
+                            self.area.slug,
+                            sensor,
+                        )
+                        filtered_fan_sensors.append(sensor)
+                        continue
+
                     _LOGGER.debug(
                         "[Area: %s] Valid presence sensor found: %s",
                         self.area.slug,
@@ -916,6 +947,10 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 self._last_off_time = datetime.now(UTC)
 
         self._attr_extra_state_attributes["active_sensors"] = active_sensors
+        self._filtered_fan_sensors = filtered_fan_sensors
+        self._attr_extra_state_attributes[ATTR_FILTERED_FAN_SENSORS] = (
+            filtered_fan_sensors
+        )
 
         # Make a copy that doesn't gets cleared out, for debugging
         if active_sensors:

@@ -505,6 +505,23 @@ For exterior spaces of the home (both concrete areas classified as `type: exteri
   - Master kill switch for all automated behaviors within the given area.
   - When switched `off`, sets area state to `manual`. When switched `on`, immediately resumes automatic state evaluation.
 
+### 4.8 Machine Learning & Multi-Sensor Signal Processing (`ml/`)
+
+#### 4.8.1 Local Online Bayesian Lighting Preference Learner (`lighting_learner.py`)
+- **100% Local / Zero-Cloud**: Operates completely on the local Home Assistant instance with pure Python matrix math ($\mathcal{O}(d^2)$ complexity $< 1\mu\text{s}$) with zero cloud dependencies or external pip packages.
+- **Recursive Least Squares (RLS)**: Intercepts manual user brightness adjustments on `AreaLightGroup` to continuously learn the household's actual lux-to-brightness preference curve:
+  $$\mathbf{x} = [1.0, \text{normalized\_lux}, \sin(\theta_{\text{solar}}), \text{profile\_factor}], \quad y = \text{commanded\_brightness}$$
+- **Dynamic Blending**: Smoothly blends prior heuristics with learned weights based on sample count ($C = \min(1.0, N / 5.0)$), preserving daylight cutoffs while tailoring room brightness to occupant preference.
+- **Local Persistence**: Saves state locally across restarts via Home Assistant's `Store` helper in `.storage/simply_magic_areas_lighting_ml_<area>`.
+- **Diagnostic Attributes**: Exposes `ml_adaptive_lighting_active`, `ml_preference_samples`, `ml_confidence`, and `ml_predicted_brightness`.
+
+#### 4.8.2 mmWave Radar Fan vs. Human False-Presence Discriminator (`mmwave_filter.py`)
+- **Causal Actuator Coupling**: Directly correlates with the operational state of `AreaFanGroup` and physical fans in the area. When fans are OFF, radar presence operates with standard high sensitivity.
+- **Distance Gate & Spatial Masking**: Detects radar targets reporting distance in the fan zone ($1.8\text{m} \le \text{dist} \le 3.5\text{m}$) with low macro-motion energy ($E_{\text{motion}} < 25$), filtering out mechanical fan blade reflections while allowing moving occupants to retain presence.
+- **Variance Analysis**: Detects ultra-low sample variance ($\sigma^2 < 0.02$) characteristic of constant-RPM fan blades.
+- **Universal Binary Radar Dwell Filter**: If only a binary presence radar is available without distance attributes, filters out persistent radar occupancy when all other area presence sensors have cleared for $\ge 30\text{s}$ while a fan is running.
+- **Filtered Entity Attribute**: Exposes `filtered_fan_sensors` (`ATTR_FILTERED_FAN_SENSORS`) on `AreaStateSensor` for full user transparency.
+
 ---
 
 ## 5. Entity ID & Unique ID Specifications
@@ -529,7 +546,7 @@ For exterior spaces of the home (both concrete areas classified as `type: exteri
 
 ### 6.1 Basic Area Configuration (`area_config` / `OPTIONS_AREA`)
 > [!TIP]
-> **Radical Simplicity:** The basic setup presents only essential intent. All adaptive daylight learning and shower humidity learning algorithms run autonomously out of the box with zero user configuration required.
+> **Radical Simplicity:** The basic setup presents only essential intent. All adaptive daylight learning, shower humidity learning, and mmWave fan filtering algorithms run autonomously out of the box with zero user configuration required.
 
 - `type`: Area classification (`interior`, `exterior`, `meta`).
 - `clear_timeout`: Seconds of sensor inactivity before transitioning `occupied` -> `extended` (default: `60s`).
@@ -545,6 +562,8 @@ For exterior spaces of the home (both concrete areas classified as `type: exteri
 Advanced calibration and overrides are strictly encapsulated in dedicated advanced feature menus:
 
 #### 6.2.1 Advanced Light Groups (`CONF_FEATURE_ADVANCED_LIGHT_GROUPS`)
+- `learn_lighting_preferences`: Enable 100% local Bayesian online preference learning from manual brightness overrides (default: `True`).
+- `mmwave_fan_filter`: Enable mmWave radar fan vs. human discrimination (default: `True`).
 - `learn_daylight_lux`: Autonomously learn the daylight lux baseline from room sensor history (default: `True`). Toggle to `False` to turn off adaptive lighting.
 - `dark_lux_floor`: Ambient lux at or below which room is dark and lights always turn on (default: `10` lx).
 - `daylight_lux_level`: Manual daylight baseline override in lux (default: `0` = auto-learn from sensor history).

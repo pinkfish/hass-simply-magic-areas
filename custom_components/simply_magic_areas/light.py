@@ -61,6 +61,7 @@ from .const import (
     CONF_EXTERIOR_SUNSET_TRIGGER,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_LEARN_DAYLIGHT_LUX,
+    CONF_LEARN_LIGHTING_PREFERENCES,
     CONF_MANUAL_TIMEOUT,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
@@ -69,6 +70,7 @@ from .const import (
     DEFAULT_EXTERIOR_ARRIVAL_TRIGGER,
     DEFAULT_EXTERIOR_LIGHTING_TIMEOUT,
     DEFAULT_EXTERIOR_SUNSET_TRIGGER,
+    DEFAULT_LEARN_LIGHTING_PREFERENCES,
     DEFAULT_MANUAL_TIMEOUT,
     DEFAULT_MAX_BRIGHTNESS_LEVEL,
     DEFAULT_MIN_BRIGHTNESS_LEVEL,
@@ -76,6 +78,7 @@ from .const import (
     META_AREA_EXTERIOR,
     MODULE_DATA,
 )
+from .ml.lighting_learner import OnlineBayesianLightingLearner
 from .util import call_service_non_blocking
 
 _LOGGER = logging.getLogger(__name__)
@@ -182,6 +185,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._attr_extra_state_attributes["lights"] = self._entity_ids
         self._attr_extra_state_attributes[ATTR_LAST_UPDATE_FROM_ENTITY] = False
 
+        self._lighting_learner: OnlineBayesianLightingLearner = (
+            OnlineBayesianLightingLearner(area.hass, area.slug)
+        )
+        self._attr_extra_state_attributes.update(
+            self._lighting_learner.get_attributes()
+        )
+
         if self.is_exterior:
             self._attr_extra_state_attributes[ATTR_EXTERIOR_LIGHTING_ACTIVE] = False
             self._attr_extra_state_attributes[ATTR_EXTERIOR_TIMER_TS] = None
@@ -189,6 +199,11 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     async def async_added_to_hass(self) -> None:
         """Run when this is added into hass."""
+        await self._lighting_learner.async_load()
+        self._attr_extra_state_attributes.update(
+            self._lighting_learner.get_attributes()
+        )
+
         # Get last state
         last_state = await self.async_get_last_state()
 
@@ -550,6 +565,50 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 )
             return
 
+        # Check for user manual brightness adjustment while light remains ON
+        if (
+            old_state.state == STATE_ON
+            and new_state.state == STATE_ON
+            and old_state.attributes.get(ATTR_BRIGHTNESS)
+            != new_state.attributes.get(ATTR_BRIGHTNESS)
+        ):
+            if self.last_update_from_entity:
+                self.last_update_from_entity = False
+                return
+
+            new_brightness = new_state.attributes.get(ATTR_BRIGHTNESS)
+            if new_brightness is not None and isinstance(new_brightness, (int, float)):
+                lux = self._get_illuminance()
+                profile = getattr(
+                    self.area, "lighting_profile", LightingProfile.STANDARD
+                )
+                sun_state = self.hass.states.get("sun.sun")
+                solar_elevation = None
+                if sun_state and "elevation" in sun_state.attributes:
+                    try:
+                        solar_elevation = float(sun_state.attributes["elevation"])
+                    except (ValueError, TypeError):
+                        pass
+
+                _LOGGER.info(
+                    "%s: Manual brightness adjustment to %s (lux=%s); learning preference",
+                    self.name,
+                    new_brightness,
+                    lux,
+                )
+                self._lighting_learner.learn_preference(
+                    lux=lux,
+                    profile=profile,
+                    solar_elevation=solar_elevation,
+                    target_brightness=int(new_brightness),
+                )
+                self._attr_extra_state_attributes.update(
+                    self._lighting_learner.get_attributes()
+                )
+                self._set_controlled_by_this_entity(False)
+                self.schedule_update_ha_state()
+            return
+
         # Skip non ON/OFF state changes or attribute-only updates
         if old_state.state == new_state.state:
             return
@@ -714,6 +773,50 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if historical_daylight is not None:
             self._attr_extra_state_attributes[ATTR_HISTORICAL_DAYLIGHT_LUX] = round(
                 float(historical_daylight), 1
+            )
+
+        # Apply local ML Bayesian preference learning if enabled and samples exist
+        learn_preferences = bool(
+            adv_conf.get(
+                CONF_LEARN_LIGHTING_PREFERENCES,
+                DEFAULT_LEARN_LIGHTING_PREFERENCES,
+            )
+        )
+        if (
+            learn_preferences
+            and self._lighting_learner
+            and self._lighting_learner.sample_count > 0
+            and brightness > 0
+        ):
+            sun_state = self.hass.states.get("sun.sun")
+            solar_elevation = None
+            if sun_state and "elevation" in sun_state.attributes:
+                try:
+                    solar_elevation = float(sun_state.attributes["elevation"])
+                except (ValueError, TypeError):
+                    pass
+            ml_brightness = self._lighting_learner.predict_brightness(
+                lux=luminesence,
+                profile=getattr(
+                    self.area, "lighting_profile", LightingProfile.STANDARD
+                ),
+                solar_elevation=solar_elevation,
+                default_brightness=brightness,
+            )
+            if ml_brightness > 0:
+                _LOGGER.debug(
+                    "%s: ML adaptive lighting adjusted brightness from %s to %s (samples=%s, conf=%.2f)",
+                    self.name,
+                    brightness,
+                    ml_brightness,
+                    self._lighting_learner.sample_count,
+                    self._lighting_learner.confidence,
+                )
+                brightness = ml_brightness
+
+        if self._lighting_learner:
+            self._attr_extra_state_attributes.update(
+                self._lighting_learner.get_attributes()
             )
 
         if not self.area.is_control_enabled(ControlType.System):

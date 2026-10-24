@@ -219,6 +219,23 @@ ATTR_DARKNESS_RATIO = "darkness_ratio"
 ATTR_EXTERIOR_LIGHTING_ACTIVE = "exterior_lighting_active"
 ATTR_EXTERIOR_TIMER_TS = "exterior_timer_ts"
 ATTR_EXTERIOR_TRIGGER_REASON = "exterior_trigger_reason"
+
+# State attributes for ML and sensor filtering
+ATTR_FILTERED_FAN_SENSORS = "filtered_fan_sensors"
+ATTR_ML_ADAPTIVE_LIGHTING = "ml_adaptive_lighting"
+ATTR_ML_PREFERENCE_SAMPLES = "ml_preference_samples"
+ATTR_ML_PREDICTED_BRIGHTNESS = "ml_predicted_brightness"
+
+# ML and mmWave sensor filtering configuration
+CONF_LEARN_LIGHTING_PREFERENCES, DEFAULT_LEARN_LIGHTING_PREFERENCES = (
+    "learn_lighting_preferences",
+    True,
+)
+CONF_MMWAVE_FAN_FILTER, DEFAULT_MMWAVE_FAN_FILTER = (
+    "mmwave_fan_filter",
+    True,
+)
+
 # Controls for the humidity stats sensor.
 CONF_HUMIDITY_TREND_DOWN_CUT_OFF, DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF = (
     "humidity_down",
@@ -500,6 +517,14 @@ ADVANCED_LIGHT_GROUP_FEATURE_SCHEMA: vol.Schema = vol.Schema(
         ): bool,
         vol.Optional(
             CONF_EXTERIOR_ARRIVAL_TRIGGER, default=DEFAULT_EXTERIOR_ARRIVAL_TRIGGER
+        ): bool,
+        vol.Optional(
+            CONF_LEARN_LIGHTING_PREFERENCES,
+            default=DEFAULT_LEARN_LIGHTING_PREFERENCES,
+        ): bool,
+        vol.Optional(
+            CONF_MMWAVE_FAN_FILTER,
+            default=DEFAULT_MMWAVE_FAN_FILTER,
         ): bool,
     }
 )

@@ -12,15 +12,20 @@ This document tracks all active, planned, and completed tasks for the **Simply M
 - **Target Platform**: `area_state_sensor.py`, `config_flow.py`, `const.py`
 - **Status**: ⏳ Open / Proposed
 
-### 2. Multi-Speed Exhaust Fan Support
-- **Feature**: Proportional ventilation speed control
-- **Description**: Allow configuration of distinct percentage fan speeds for background post-occupancy `extended` ventilation (e.g. 40%) versus high-speed steam extraction (`humidity_on`, 100%).
-- **Target Platform**: `fan.py`, `config_flow.py`, `const.py`
+### 2. Dual-Stage Shower Classifier & Trajectory Moisture Evacuation Modeling
+- **Feature**: Machine learning differential classification for ventilation
+- **Description**: Formulated architecture in [designs/ml_fusion_mmwave_and_environmental_design.md](designs/ml_fusion_mmwave_and_environmental_design.md). Implement logistic differential shower classification ($dRH/dt$, $dT/dt$, $\Delta H_{meta}$) and exponential drying curve fitting ($H(t) = H_{base} + \Delta H_{peak} e^{-kt}$) to calculate exact dynamic shutoff timestamps.
+- **Target Platform**: `fan.py`, `base/area_state_sensor.py`
 - **Status**: ⏳ Open / Proposed
 
 ---
 
 ## ✅ Completed Tasks
+
+### Machine Learning & Multi-Sensor Signal Processing
+- [x] **100% Local Online Bayesian Lighting Preference Learner (Zero-Cloud Personalization)**: Formulated mathematical model in [designs/ml_fusion_mmwave_and_environmental_design.md](designs/ml_fusion_mmwave_and_environmental_design.md) and implemented [`OnlineBayesianLightingLearner`](custom_components/simply_magic_areas/ml/lighting_learner.py). Operates completely on-device without cloud connectivity using pure Python matrix/vector Recursive Least Squares (RLS) and Sherman-Morrison rank-1 Bayesian Ridge Regression updates ($\mathcal{O}(d^2)$ execution $< 1\mu\text{s}$). Captures real-time user manual dimmer and slider adjustments on `AreaLightGroup` to continuously learn individual lux-to-brightness preferences across solar elevations and substate profiles. Automatically preserves daylight cutoff invariants, smoothly blends prior heuristics with learned preferences, and persists state across restarts in local JSON storage (`.storage/simply_magic_areas_lighting_ml_<area>`). Exposes `ml_adaptive_lighting_active`, `ml_preference_samples`, `ml_confidence`, and `ml_predicted_brightness` attributes. Validated with dedicated tests in [test_ml_lighting_and_fan.py](custom_components/simply_magic_areas/tests/test_ml_lighting_and_fan.py) and passing full test suite.
+- [x] **mmWave Radar Fan vs. Human False-Presence Discrimination**: Formulated physical Doppler model in [designs/ml_fusion_mmwave_and_environmental_design.md](designs/ml_fusion_mmwave_and_environmental_design.md) and implemented [`MMWaveFanFilter`](custom_components/simply_magic_areas/ml/mmwave_filter.py). Solved mmWave radar ghosting (continuous false occupancy caused by rotating ceiling, desk, and exhaust fans) by combining: (1) Actuator-Radar Causal Coupling directly tracking `AreaFanGroup` operational states; (2) Range Gate & Target Distance Spatial Filtering ($1.8\text{m} \le \text{dist} \le 3.5\text{m}$) with macro-motion bypass allowing humans walking through the fan zone to retain presence; (3) Rolling variance mechanical reflection detector ($\sigma^2 < 0.02$); and (4) Universal binary presence sensor dwell filtering. Automatically flags fan blade interference in `AreaStateSensor`, populating `filtered_fan_sensors` attribute and allowing rooms to clear accurately when occupants leave. Validated with dedicated tests in [test_ml_lighting_and_fan.py](custom_components/simply_magic_areas/tests/test_ml_lighting_and_fan.py).
+
 
 ### Architecture & Concurrency
 - [x] **Dual-Sensor Orthogonal State Architecture (Area Presence + Lighting Profile Separation)**: Completely decoupled physical occupancy states (`clear`, `occupied`, `extended`, `manual`) from ambient lighting scene states. Created companion entity [`AreaLightingProfileSensor`](custom_components/simply_magic_areas/base/area_lighting_profile_sensor.py) (`sensor.simply_magic_areas_lighting_profile_<area>`) exposing `standard`, `sleep`, `bright`, `accented`. Updated `AreaStateSensor` with `lighting_profile` attribute, and refactored `light.py`, `fan.py`, and `media_player.py` to decouple actuation power from profile modulation. Fully verified across all 62 tests.

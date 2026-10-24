@@ -35,6 +35,7 @@ from .config.light_entity_config import LightEntityConf
 
 DOMAIN = "simply_magic_areas"
 MODULE_DATA = f"{DOMAIN}_data"
+CAMERA_DOMAIN = "camera"
 
 # Magic Areas Events
 EVENT_MAGICAREAS_READY = "magicareas_ready"
@@ -129,6 +130,7 @@ ALL_PRESENCE_DEVICE_PLATFORMS = [
     MEDIA_PLAYER_DOMAIN,
     BINARY_SENSOR_DOMAIN,
     REMOTE_DOMAIN,
+    CAMERA_DOMAIN,
 ]
 (
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
@@ -193,11 +195,30 @@ CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR = "dark_lux_floor", 10
 CONF_LEARN_DAYLIGHT_LUX, DEFAULT_LEARN_DAYLIGHT_LUX = "learn_daylight_lux", True
 CONF_DAYLIGHT_LUX_LEVEL, DEFAULT_DAYLIGHT_LUX_LEVEL = "daylight_lux_level", 0
 
+# Exterior nighttime lighting
+CONF_EXTERIOR_LIGHTING_TIMEOUT, DEFAULT_EXTERIOR_LIGHTING_TIMEOUT = (
+    "exterior_lighting_timeout",
+    7200,
+)
+CONF_EXTERIOR_SUNSET_TRIGGER, DEFAULT_EXTERIOR_SUNSET_TRIGGER = (
+    "exterior_sunset_trigger",
+    True,
+)
+CONF_EXTERIOR_ARRIVAL_TRIGGER, DEFAULT_EXTERIOR_ARRIVAL_TRIGGER = (
+    "exterior_arrival_trigger",
+    True,
+)
+
 # State attributes for lux and daylight calibration
 ATTR_DARK_LUX_FLOOR = "dark_lux_floor"
 ATTR_HISTORICAL_DAYLIGHT_LUX = "historical_daylight_lux"
 ATTR_IS_WINDOWLESS = "is_windowless"
 ATTR_DARKNESS_RATIO = "darkness_ratio"
+
+# State attributes for exterior lighting
+ATTR_EXTERIOR_LIGHTING_ACTIVE = "exterior_lighting_active"
+ATTR_EXTERIOR_TIMER_TS = "exterior_timer_ts"
+ATTR_EXTERIOR_TRIGGER_REASON = "exterior_trigger_reason"
 # Controls for the humidity stats sensor.
 CONF_HUMIDITY_TREND_DOWN_CUT_OFF, DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF = (
     "humidity_down",
@@ -471,6 +492,15 @@ ADVANCED_LIGHT_GROUP_FEATURE_SCHEMA: vol.Schema = vol.Schema(
         vol.Optional(CONF_DARK_LUX_FLOOR, default=DEFAULT_DARK_LUX_FLOOR): cv.positive_int,
         vol.Optional(CONF_LEARN_DAYLIGHT_LUX, default=DEFAULT_LEARN_DAYLIGHT_LUX): bool,
         vol.Optional(CONF_DAYLIGHT_LUX_LEVEL, default=DEFAULT_DAYLIGHT_LUX_LEVEL): cv.positive_int,
+        vol.Optional(
+            CONF_EXTERIOR_LIGHTING_TIMEOUT, default=DEFAULT_EXTERIOR_LIGHTING_TIMEOUT
+        ): cv.positive_int,
+        vol.Optional(
+            CONF_EXTERIOR_SUNSET_TRIGGER, default=DEFAULT_EXTERIOR_SUNSET_TRIGGER
+        ): bool,
+        vol.Optional(
+            CONF_EXTERIOR_ARRIVAL_TRIGGER, default=DEFAULT_EXTERIOR_ARRIVAL_TRIGGER
+        ): bool,
     }
 )
 

@@ -439,6 +439,7 @@ async def test_light_illuminance_reference_sensor(
             CONF_FAN_CONTROL: False,
             CONF_MIN_BRIGHTNESS_LEVEL: 100,
             CONF_MAX_BRIGHTNESS_LEVEL: 200,
+            CONF_LEARN_DAYLIGHT_LUX: False,
             CONF_REFERENCE_ILLUMINANCE_SENSOR: "sensor.outdoor_lux_sensor",
             CONF_ENABLED_FEATURES: {
                 CONF_FEATURE_ADVANCED_LIGHT_GROUPS: {

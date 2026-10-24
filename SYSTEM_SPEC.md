@@ -372,6 +372,22 @@ flowchart TD
   - **Extended State Sensor Reactivity**: If the area is in the `extended` state, any state change in the sensors (presence sensors or room tracking sensors) immediately moves the area state back to `occupied`, cancels running extended timeouts, restarts the clear countdown buffer, and re-engages lighting automations (turning off exhaust ventilation unless prolonged by high humidity).
 - **Asynchronous Non-Blocking Execution**: In accordance with the Project Constitution, light command dispatches (`turn_on`, `turn_off`) utilize non-blocking async task dispatching (`call_service_non_blocking`), preventing event loop latency or blocking deadlocks across both loop callbacks and worker threads.
 
+#### 4.1.1 Exterior Nighttime Lighting & Presence Control
+For exterior spaces of the home (both concrete areas classified as `type: exterior` such as Porches, Patios, Driveways, and Yards, as well as the composite `Exterior` Meta-Area), Simply Magic Areas implements an autonomous outdoor lighting automation cycle:
+- **Sunset Dusk Trigger**: When `sun.sun` transitions to `below_horizon` (or solar elevation $\le 0^\circ$), exterior lights automatically turn ON and initialize a 2-hour inactivity countdown clock ($T = 7200\text{s}$).
+- **2-Hour Minimum Stay-On Guarantee**: Once activated, lights remain ON for at least two hours ($7200\text{s}$).
+- **Motion & Camera Reactivity**: Movement detected by exterior motion/presence sensors, vision cameras (`camera.*`), or child exterior areas restarts the 2-hour clock. When physical movement ceases ($E_{\text{motion}} \to 0$), the 2-hour timer resets from that exact clearance moment ($t_{\text{off}} + 7200\text{s}$).
+- **Resident Arrival Illumination**: Whenever any resident arrives home (any `person.*` entity in Home Assistant transitioning to `STATE_HOME` during nighttime), exterior lights turn ON (or restart their clock) to illuminate entry paths.
+- **Daytime Suppression**: During solar daytime (`sun.sun` is `above_horizon` or elevation $> 0^\circ$), exterior lights remain OFF and are suppressed from turning on upon motion or resident arrival.
+- **Sunrise Unconditional Clearance**: At sunrise (`sun.sun` transitions to `above_horizon`), any running exterior timer is cancelled and exterior lights are unconditionally extinguished (`force=True`).
+- **Decoupled Clearance Invariant**: Physical area clearance (`AreaState.AREA_STATE_CLEAR`) does not extinguish exterior lights while `exterior_lighting_active` is true. The 2-hour stay-on clock runs uninterrupted without falsely presenting uninhabited yards as occupied on Home Assistant dashboards.
+- **Restart & State Rehydration**: Recovers `exterior_timer_ts` across Home Assistant restarts; if nighttime and time remains, re-arms `async_call_later` for the remaining duration.
+- **Exposed Extra State Attributes**:
+  - `exterior_lighting_active`: Boolean indicating active outdoor stay-on control.
+  - `exterior_timer_ts`: Unix timestamp when the 2-hour stay-on clock expires.
+  - `exterior_trigger_reason`: Latest trigger event (`"sunset"`, `"motion"`, `"arrival"`).
+- **Zero-Config Defaults & Advanced Settings**: Enabled by default out of the box (`CONF_EXTERIOR_LIGHTING_TIMEOUT`: 7200s, `CONF_EXTERIOR_SUNSET_TRIGGER`: True, `CONF_EXTERIOR_ARRIVAL_TRIGGER`: True) and customizable only under Advanced Settings.
+
 ### 4.2 Ventilation & Fans (`fan.py`)
 - **Entity**: `AreaFanGroup` (`fan.simply_magic_areas_fan_<area>`).
 - **Post-Occupancy Ventilation (`extended` state)**:

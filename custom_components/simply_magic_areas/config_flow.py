@@ -33,6 +33,9 @@ from .const import (
     CONF_ENABLED_FEATURES,
     CONF_EXCLUDE_ENTITIES,
     CONF_EXTENDED_TIMEOUT,
+    CONF_EXTERIOR_ARRIVAL_TRIGGER,
+    CONF_EXTERIOR_LIGHTING_TIMEOUT,
+    CONF_EXTERIOR_SUNSET_TRIGGER,
     CONF_FAN_CONTROL,
     CONF_FAN_SUPPRESS_IN_SLEEP,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
@@ -562,6 +565,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
             CONF_DARK_LUX_FLOOR: self._build_selector_number(),
             CONF_LEARN_DAYLIGHT_LUX: selector({"boolean": {}}),
             CONF_DAYLIGHT_LUX_LEVEL: self._build_selector_number(),
+            CONF_EXTERIOR_LIGHTING_TIMEOUT: self._build_selector_number(
+                unit_of_measurement="seconds"
+            ),
+            CONF_EXTERIOR_SUNSET_TRIGGER: selector({"boolean": {}}),
+            CONF_EXTERIOR_ARRIVAL_TRIGGER: selector({"boolean": {}}),
         }
         for lg in ALL_LIGHT_ENTITIES:
             options.extend(lg.advanced_config_flow_options())

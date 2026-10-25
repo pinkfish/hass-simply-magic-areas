@@ -517,10 +517,13 @@ For exterior spaces of the home (both concrete areas classified as `type: exteri
 
 #### 4.8.2 mmWave Radar Fan vs. Human False-Presence Discriminator (`mmwave_filter.py`)
 - **Causal Actuator Coupling**: Directly correlates with the operational state of `AreaFanGroup` and physical fans in the area. When fans are OFF, radar presence operates with standard high sensitivity.
-- **Distance Gate & Spatial Masking**: Detects radar targets reporting distance in the fan zone ($1.8\text{m} \le \text{dist} \le 3.5\text{m}$) with low macro-motion energy ($E_{\text{motion}} < 25$), filtering out mechanical fan blade reflections while allowing moving occupants to retain presence.
-- **Variance Analysis**: Detects ultra-low sample variance ($\sigma^2 < 0.02$) characteristic of constant-RPM fan blades.
-- **Universal Binary Radar Dwell Filter**: If only a binary presence radar is available without distance attributes, filters out persistent radar occupancy when all other area presence sensors have cleared for $\ge 30\text{s}$ while a fan is running.
-- **Filtered Entity Attribute**: Exposes `filtered_fan_sensors` (`ATTR_FILTERED_FAN_SENSORS`) on `AreaStateSensor` for full user transparency.
+- **Distance Gate & Spatial Masking**: Detects radar targets reporting distance in the fan zone ($1.8\text{m} \le \text{dist} \le 3.5\text{m}$) and low-variance reflections characteristic of constant-RPM fan blades ($\sigma^2 < 0.02$).
+- **Multi-Signal & Secondary Sensor Element Evaluation**: When it is clear the mmWave sensor is detecting a fan, the primary `occupancy` state is bypassed. If the sensor exposes secondary signals (macro-motion energy $\ge 20$, multi-target tracking outside the fan zone $[1.8\text{m}, 3.5\text{m}]$, unmasked range gates 0, 1, 5–8 energy $\ge 20$, or companion motion binary sensors), those other elements are evaluated to determine whether an occupant is actually present in the room:
+  - If other elements confirm human presence, the room remains `occupied` and the sensor is added to `radar_fan_override_sensors`.
+  - If other elements show no human presence, the sensor is silenced as fan interference and added to `filtered_fan_sensors`.
+  - If the sensor does not expose secondary signals to work this out, it falls back to standard universal dwell filtering.
+- **Universal Binary Radar Dwell Filter**: If only a binary presence radar is available without secondary signals or distance attributes, filters out persistent radar occupancy when all other area presence sensors have cleared for $\ge 30\text{s}$ while a fan is running.
+- **Diagnostic Entity Attributes**: Exposes `filtered_fan_sensors` (`ATTR_FILTERED_FAN_SENSORS`) and `radar_fan_override_sensors` (`ATTR_RADAR_FAN_OVERRIDE_SENSORS`) on `AreaStateSensor` for full user transparency.
 
 ---
 
@@ -573,7 +576,9 @@ Advanced calibration and overrides are strictly encapsulated in dedicated advanc
 - Light scenes: Custom dim levels and entity assignments for `occupied`, `sleep`, `bright`, `accented`, `clear`, and `extended` states.
 
 #### 6.2.2 Advanced Ventilation & Humidity (`CONF_FEATURE_HUMIDITY`)
-- `learn_shower_humidity`: Autonomously learn shower humidity signatures and baseline from room history (default: `True`). Toggle to `False` to disable adaptive fan learning and enforce hardcoded boundaries.
+- `learn_shower_humidity`: Autonomously learn shower humidity signatures, baseline resting humidity, and dynamic exponential evacuation curves from room history (default: `True`). Combines:
+  1. **Dual-Stage Multi-Sensor Shower Classifier**: Logistic differential model combining humidity derivative ($dRH/dt$), acceleration ($d^2RH/dt^2$), thermal flux ($dT/dt$), localized meta differential ($\Delta H_{meta}$), and door contact state to differentiate showers from weather/storm fronts and cooking steam. Exposes `shower_probability`.
+  2. **Dynamic Exponential Drying Trajectory Fitting**: Uses closed-form log-linear least squares regression ($\ln(H(t) - H_{base}) = \ln(\Delta H_{peak}) - kt$) during downward drying slopes to compute the exact air exchange rate $k$ and project the optimal shutoff timestamp ($t_{dry}$), eliminating stationary derivative deadband flatlining. Exposes `drying_rate_k` and `estimated_dry_ts`.
 - `reference_humidity_sensor`: Entity ID of baseline humidity (climate entity, outdoor weather, hallway, or interior average).
 - `humidity_delta_threshold`: Minimum humidity % above reference to trigger ventilation (default: `10.0%`).
 - `humidity_delta_shutoff`: Delta % above reference below which the fan turns off (default: `3.0%`).

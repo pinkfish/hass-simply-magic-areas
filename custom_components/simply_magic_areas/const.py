@@ -222,6 +222,7 @@ ATTR_EXTERIOR_TRIGGER_REASON = "exterior_trigger_reason"
 
 # State attributes for ML and sensor filtering
 ATTR_FILTERED_FAN_SENSORS = "filtered_fan_sensors"
+ATTR_RADAR_FAN_OVERRIDE_SENSORS = "radar_fan_override_sensors"
 ATTR_ML_ADAPTIVE_LIGHTING = "ml_adaptive_lighting"
 ATTR_ML_PREFERENCE_SAMPLES = "ml_preference_samples"
 ATTR_ML_PREDICTED_BRIGHTNESS = "ml_predicted_brightness"
@@ -288,6 +289,9 @@ ATTR_HISTORICAL_SHOWER_RATE_PEAK = "historical_shower_rate_peak"
 ATTR_LEARNED_HUMIDITY_DELTA_THRESHOLD = "learned_humidity_delta_threshold"
 ATTR_LEARNED_HUMIDITY_TREND_UP_CUTOFF = "learned_humidity_trend_up_cutoff"
 ATTR_LEARNED_HUMIDITY_DELTA_SHUTOFF = "learned_humidity_delta_shutoff"
+ATTR_SHOWER_PROBABILITY = "shower_probability"
+ATTR_DRYING_RATE_K = "drying_rate_k"
+ATTR_ESTIMATED_DRY_TS = "estimated_dry_ts"
 # Mqtt room control
 CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE = ("mqqt_room", False)
 

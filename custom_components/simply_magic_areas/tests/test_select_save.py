@@ -36,6 +36,7 @@ async def test_save_select(
     assert area_binary_sensor.attributes == {
         "active_sensors": [],
         "filtered_fan_sensors": [],
+        "radar_fan_override_sensors": [],
         "friendly_name": "kitchen kitchen State (Simply Magic Areas)",
         "last_active_sensors": [],
         "presence_sensors": [],

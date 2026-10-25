@@ -4,6 +4,12 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from homeassistant.components.binary_sensor import (
+    DOMAIN as BINARY_SENSOR_DOMAIN,
+)
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+)
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.group.fan import FanGroup
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
@@ -38,6 +44,8 @@ from .base.magic import ControlType, MagicArea
 from .config.area_state import AreaState, LightingProfile
 from .config.entity_names import EntityNames
 from .const import (
+    ATTR_DRYING_RATE_K,
+    ATTR_ESTIMATED_DRY_TS,
     ATTR_HISTORICAL_HUMIDITY_BASELINE,
     ATTR_HISTORICAL_SHOWER_COUNT,
     ATTR_HISTORICAL_SHOWER_DELTA_PEAK,
@@ -52,6 +60,7 @@ from .const import (
     ATTR_MANUAL_CONTROL,
     ATTR_MANUAL_TIMEOUT_TS,
     ATTR_REFERENCE_HUMIDITY,
+    ATTR_SHOWER_PROBABILITY,
     CONF_FAN_SUPPRESS_IN_SLEEP,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_HUMIDITY,
@@ -83,6 +92,7 @@ from .const import (
     META_AREA_INTERIOR,
     MODULE_DATA,
 )
+from .ml import MoistureEvacuationModel, ShowerClassifier
 from .util import call_service_non_blocking
 
 _LOGGER = logging.getLogger(__name__)
@@ -178,6 +188,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self._current_shower_rate_peak: float = 0.0
         self._current_shower_delta_peak: float = 0.0
         self._current_shower_start_baseline: float | None = None
+
+        # Machine learning shower classifier and evacuation models
+        self._shower_classifier = ShowerClassifier()
+        self._evacuation_model = MoistureEvacuationModel()
 
         # Add static attributes
         self.last_update_from_entity: bool = False
@@ -332,6 +346,17 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self.async_on_remove(
                 async_track_state_change_event(
                     self.hass, [ref_sensor], self._trend_state_change
+                )
+            )
+
+        # Track temperature sensor for thermal flux shower classification
+        temp_sensor = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, SensorDeviceClass.TEMPERATURE
+        )
+        if self.hass.states.get(temp_sensor) is not None:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [temp_sensor], self._temperature_state_change
                 )
             )
 
@@ -578,6 +603,45 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if to_state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             self._humidity_fan_control()
 
+    def _temperature_state_change(self, event: Event[EventStateChangedData]) -> None:
+        if event.data["new_state"] is None:
+            return
+        state = event.data["new_state"].state
+        if state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            try:
+                temp_val = float(state)
+                now_ts = datetime.now(UTC).timestamp()
+                self._shower_classifier.update_temperature(temp_val, now_ts)
+            except (ValueError, TypeError):
+                pass
+
+    def _get_area_temperature(self) -> float | None:
+        sensor_id = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, SensorDeviceClass.TEMPERATURE
+        )
+        state = self.hass.states.get(sensor_id)
+        if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            try:
+                return float(state.state)
+            except (ValueError, TypeError):
+                pass
+        return None
+
+    def _is_door_closed(self) -> bool | None:
+        if BINARY_SENSOR_DOMAIN in self.area.entities:
+            for entity_meta in self.area.entities[BINARY_SENSOR_DOMAIN]:
+                ent_id = entity_meta.get(ATTR_ENTITY_ID)
+                if not ent_id:
+                    continue
+                state = self.hass.states.get(ent_id)
+                if (
+                    state
+                    and state.attributes.get("device_class")
+                    == BinarySensorDeviceClass.DOOR
+                ):
+                    return state.state == STATE_OFF
+        return None
+
     def _get_area_humidity(self) -> float | None:
         sensor_id = self.area.simply_magic_entity_id(
             SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
@@ -755,10 +819,27 @@ class AreaFanGroup(MagicEntity, FanGroup):
                     max(0.0, area_humidity - self._current_shower_start_baseline),
                 )
 
+        # Multi-sensor shower classification
+        area_temp = self._get_area_temperature()
+        door_closed = self._is_door_closed()
+        shower_prob = self._shower_classifier.compute_probability(
+            trend=trend_val,
+            ts=now_ts,
+            area_humidity=area_humidity if area_humidity is not None else 50.0,
+            ref_humidity=ref_humidity,
+            area_temp=area_temp,
+            door_closed=door_closed,
+            historical_baseline=self._historical_baseline_humidity,
+        )
+        self._attr_extra_state_attributes[ATTR_SHOWER_PROBABILITY] = shower_prob
+
         def _conclude_shower_event() -> None:
             if not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
                 return
             self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+            self._evacuation_model.reset()
+            self._attr_extra_state_attributes.pop(ATTR_DRYING_RATE_K, None)
+            self._attr_extra_state_attributes.pop(ATTR_ESTIMATED_DRY_TS, None)
             if (
                 self._current_shower_delta_peak >= 4.0
                 or self._current_shower_rate_peak >= 0.010
@@ -847,23 +928,75 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if humidity_delta is None and trend_val < trend_down_cutoff:
             _conclude_shower_event()
 
+        # 4b. Dynamic Exponential Evacuation Trajectory Complete
+        if (
+            learn_shower
+            and self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            and trend_val <= 0.0
+            and area_humidity is not None
+            and self._historical_baseline_humidity is not None
+        ):
+            fitted_k, est_dry_ts = self._evacuation_model.record_sample(
+                current_humidity=area_humidity,
+                baseline_humidity=self._historical_baseline_humidity,
+                now_ts=now_ts,
+                delta_shutoff=delta_shutoff,
+            )
+            if self._evacuation_model.drying_rate_k is not None:
+                self._attr_extra_state_attributes[ATTR_DRYING_RATE_K] = (
+                    self._evacuation_model.drying_rate_k
+                )
+            if self._evacuation_model.estimated_dry_ts is not None:
+                self._attr_extra_state_attributes[ATTR_ESTIMATED_DRY_TS] = (
+                    self._evacuation_model.estimated_dry_ts
+                )
+
+            if self._evacuation_model.is_evacuation_complete(
+                current_humidity=area_humidity,
+                baseline_humidity=self._historical_baseline_humidity,
+                now_ts=now_ts,
+                delta_shutoff=delta_shutoff,
+            ):
+                _LOGGER.info(
+                    "%s: Exponential moisture evacuation complete (k=%s, dry_ts=%s), shutting off fan",
+                    self.name,
+                    fitted_k,
+                    est_dry_ts,
+                )
+                _conclude_shower_event()
+
         # 5. Rising Trend / Activation Check
         activation_triggered = False
         if not max_runtime_exceeded:
             # Trigger A: Rapid rising trend (catches showers early)
             # Requires exceeding the resting shutoff noise floor (Delta H > delta_shutoff)
             # If explicit reference sensor is configured, respect differential threshold gating.
-            if trend_val >= trend_up_cutoff and (
-                (humidity_delta is None or humidity_delta > delta_shutoff)
+            if (
+                trend_val >= trend_up_cutoff
                 and (
-                    ref_humidity is None
-                    or (humidity_delta is not None and humidity_delta >= delta_threshold)
+                    (humidity_delta is None or humidity_delta > delta_shutoff)
+                    and (
+                        ref_humidity is None
+                        or (
+                            humidity_delta is not None
+                            and humidity_delta >= delta_threshold
+                        )
+                    )
+                )
+                and not (
+                    learn_shower and ref_humidity is not None and shower_prob < 0.20
                 )
             ):
                 activation_triggered = True
 
             # Trigger B: Sustained elevated differential (warm baths, gradual steam accumulation)
-            if humidity_delta is not None and humidity_delta >= delta_threshold:
+            if (
+                humidity_delta is not None
+                and humidity_delta >= delta_threshold
+                and not (
+                    learn_shower and ref_humidity is not None and shower_prob < 0.20
+                )
+            ):
                 activation_triggered = True
 
             # Trigger C: High absolute limit failsafe
@@ -897,6 +1030,9 @@ class AreaFanGroup(MagicEntity, FanGroup):
                     )
                     self._current_shower_start_baseline = (
                         self._historical_baseline_humidity or area_humidity
+                    )
+                    self._evacuation_model.record_peak(
+                        max(4.0, self._current_shower_delta_peak), now_ts
                     )
                 else:
                     self._current_shower_rate_peak = max(

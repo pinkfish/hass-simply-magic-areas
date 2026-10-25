@@ -43,6 +43,7 @@ from ..const import (
     ATTR_LAST_OFF_TIME,
     ATTR_LIGHTING_PROFILE,
     ATTR_PRESENCE_SENSORS,
+    ATTR_RADAR_FAN_OVERRIDE_SENSORS,
     ATTR_STATE,
     ATTR_TYPE,
     CONF_CLEAR_TIMEOUT,
@@ -334,6 +335,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 ATTR_ACTIVE_SENSORS: [],
                 ATTR_LAST_ACTIVE_SENSORS: [],
                 ATTR_FILTERED_FAN_SENSORS: [],
+                ATTR_RADAR_FAN_OVERRIDE_SENSORS: [],
                 ATTR_PRESENCE_SENSORS: self._sensors,
                 ATTR_TYPE: self.area.config.get(CONF_TYPE),
                 ATTR_LIGHTING_PROFILE: getattr(
@@ -355,6 +357,9 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         )
         self._attr_extra_state_attributes[ATTR_FILTERED_FAN_SENSORS] = getattr(
             self, "_filtered_fan_sensors", []
+        )
+        self._attr_extra_state_attributes[ATTR_RADAR_FAN_OVERRIDE_SENSORS] = getattr(
+            self, "_radar_fan_override_sensors", []
         )
 
         if self.area.is_meta():
@@ -739,6 +744,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         active_sensors: list[str] = []
         filtered_fan_sensors: list[str] = []
+        radar_fan_override_sensors: list[str] = []
         active_areas: set[str] = set()
 
         adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
@@ -776,20 +782,30 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                     continue
 
                 if entity.state in valid_states:
-                    if (
-                        enable_mmwave_filter
-                        and self._mmwave_filter
-                        and self._mmwave_filter.is_fan_interference(
-                            sensor, entity, self._sensors
+                    if enable_mmwave_filter and self._mmwave_filter:
+                        is_fan, has_human, has_signals = (
+                            self._mmwave_filter.evaluate_radar_signals(
+                                sensor, entity, self._sensors
+                            )
                         )
-                    ):
-                        _LOGGER.info(
-                            "[Area: %s] Sensor %s filtered as fan blade interference (fan is running)",
-                            self.area.slug,
-                            sensor,
-                        )
-                        filtered_fan_sensors.append(sensor)
-                        continue
+                        if is_fan:
+                            if has_signals and has_human:
+                                _LOGGER.info(
+                                    "[Area: %s] Radar %s detects fan, but secondary signals confirm human presence",
+                                    self.area.slug,
+                                    sensor,
+                                )
+                                radar_fan_override_sensors.append(sensor)
+                                active_sensors.append(sensor)
+                                continue
+                            else:
+                                _LOGGER.info(
+                                    "[Area: %s] Sensor %s filtered as fan blade interference (fan is running)",
+                                    self.area.slug,
+                                    sensor,
+                                )
+                                filtered_fan_sensors.append(sensor)
+                                continue
 
                     _LOGGER.debug(
                         "[Area: %s] Valid presence sensor found: %s",
@@ -948,8 +964,12 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         self._attr_extra_state_attributes["active_sensors"] = active_sensors
         self._filtered_fan_sensors = filtered_fan_sensors
+        self._radar_fan_override_sensors = radar_fan_override_sensors
         self._attr_extra_state_attributes[ATTR_FILTERED_FAN_SENSORS] = (
             filtered_fan_sensors
+        )
+        self._attr_extra_state_attributes[ATTR_RADAR_FAN_OVERRIDE_SENSORS] = (
+            radar_fan_override_sensors
         )
 
         # Make a copy that doesn't gets cleared out, for debugging

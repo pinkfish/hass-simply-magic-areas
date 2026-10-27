@@ -4,11 +4,11 @@ Originally forked from [jseidl/hass-magic_areas](https://github.com/jseidl/hass-
 
 ![Simply Magic Areas](https://raw.githubusercontent.com/home-assistant/brands/master/custom_integrations/simply_magic_areas/icon.png)
 
-![Build Status](https://github.com/pinkfish/hass-simply-magic-areas/actions/workflows/validation.yaml/badge.svg) ![Test Status](https://github.com/pinkfish/hass-simply-magic-areas/actions/workflows/test.yaml/badge.svg) [![Latest release](https://img.shields.io/github/v/release/pinkfish/hass-simply-magic-areas.svg)](https://github.com/pinkfish/hass-simply-magic-areas/releases) [![GitHub latest commit](https://badgen.net/github/last-commit/pinkfish/hass-simply-magic-areas)](https://github.com/pinkfish/hass-simply-magic-areas/commit/) [![GitHub contributors](https://badgen.net/github/contributors/pinkfish/hass-simply-magic-areas)](https://github.com/pinkfish/hass-simply-magic-areas/graphs/contributors/)
+![Build Status](https://github.com/pinkfish/hass-simply-magic-areas/actions/workflows/validation.yaml/badge.svg) ![Test Status](https://github.com/pinkfish/hass-simply-magic-areas/actions/workflows/test.yaml/badge.svg) [![Latest release](https://img.shields.io/github/v/release/pinkfish/hass-simply-magic-areas.svg)](https://github.com/pinkfish/hass-simply-magic-areas/releases) [![System Spec](https://img.shields.io/badge/Architecture-SYSTEM__SPEC-blue.svg)](SYSTEM_SPEC.md) [![GitHub latest commit](https://badgen.net/github/last-commit/pinkfish/hass-simply-magic-areas)](https://github.com/pinkfish/hass-simply-magic-areas/commit/) [![GitHub contributors](https://badgen.net/github/contributors/pinkfish/hass-simply-magic-areas)](https://github.com/pinkfish/hass-simply-magic-areas/graphs/contributors/)
 
 Tired of writing the same automations over and over for every room? Tired of complex YAML templates for motion grouping, dim levels, and fan timers?
 
-**Simply Magic Areas** gives Home Assistant the "missing batteries" for whole-home automation. It groups all presence and environmental sensors per area, maintains orthogonal presence and lighting states, continuously learns your personal brightness preferences via online Bayesian regression, discriminates false motion caused by spinning fan blades on mmWave radars, and models moisture evacuation curves to ventilate bathrooms perfectly without getting stuck running forever.
+**Simply Magic Areas** gives Home Assistant the "missing batteries" for whole-home automation. It groups all presence and environmental sensors per area, maintains orthogonal presence and lighting states, continuously learns your personal brightness preferences via online Bayesian regression, discriminates false motion caused by spinning fan blades on mmWave radars, and models moisture evacuation curves to ventilate bathrooms perfectly without getting stuck running forever. Detailed mathematical formulations and architecture diagrams are documented in the [System Specification (SYSTEM_SPEC.md)](SYSTEM_SPEC.md).
 
 ---
 
@@ -112,9 +112,18 @@ They are **adaptive by default**—no manual tuning is required for everyday ope
 3. Each Home Assistant area will have its own Simply Magic Areas configuration entry.
 4. **Meta-Areas** (`Global`, `Interior`, `Exterior`) can be configured to broadcast shared policies (sleep entities, accent entities, timeouts) across all rooms automatically.
 
-> 💡 **Tip**: For detailed architecture specifications, state machines, and mathematical models, refer to [SYSTEM_SPEC.md](SYSTEM_SPEC.md) and the design documents in the [designs/](designs/) directory.
-
 ---
+
+## 📐 System Specification & Technical Deep-Dives
+
+Complete state machine diagrams, lifecycle invariants, mathematical formulations, and subsystem architectures are documented in the [System Specification (SYSTEM_SPEC.md)](SYSTEM_SPEC.md).
+
+For detailed engineering deep-dives, explore the architecture designs in the [designs/](designs/) directory:
+* [Adaptive Shower & Moisture Evacuation Modeling](designs/adaptive_humidity_shower_design.md)
+* [Bathroom Humidity Fan Controller](designs/bathroom_humidity_fan_design.md)
+* [Hierarchical Meta-Area Configuration Inheritance](designs/meta_area_config_inheritance_design.md)
+* [Occupancy Hold & Manual Override System](designs/manual_override_occupancy_hold_design.md)
+* [Multi-Sensor Signal Fusion & mmWave Fan Discrimination](designs/ml_fusion_mmwave_and_environmental_design.md)
 
 ## 🐛 Troubleshooting & Debug Logging
 

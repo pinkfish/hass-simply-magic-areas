@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help us improve Magic Areas
+about: Create a report to help us improve Simply Magic Areas
 title: 'Bug: ...'
 labels: bug
 assignees: ''

@@ -122,6 +122,16 @@ They are **adaptive by default**—no manual tuning is required for everyday ope
 
 Each Home Assistant area is configured through its configuration entry in **Settings** > **Devices & Services** > **Simply Magic Areas** > **Configure**.
 
+To make setup straightforward, configuration documentation is organized into modular, domain-specific guides:
+
+| Modular Guide | Focus Areas & Covered Configuration Parameters |
+| :--- | :--- |
+| 📘 **[Basic Area Configuration Guide](docs/basic_area_configuration.md)** | Core area types (`interior`, `exterior`, `meta`), clearance timeouts, master actuator toggles, basic dimming levels, photometric floors, MQTT room tracking, and Meta-Area policy inheritance. |
+| 💡 **[Lighting, Presence & Exterior Guide](docs/lighting_and_presence.md)** | Advanced presence sensor filtering (`include`/`exclude`), Bayesian ML brightness preference learner, mmWave radar fan blade filter, exterior dusk-to-dawn lighting, and per-profile entity assignments. |
+| 💧 **[Ventilation & Shower Humidity Guide](docs/ventilation_and_humidity.md)** | Nighttime acoustic fan suppression, zero-config baseline resolution, differential shower humidity triggers, drying slope sustain invariant, and adaptive historical shower signature learning. |
+| 🛠️ **[Advanced Features, Aggregates & System Control Guide](docs/advanced_features.md)** | Climate groups and occupancy setbacks, Area-Aware Media Player (AAMP targeted TTS routing), sensor aggregates, cover/media groups, health/distress monitors, and system control master switches. |
+
+
 ---
 
 ### 🌙 How to Turn Off Fans at Night (Bathroom Sleep Suppression)

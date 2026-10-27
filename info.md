@@ -17,4 +17,16 @@ If you think all of the above features are freaking awesome, **Simply Magic Area
 1. Open **HACS** > Click **⋮** > **Custom repositories**.
 2. Add `https://github.com/pinkfish/hass-simply-magic-areas` as an **Integration**.
 3. Click **Download**, then restart Home Assistant.
-4. Go to **Settings** > **Devices & Services** > **Add Integration** and search for **Simply Magic Areas**.
+4. Go to **Settings** > **Devices & Services** > **Add Integration** and search for **Simply Magic Areas**.
+
+---
+
+## 📚 Documentation & Configuration Guides
+
+Configuration is organized into modular guides:
+- 📘 **[Basic Area Configuration Guide](docs/basic_area_configuration.md)**: Area types, timeouts, light/fan toggles, dim levels, and Meta-Area policy inheritance.
+- 💡 **[Lighting, Presence & Exterior Guide](docs/lighting_and_presence.md)**: Entity inclusion/exclusion, Bayesian ML brightness preference learner, mmWave radar fan filter, and exterior nighttime lighting.
+- 💧 **[Ventilation & Shower Humidity Guide](docs/ventilation_and_humidity.md)**: Acoustic sleep fan suppression, zero-config baseline resolution, and adaptive historical shower learning.
+- 🛠️ **[Advanced Features, Aggregates & System Control Guide](docs/advanced_features.md)**: Climate groups, Area-Aware Media Player (AAMP), sensor aggregates, and system control switch.
+- 📐 **[System Technical Specification](SYSTEM_SPEC.md)**: Complete architectural invariants and state machine definitions.
+

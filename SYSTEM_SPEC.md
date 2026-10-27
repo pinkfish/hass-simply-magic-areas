@@ -605,8 +605,13 @@ To prevent technical debt, knowledge drift, and user confusion, Simply Magic Are
 
 ### 7.1 Multi-Tier Documentation Hierarchy
 The documentation corpus of Simply Magic Areas is structured into three tightly synchronized tiers:
-1. **User Documentation (`README.md`, `info.md`)**:
+1. **User Documentation (`README.md`, `info.md`, `docs/`)**:
    - Primary entry point for end users and community administrators.
+   - Core index in `README.md` and `info.md` links directly to dedicated domain-specific configuration guides:
+     - `docs/basic_area_configuration.md`: Basic setup, timeouts, actuator toggles, dim levels, and Meta-Area inheritance.
+     - `docs/lighting_and_presence.md`: Presence sensor filtering, Bayesian ML brightness preference learner, mmWave radar fan filter, and exterior nighttime lighting.
+     - `docs/ventilation_and_humidity.md`: Acoustic sleep fan suppression, zero-config baseline resolution, differential shower humidity triggers, and adaptive historical shower signature learning.
+     - `docs/advanced_features.md`: Climate groups, Area-Aware Media Player (AAMP), group creation, sensor aggregates, health monitors, and master system control switch.
    - Must comprehensively and accurately describe installation via HACS, quick start guides, high-level features, basic configuration, advanced options flows, and entity attributes.
    - Must remain 100% free of dead links, outdated repository URLs, or unconfigured community channels.
    - `info.md` must mirror essential installation instructions, feature highlights, and configuration guides for HACS in-app rendering.

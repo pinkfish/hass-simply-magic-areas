@@ -1,6 +1,6 @@
 # Contributing to Simply Magic Areas
 
-Everybody is invited and welcome to contribute to Simply Magic Areas. There is a lot to do... If you are not a developer, perhaps you would like to help with the documentation on [the wiki](https://github.com/pinkfish/hass-simply-magic-areas/wiki)? If you are a developer and have ideas for features or a bug you think you can fix, your contribution is immensely appreciated!
+**Simply Magic Areas** was originally forked from [jseidl/hass-magic_areas](https://github.com/jseidl/hass-magic_areas). Everybody is invited and welcome to contribute to Simply Magic Areas. There is a lot to do... If you are not a developer, perhaps you would like to help with the documentation on [the wiki](https://github.com/pinkfish/hass-simply-magic-areas/wiki)? If you are a developer and have ideas for features or a bug you think you can fix, your contribution is immensely appreciated!
 
 If you don't have any bugs or ideas but are willing to contribute to Simply Magic Areas, take a look at the [open issues](https://github.com/pinkfish/hass-simply-magic-areas/issues) for inspiration!
 

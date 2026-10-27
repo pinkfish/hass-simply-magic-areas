@@ -1,4 +1,7 @@
 # Simply Magic Areas for Home Assistant
+
+Originally forked from [jseidl/hass-magic_areas](https://github.com/jseidl/hass-magic_areas).
+
 ![Simply Magic Areas](https://raw.githubusercontent.com/home-assistant/brands/master/custom_integrations/simply_magic_areas/icon.png)
 
 ![Build Status](https://github.com/pinkfish/hass-simply-magic-areas/actions/workflows/validation.yaml/badge.svg) [![Latest release](https://img.shields.io/github/v/release/pinkfish/hass-simply-magic-areas.svg)](https://github.com/pinkfish/hass-simply-magic-areas/releases) [![GitHub latest commit](https://badgen.net/github/last-commit/pinkfish/hass-simply-magic-areas)](https://GitHub.com/pinkfish/hass-simply-magic-areas/commit/) [![GitHub contributors](https://badgen.net/github/contributors/pinkfish/hass-simply-magic-areas)](https://GitHub.com/pinkfish/hass-simply-magic-areas/graphs/contributors/)

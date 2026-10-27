@@ -135,3 +135,10 @@ When reporting an issue, please capture the relevant lines from `/config/home-as
 ## 🤝 Contributing
 
 Contributions, feature suggestions, and bug reports are warmly welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md) for testing guidelines (`pytest`) and development standards.
+
+---
+
+## 🙏 Credits & Acknowledgments
+
+**Simply Magic Areas** was originally forked from [jseidl/hass-magic_areas](https://github.com/jseidl/hass-magic_areas) created by [Gustavo Seidl](https://github.com/jseidl). We are grateful to Gustavo and all original contributors for establishing the foundations and architecture of Magic Areas upon which Simply Magic Areas continues to evolve.
+

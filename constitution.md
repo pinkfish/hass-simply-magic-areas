@@ -46,7 +46,13 @@ This document establishes the governing development standards, architectural inv
 
 ---
 
-## 6. Continuous Specification & Task Invariant
-- **Always Update the Spec**: Any change to features, configurations, entities, state models, or integration behavior must immediately be updated in [SYSTEM_SPEC.md](SYSTEM_SPEC.md). Code and specification must never drift out of sync.
+## 6. Continuous Documentation & Specification Invariant
+- **Always Update the Spec & Documentation**: Any change to features, configurations, entities, state models, default values, or integration behavior must immediately be reflected across all documentation:
+  - Technical specification in [SYSTEM_SPEC.md](SYSTEM_SPEC.md)
+  - User documentation in [README.md](README.md) and [info.md](info.md)
+  - Algorithmic design blueprints in [designs/](designs/)
+  Code, specification, and documentation must never drift out of sync.
+- **Zero-Drift Policy**: No feature, refactor, or configuration change is considered complete without accompanying synchronous documentation updates.
 - **Synchronous Task Tracking**: Tasks, roadmaps, and progress must be maintained synchronously in [tasks.md](tasks.md).
+
 

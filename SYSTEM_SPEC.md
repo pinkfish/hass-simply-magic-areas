@@ -19,6 +19,14 @@ A guiding invariant of Simply Magic Areas is **Convention Over Configuration**: 
   - **Adaptive by Default**: Complex calibration is eliminated from the user journey. Both **Adaptive Lighting** (`learn_daylight_lux`) and **Adaptive Ventilation** (`learn_shower_humidity`) are **always enabled by default** (`default: True`). The system autonomously learns room-specific lux baselines and shower humidity signatures from sensor history without any setup.
   - **Simple Setup with Advanced Overrides Only**: The basic area configuration form contains only essential high-level intent (e.g. Area Type, Timeouts, Light Control, Fan Control). Detailed numerical calibrations, threshold overrides, and options to disable adaptive learning (`learn_daylight_lux`, `learn_shower_humidity`, `dark_lux_floor`, `daylight_lux_level`, and humidity rate cutoffs) are strictly encapsulated within dedicated **Advanced Settings** (`advanced_light_groups` and `humidity` feature configs). Everyday users never have to configure numerical thresholds.
 
+### 1.2 Continuous Documentation & Specification Invariant
+
+A strict engineering invariant of Simply Magic Areas is that **documentation, system specifications, and implementation code are maintained in absolute synchrony**:
+
+- **No Undocumented Changes**: Any change to integration code—including features, configuration options flows, default parameters, state attributes, entity platforms, or algorithmic heuristics—**must** be accompanied by immediate updates to both this System Specification (`SYSTEM_SPEC.md`) and user-facing documentation (`README.md`, `info.md`, and relevant design blueprints in `designs/`).
+- **Zero Drift Principle**: Code, specification, and documentation must never drift out of sync. PRs or commits that introduce, alter, or remove functionality without synchronously updating user documentation and technical specifications are non-conformant.
+- **Accuracy of User Guides**: Configuration options, default timeout values, HACS installation workflows, and night-time fan suppression setups documented in `README.md` and `info.md` must accurately reflect the active codebase at all times.
+
 ---
 
 ## 2. System Architecture & Topology
@@ -591,7 +599,32 @@ Advanced calibration and overrides are strictly encapsulated in dedicated advanc
 
 ---
 
-## 7. Roadmap & Project Tasks
+## 7. Continuous Documentation & Architectural Governance
+
+To prevent technical debt, knowledge drift, and user confusion, Simply Magic Areas establishes continuous documentation synchronization as a non-negotiable architectural invariant:
+
+### 7.1 Multi-Tier Documentation Hierarchy
+The documentation corpus of Simply Magic Areas is structured into three tightly synchronized tiers:
+1. **User Documentation (`README.md`, `info.md`)**:
+   - Primary entry point for end users and community administrators.
+   - Must comprehensively and accurately describe installation via HACS, quick start guides, high-level features, basic configuration, advanced options flows, and entity attributes.
+   - Must remain 100% free of dead links, outdated repository URLs, or unconfigured community channels.
+   - `info.md` must mirror essential installation instructions, feature highlights, and configuration guides for HACS in-app rendering.
+2. **Technical System Specification (`SYSTEM_SPEC.md`)**:
+   - The authoritative single source of truth for all architectural invariants, state machines, entity definitions, naming schemas, configuration options dictionaries, and mathematical algorithms.
+   - Any modification to integration capabilities, heuristics, or schemas must be codified here before or concurrent with code implementation.
+3. **Deep-Dive Algorithmic Design Documents (`designs/*.md`)**:
+   - In-depth mathematical formulations, statistical proofs, physics models (thermodynamic moisture evacuation, Bayesian preference regression, mmWave spatial radar filtering), and verification protocols.
+   - Maintained continuously whenever internal algorithmic models or formulas are calibrated or enhanced.
+
+### 7.2 Zero-Drift Mandate & Commit Invariant
+- **Synchronous Updates**: A feature, fix, or refactor is strictly incomplete until its corresponding documentation across all three tiers is updated. No code change that impacts configuration options, default values, entity attributes, or behavioral state transitions may be committed without updating both user documentation (`README.md`, `info.md`) and technical specifications (`SYSTEM_SPEC.md`, `designs/`).
+- **Audit Requirement**: Every Pull Request and release review must verify documentation completeness against code diffs as an obligatory quality gate.
+
+---
+
+## 8. Roadmap & Project Tasks
 
 Active development, architectural roadmap items, open feature proposals, and completed implementation tasks are tracked in [tasks.md](tasks.md).
+
 

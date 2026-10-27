@@ -168,10 +168,10 @@ async def test_manual_fan_turn_off_while_occupied_holds_until_clear(
     # Make area occupied then extended (where fans normally turn on)
     one_motion[0].turn_on()
     await hass.async_block_till_done()
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.2)
     one_motion[0].turn_off()
     await hass.async_block_till_done()
-    await asyncio.sleep(4.5)
+    await asyncio.sleep(3.3)
     await hass.async_block_till_done()
 
     area_state = hass.states.get(f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen")
@@ -182,12 +182,12 @@ async def test_manual_fan_turn_off_while_occupied_holds_until_clear(
     # Underlying fan was commanded on by automation
     one_fan[0].turn_on()
     await hass.async_block_till_done()
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.2)
 
     # User manually turns fan OFF (e.g. wall switch)
     one_fan[0].turn_off()
     await hass.async_block_till_done()
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.2)
 
     fan_state = hass.states.get(f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen")
     assert fan_state.state == STATE_OFF
@@ -195,7 +195,7 @@ async def test_manual_fan_turn_off_while_occupied_holds_until_clear(
     assert len(calls_on) == 0
 
     # Wait for area to clear -> Occupancy change resets manual hold
-    await asyncio.sleep(3.5)
+    await asyncio.sleep(2.5)
     await hass.async_block_till_done()
 
     area_state = hass.states.get(f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen")

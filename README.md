@@ -180,6 +180,59 @@ Instead of setting the same sleep switches and timeouts for every room individua
 
 ---
 
+### 🛠️ Advanced Feature Configuration Flows
+
+When you click **Configure** on any area, Simply Magic Areas allows you to select features to activate. Each enabled feature provides dedicated configuration flow steps for advanced and complex setups:
+
+#### 1. Advanced Light Groups & Custom Lighting Profiles
+* **Entity Whitelist / Blacklist**:
+  * **Include Entities** (`include_entities`): Pull sensors or switches located in adjacent areas or unassigned zones into this area's presence logic.
+  * **Exclude Entities** (`exclude_entities`): Exclude noisy or misbehaving sensors from triggering presence without having to delete them from Home Assistant.
+* **Presence Sensor Customization**:
+  * **Presence Platforms** (`presence_device_platforms`): Specify which integration platforms contribute to presence (e.g. `binary_sensor`, `media_player`, `device_tracker`).
+  * **Device Classes** (`presence_sensor_device_class`): Filter presence by device class (e.g. `motion`, `occupancy`, `presence`, `door`, `window`).
+  * **Active Sensor States** (`on_states`): Customize which states trigger presence (defaults to `on`, `home`, `playing`, `open`).
+* **Per-Profile Lighting & Dimming**:
+  * Assign dedicated lights for each lighting profile: `occupied_lights`, `clear_lights`, `extended_lights`, `sleep_lights`, `bright_lights`, `accented_lights`.
+  * Set granular dim levels:
+    * `clear_state_dim`: Subtle nightlight or dimmed glow after clearing (e.g. `10%`, or `0` for complete shutoff).
+    * `extended_state_dim`: Soft transitional dim level before turning off.
+    * `accented_state_dim`: Accent mood lighting when the area's accent switch/entity is engaged.
+* **Photometrics & Dark Floor Guarantee**:
+  * **Dark Lux Floor** (`dark_lux_floor`): Guaranteed baseline (default: `10 lx`). Even during bright sunny days, windowless closets, pantries, and interior bathrooms always treat ambient lux at or below this floor as dark, ensuring lights always turn on automatically.
+  * **Daylight Calibration** (`learn_daylight_lux`): Autonomously computes your room's natural daytime illuminance baseline from sensor history.
+
+#### 2. Climate Groups (HVAC Energy Saving)
+* **Turn On State** (`turn_on_state`): Choose whether climate devices (thermostats, ACs, mini-splits, heat pumps) activate when the area enters **Occupied** or **Extended**.
+* **Energy Automation**: When all residents leave the room and it transitions to `clear`, climate groups safely power down or drop to setback mode, turning back on immediately upon re-entry.
+
+#### 3. Area-Aware Media Player & Targeted Announcements
+* **Notification Devices** (`notification_devices`): Select the smart speakers, Sonos, or media receivers situated in this area.
+* **Notification States** (`notification_states`): Select which area states allow broadcast playback (e.g. `occupied`, `extended`).
+* **Smart Routing**: Direct TTS alerts, doorbell chimes, and reminders exclusively to occupied rooms—preventing announcements from echoing across empty rooms or disturbing sleeping household members.
+
+#### 4. Aggregate Sensor Groups, Covers & Media
+* **Automatic Sensor Aggregates** (`aggregates`): Automatically creates unified aggregate sensors for the area:
+  * Binary aggregates (`all`, `any`): e.g. `binary_sensor.simply_magic_areas_motion_<area>` (turns on if ANY motion sensor detects movement).
+  * Numeric aggregates (`mean`, `sum`, `min`, `max`): e.g. `sensor.simply_magic_areas_temperature_<area>` (area average temperature).
+* **Minimum Entities Threshold** (`aggregates_min_entities`, default: `2`): Prevents redundant aggregate sensors if an area only has a single entity.
+* **Cover Groups** (`cover_groups`): Bundles motorized blinds, shades, and curtains into a single master control entity per area.
+* **Media Player Groups** (`media_player_groups`): Groups all speakers in the area into a single unified media player entity.
+
+#### 5. Presence Hold Switch & Party/Cleaning Overrides
+* **Presence Hold Switch** (`presence_hold`): Creates `switch.simply_magic_areas_presence_hold_<area>`. Turning this switch on locks the area in `occupied` regardless of sensor timeouts.
+* **Presence Hold Timeout** (`presence_hold_timeout`): Auto-expiration timer in seconds (set to `0` to keep holding indefinitely until manually toggled off). Perfect for movie nights, guest visits, or reading without moving.
+* **System Control Switch**: Creates `switch.simply_magic_areas_system_control_<area>`. Flipping this switch turns off automated control for the room completely, reverting all lights and fans to manual control for cleaning, painting, or parties.
+
+#### 6. Health & Safety Aggregates
+* **Health Monitoring** (`health`): Automatically groups problem sensors, smoke alarms, gas detectors, and moisture/leak sensors into unified safety aggregates:
+  * `binary_sensor.simply_magic_areas_health_problem_<area>`
+  * `binary_sensor.simply_magic_areas_health_gas_<area>`
+  * `binary_sensor.simply_magic_areas_health_smoke_<area>`
+  * `binary_sensor.simply_magic_areas_health_leak_<area>`
+
+---
+
 ## 📐 System Specification & Technical Deep-Dives
 
 Complete state machine diagrams, lifecycle invariants, mathematical formulations, and subsystem architectures are documented in the [System Specification (SYSTEM_SPEC.md)](SYSTEM_SPEC.md).

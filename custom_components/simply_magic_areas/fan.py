@@ -860,10 +860,15 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self._current_shower_start_baseline = None
 
         # 1. Deadband Flatline Detection
+        start_baseline = (
+            self._current_shower_start_baseline
+            or self._historical_baseline_humidity
+        )
         deadband = humidity_feature_config.get(
             CONF_HUMIDITY_DEADBAND, DEFAULT_HUMIDITY_DEADBAND
         )
-        if abs(trend_val) > deadband:
+        effective_deadband = max(0.003, deadband)
+        if abs(trend_val) > effective_deadband:
             self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = None
         elif self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ZERO_TS) is None:
             self._attr_extra_state_attributes[ATTR_HUMIDITY_ZERO_TS] = now_ts
@@ -875,14 +880,20 @@ class AreaFanGroup(MagicEntity, FanGroup):
             wait_time = humidity_feature_config.get(
                 CONF_HUMIDITY_ZERO_WAIT_TIME, DEFAULT_HUMIDITY_ZERO_WAIT_TIME
             )
-            if zero_time > wait_time:
+            is_near_baseline = (
+                start_baseline is not None
+                and area_humidity is not None
+                and area_humidity <= (start_baseline + 5.0)
+            )
+            effective_wait = min(300, wait_time) if is_near_baseline else wait_time
+            if zero_time > effective_wait:
                 _LOGGER.debug(
                     "%s: Humidity rate %s within deadband %s for %ss (> %ss), turning off",
                     self.name,
                     trend_val,
                     deadband,
                     zero_time,
-                    wait_time,
+                    effective_wait,
                 )
                 _conclude_shower_event()
 
@@ -921,6 +932,23 @@ class AreaFanGroup(MagicEntity, FanGroup):
             )
             _conclude_shower_event()
 
+        # 3b. Pre-Shower Baseline Return Check (Robust against inter-room calibration skew)
+        if (
+            start_baseline is not None
+            and area_humidity is not None
+            and self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            and area_humidity <= (start_baseline + max(2.0, delta_shutoff))
+            and trend_val <= 0.002
+        ):
+            _LOGGER.debug(
+                "%s: Humidity (%.1f%%) returned to pre-shower baseline (%.1f%% + shutoff %.1f%%), turning off",
+                self.name,
+                area_humidity,
+                start_baseline,
+                delta_shutoff,
+            )
+            _conclude_shower_event()
+
         # 4. Falling Trend Check (Standalone fallback when reference delta is unavailable)
         trend_down_cutoff = humidity_feature_config.get(
             CONF_HUMIDITY_TREND_DOWN_CUT_OFF, DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF
@@ -929,16 +957,21 @@ class AreaFanGroup(MagicEntity, FanGroup):
             _conclude_shower_event()
 
         # 4b. Dynamic Exponential Evacuation Trajectory Complete
+        effective_baseline = (
+            self._current_shower_start_baseline
+            or self._historical_baseline_humidity
+            or ref_humidity
+        )
         if (
             learn_shower
             and self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
             and trend_val <= 0.0
             and area_humidity is not None
-            and self._historical_baseline_humidity is not None
+            and effective_baseline is not None
         ):
             fitted_k, est_dry_ts = self._evacuation_model.record_sample(
                 current_humidity=area_humidity,
-                baseline_humidity=self._historical_baseline_humidity,
+                baseline_humidity=effective_baseline,
                 now_ts=now_ts,
                 delta_shutoff=delta_shutoff,
             )
@@ -953,7 +986,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
             if self._evacuation_model.is_evacuation_complete(
                 current_humidity=area_humidity,
-                baseline_humidity=self._historical_baseline_humidity,
+                baseline_humidity=effective_baseline,
                 now_ts=now_ts,
                 delta_shutoff=delta_shutoff,
             ):
@@ -1085,7 +1118,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if fans_on:
             self._turn_on_fan()
         elif self.area.state == AreaState.AREA_STATE_EXTENDED:
-            if self._is_fan_suppressed_in_sleep():
+            if (
+                self._is_fan_suppressed_in_sleep()
+                or not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            ):
                 self._turn_off_fan()
         else:
             self._turn_off_fan()

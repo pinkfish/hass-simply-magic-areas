@@ -1005,6 +1005,58 @@ async def test_fan_historical_shower_learning_and_threshold_adaptation(
     )
 
 
+async def test_fan_shuts_off_when_returning_to_pre_shower_baseline_despite_reference_skew(
+    hass: HomeAssistant,
+    differential_humidity_config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_sensor_humidity: list[MockSensor],
+    _setup_differential_humidity: None,
+) -> None:
+    """Test fan shuts off when room returns to its own pre-shower baseline even if reference sensor is 5% lower."""
+    calls_on = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+    calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
+
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+
+    stats_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+
+    # Pre-shower baseline: room is naturally at 56%, reference in hallway is at 50%
+    hass.states.async_set("sensor.reference_humidity", "50.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "56.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(stats_entity_id, "0.0")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    # Shower starts: spikes to 80% (delta = 30% >= 10% threshold)
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "80.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(stats_entity_id, "0.040")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    assert len(calls_on) >= 1
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is True
+    one_fan[0].turn_on()
+
+    # Shower ends and evacuates: humidity drops to 57.0%
+    # Note: 57.0% - 50.0% (reference) = 7.0%, which is well ABOVE delta_shutoff (3.0%).
+    # But 57.0% is within 1.0% of pre-shower baseline (56.0%), so the room is dry!
+    calls_off.clear()
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "57.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(stats_entity_id, "-0.005")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.1)
+
+    # Fan must shut off cleanly based on return to pre-shower baseline!
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is False
+    assert len(calls_off) >= 1
+
+
+
 
 
 

@@ -218,6 +218,6 @@ class MoistureEvacuationModel:
         """Check if exponential evacuation has reached the dry threshold."""
         if self._estimated_dry_ts is not None and now_ts >= self._estimated_dry_ts:
             excess = current_humidity - baseline_humidity
-            if excess <= (delta_shutoff + 1.0):
+            if excess <= max(delta_shutoff + 2.0, 4.0):
                 return True
         return False

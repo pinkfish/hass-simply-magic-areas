@@ -1,75 +1,137 @@
 # Simply Magic Areas for Home Assistant
 
-This is a fork of https://github.com/jseidl/hass-magic_areas building on this base.
+Originally forked from [jseidl/hass-magic_areas](https://github.com/jseidl/hass-magic_areas), **Simply Magic Areas** has evolved into a next-generation autonomous area intelligence platform for Home Assistant. It features 100% on-device local machine learning, radar fan discrimination, thermodynamic moisture evacuation modeling, and hierarchical spatial configuration inheritance.
 
-![Simple Magic Areas](https://raw.githubusercontent.com/home-assistant/brands/master/custom_integrations/simply_magic_areas/icon.png)
+![Simply Magic Areas](https://raw.githubusercontent.com/home-assistant/brands/master/custom_integrations/simply_magic_areas/icon.png)
 
-![Build Status](https://github.com/pinkfish/hass-simply-magic-areas/actions/workflows/validation.yaml/badge.svg) ![Test Status](https://github.com/pinkfish/hass-simply-magic-areas/actions/workflows/test.yaml/badge.svg) [![Latest release](https://img.shields.io/github/v/release/pinkfish/hass-simply-magic-areas.svg)](https://github.com/pinkfish/hass-simply-magic-areas/releases) [![GitHub latest commit](https://badgen.net/github/last-commit/pinkfish/hass-simply-magic-areas)](https://github.com/pinkfish/hass-simply-magic-areas/commit/) [![GitHub contributors](https://badgen.net/github/contributors/pinkfish/hass-simply-magic-areas)](https://GitHub.com/pinkfish/hass-simply-magic-areas/graphs/contributors/)
+![Build Status](https://github.com/pinkfish/hass-simply-magic-areas/actions/workflows/validation.yaml/badge.svg) ![Test Status](https://github.com/pinkfish/hass-simply-magic-areas/actions/workflows/test.yaml/badge.svg) [![Latest release](https://img.shields.io/github/v/release/pinkfish/hass-simply-magic-areas.svg)](https://github.com/pinkfish/hass-simply-magic-areas/releases) [![GitHub latest commit](https://badgen.net/github/last-commit/pinkfish/hass-simply-magic-areas)](https://github.com/pinkfish/hass-simply-magic-areas/commit/) [![GitHub contributors](https://badgen.net/github/contributors/pinkfish/hass-simply-magic-areas)](https://github.com/pinkfish/hass-simply-magic-areas/graphs/contributors/)
 
-Tired of writing the same automations, over and over, for each of your rooms? You wish Home Assistant just figured out all entities you have in an area and **magically** started being smarter about them? 
+Tired of writing the same automations over and over for every room? Tired of complex YAML templates for motion grouping, dim levels, and fan timers?
 
-Simply Magic Areas is the batteries that were missing! Would like to have a single `motion` sensor that is grouped to all your other motion sensors in that area? What if all (most) of your `sensor` and `binary_sensor` entities had aggregates (grouping/average), PER AREA? Would you like for lights and climate devices to turn on and off **MAGICALLY** whenever an area is occupied/clear?
+**Simply Magic Areas** gives Home Assistant the "missing batteries" for whole-home automation. It groups all presence and environmental sensors per area, maintains orthogonal presence and lighting states, continuously learns your personal brightness preferences via online Bayesian regression, discriminates false motion caused by spinning fan blades on mmWave radars, and models moisture evacuation curves to ventilate bathrooms perfectly without getting stuck running forever.
 
-If you think all of the above features are freaking awesome, **Simply Magic Areas** is here for you!
+---
 
-## Features
+## 🌟 Key Features
 
-* Uses multiple type of sensors for determining presence on an area.
-*  `media_player`, `binary_sensors` ([all listed types](https://www.home-assistant.io/integrations/binary_sensor/)) are supported, humidity
-* Support exclusion of entities you don't want to be considered.
-* Support inclusion of entities not in the Area Registry (i.e. integrations that don't define an `unique_id`).
-* Automatically turn climates and lights on! (All or user-defined).
-* Control light dim based on illuminance in the room
-* Automatically turn off lights, climate and media devices when a room is clear
-* Automatically turn on/off fans when the area is in extended mode.
-* Automatically turn on/off fans when the humidy changes and use this to control occupancy.
-* Creates a `Health` sensor (triggered by `binary_sensors` with `problem`, `smoke`, `moisture`, `safety` and `gas` device classes) for each area
-* Creates a `Presence Hold` switch to manually override area presence
-* Creates lights groups which reacts to different area states!
-* Creates aggregation sensors for your `binary_sensor` such as:
-  * Motion sensors
-  * Door sensors
-  * Window sensors
-  * Leak sensors
-* Creates average (and sums) sensors for all your `sensor` needs
-* Creates global (interior/exterior) aggregate and average sensors
-* Area-Aware Media Player: Forward `media_play` events to media player entities in occupied areas only!
+### 🧠 On-Device Machine Learning & Signal Processing (Zero-Cloud)
+* **Online Bayesian Lighting Preference Learner**: Real-time Recursive Least Squares (RLS) / Bayesian Ridge Regression (<1µs execution) continuously adapts light brightness to match your manual wall-switch and dimmer adjustments across lux levels and solar elevations. Preserves daylight shutoffs, blends prior heuristics, and persists weights locally across restarts.
+* **mmWave Radar Fan vs. Human False-Presence Filter**: Solves mmWave radar "ghosting" where rotating ceiling, desk, or exhaust fan blades trap rooms in permanent false occupancy. Combines actuator causal tracking, distance spatial masking ($1.8\text{m} \le \text{dist} \le 3.5\text{m}$), and **Multi-Signal Sensor Element Evaluation** (evaluates secondary radar signals like macro-motion energy $\ge 20$, multi-target coordinates outside the fan zone, and companion PIR/motion sensors to determine if a human is in the room even while the fan is spinning).
+* **Dual-Stage Shower Classifier & Exponential Moisture Evacuation Model**: Combines rate-of-change ($dRH/dt$), acceleration ($d^2RH/dt^2$), thermal flux ($dT/dt$), and door contact states to reject false positive ventilation triggers (e.g. storm fronts, HVAC). Once showering stops, dynamic exponential regression fits air exchange rate $k$ ($\ln(\Delta H(t)) = \ln(\Delta H_{peak}) - kt$) to predict the exact shutoff timestamp ($t_{dry}$), backed by pre-shower baseline return shutoffs that are immune to inter-room calibration differences.
 
-## Installation
+### 💡 Lighting & Presence Architecture
+* **Dual-Sensor Orthogonal State Architecture**: Decouples physical occupancy (`sensor.simply_magic_areas_state_<area>`) exposing `clear`, `occupied`, `extended`, `manual` from contextual lighting scene profiles (`sensor.simply_magic_areas_lighting_profile_<area>`) exposing `standard`, `sleep`, `bright`, `accented`.
+* **Hierarchical Meta-Area Configuration Inheritance**: Meta-Areas (`Global`, `Interior`, `Exterior`) serve as centralized policy hubs. Settings like sleep entities, accent scenes, timeouts, and dark floors are defined once and automatically cascade down to subordinate rooms.
+* **Occupancy-Hold Manual Override**: Manual switch or dashboard adjustments hold their commanded state until an **occupancy change** occurs (`occupied/extended -> clear` or `clear -> occupied`), preventing automations from abruptly overriding human actions while the room is occupied.
+* **Exterior Nighttime Lighting & Motion Extension**: Exterior areas activate automatically at sunset with a stay-on timer (default 2 hours). Motion detection, camera triggers, or resident arrivals dynamically refresh the stay-on clock from the moment motion ceases.
+* **Adaptive Photometric Lux Control & Dark Floor Floor Guarantee**: Continuous daytime baseline calibration with an absolute dark floor guarantee preventing windowless rooms (pantries, closets, bathrooms) from falsely staying dark.
 
-_Simply Magic Areas_ is (not yet) available on HACS! For installation instructions check the installation [wiki](https://github.com/pinkfish/hass-simply-magic-areas/wiki/Installation).
+### 🌿 Aggregation & Automation Batteries
+* **Area Sensor Aggregations**: Automatic aggregate groups (`all`, `any`, `mean`, `sum`) for motion, doors, windows, locks, leaks, temperature, humidity, and illuminance.
+* **Health & Safety Sensors**: Tracks problems, smoke, gas, and water leaks per area.
+* **Area-Aware Media Player**: Routes media playback commands exclusively to occupied zones.
+* **Acoustic Sleep Fan Suppression**: Suppresses noisy bathroom exhaust fans during sleep hours unless overridden by high differential moisture.
 
-## Configuration
-Configuration options for `Simply Magic Areas` are on a per-area basis.
+---
 
-> ⚠️ Before you start: Please make sure you understand all the **Concepts** on the [wiki](https://github.com/pinkfish/hass-simply-magic-areas/wiki).
+## 🚀 Setting Up the Machine Learning Features
 
-> 💡 Light Groups won't control any lights unless the `Light Control` switch for that area is turned `on`!
+All machine learning and advanced multi-sensor signal processing features in Simply Magic Areas run **100% locally on your Home Assistant server** with zero cloud calls, zero external API keys, and zero telemetry.
 
-Go to **Configuration** > **Integrations**. You shall see the *Simply Magic Areas* integration and configure each area (and [Meta-Areas](https://github.com/pinkfish/hass-simply-magic-areas/wiki/Meta-Areas)!). 
+They are **adaptive by default**—no manual tuning is required for everyday operation.
 
-See all configuration options in the [wiki](https://github.com/pinkfish/hass-simply-magic-areas/wiki/Configuration).
+### 1. Bayesian Lighting Preference Learner
+* **Where to find it**: Go to **Settings** > **Devices & Services** > **Simply Magic Areas** > Select your area > **Configure** > **Advanced Light Groups**.
+* **Toggle**: Ensure **Learn Lighting Preferences** is checked (`true` by default).
+* **How it learns**: Whenever lights in the area turn on, Simply Magic Areas applies an initial heuristic based on the area lighting profile, ambient lux, and solar elevation. Whenever you adjust a physical dimmer switch or the Home Assistant brightness slider, the learner captures the adjustment:
+  * Updates its Bayesian posterior distribution in $< 1\mu\text{s}$.
+  * As sample counts increase, model confidence grows from $0.0$ to $1.0$.
+  * Subsequent turn-ons smoothly blend learned preferences with safety heuristics.
+* **Entity Attributes**: Inspect `light.simply_magic_areas_light_<area>`:
+  * `ml_adaptive_lighting_active`: `true`
+  * `ml_preference_samples`: Number of captured interactions.
+  * `ml_confidence`: Statistical confidence score ($0.0$ to $1.0$).
+  * `ml_predicted_brightness`: The predicted brightness level ($1 - 255$).
+* **Storage**: Weights are automatically saved to `.storage/simply_magic_areas_lighting_ml_<area_slug>`.
 
-## Differences from Magic Areas
+### 2. mmWave Radar Fan vs. Human Discrimination
+* **Where to find it**: Select your area > **Configure** > **Advanced Light Groups**.
+* **Toggle**: Ensure **mmWave Fan Filter** is enabled (`true` by default).
+* **How it works**:
+  * **Automatic Coupling**: The integration automatically monitors `fan.simply_magic_areas_fan_<area>` and physical fan entities registered in the area.
+  * **When Fan is ON**: If an mmWave presence sensor (LD2410, LD2450, Aqara FP1/FP2, Tuya/ESPHome radar) reports occupancy, Simply Magic Areas inspects distance gates ($1.8\text{m} - 3.5\text{m}$) and Doppler frequency variance.
+  * **Multi-Signal Evaluation**: If the radar sensor exposes secondary signals (macro-motion energy $\ge 20$, multi-target coordinates outside the fan distance, unmasked range gates 0, 1, 5–8, or companion motion sensors), Simply Magic Areas evaluates them to confirm whether a human is actually present.
+  * If a human is present with the fan running, the room remains occupied (`radar_fan_override_sensors`).
+  * If only fan blades are moving, the false trigger is suppressed (`filtered_fan_sensors`).
+* **Entity Attributes**: Inspect `sensor.simply_magic_areas_state_<area>`:
+  * `filtered_fan_sensors`: List of sensors currently silenced due to mechanical fan interference.
+  * `radar_fan_override_sensors`: Radar sensors detecting the fan but keeping the area occupied because secondary signals confirm a human is in the room.
 
-* Use illuminance in the room to control when to turn on the lights, if the illuminance is too high, no lights.
-* Change from dark to bright for tracking the room, if a bright entity is set then the room lights are not turned on.
-* Configuration flow has a lot less options in the standard flow
-* Control dim in the various states, by default sleep is 30% and occupied is 100%
-* Move to one state, not two, that are exposed with a select that can be used in automation
-* Create humidity and illuminance sensors to use for control of occupancy and fans
-* Control fans in the room when the humidity changes or the state for the room is extended.
-* Moved the inclusion/exclusion options and other more complicated settings in an advanced light setting group.
+### 3. Adaptive Shower & Moisture Evacuation Modeling
+* **Where to find it**: Select your area > **Configure** > **Humidity Controls**.
+* **Toggle**: Ensure **Learn Shower Humidity** is enabled (`true` by default).
+* **How it works**:
+  * **Pre-Shower Baseline**: The model autonomously tracks the room's resting baseline humidity ($H_{base}$) during idle periods.
+  * **Dual-Stage Trigger**: Activates ventilation quickly upon detecting a rapid rate-of-rise ($dRH/dt$) or sustained moisture differential.
+  * **Trajectory Evacuation Shutoff**: When the shower stops and humidity starts falling ($dRH/dt \le 0$), the model samples the exponential drying slope:
+    $$\ln(H(t) - H_{base}) = \ln(\Delta H_{peak}) - kt$$
+    It calculates air evacuation rate $k$ and projects the dry timestamp ($t_{dry}$).
+  * **Pre-Shower Baseline Shutoff**: Automatically turns off the fan as soon as the room returns to its own pre-shower baseline (preventing fans from running indefinitely due to inter-room sensor calibration differences).
+* **Entity Attributes**: Inspect `fan.simply_magic_areas_fan_<area>`:
+  * `shower_probability`: Multi-sensor shower classification probability ($0.0 - 1.0$).
+  * `drying_rate_k`: Fitted exponential evacuation rate ($1/\text{s}$).
+  * `estimated_dry_ts`: Unix timestamp when room moisture will reach target baseline.
+  * `historical_humidity_baseline`: Learned resting ambient humidity for the room.
 
-## Problems/bugs, questions, feature requests?
+---
 
-Please enable debug logging by putting this in `configuration.yaml`:
+## 📦 Installation
+
+### HACS (Recommended)
+1. Open **HACS** in Home Assistant.
+2. Click the three dots in the top right > **Custom repositories**.
+3. Add repository URL:
+   ```text
+   https://github.com/pinkfish/hass-simply-magic-areas
+   ```
+   Category: `Integration`
+4. Click **Install**.
+5. Restart Home Assistant.
+
+### Manual Installation
+1. Download the [latest release](https://github.com/pinkfish/hass-simply-magic-areas/releases).
+2. Copy the `custom_components/simply_magic_areas` directory into your Home Assistant `<config_dir>/custom_components/` folder.
+3. Restart Home Assistant.
+
+---
+
+## ⚙️ Configuration
+
+1. In Home Assistant, go to **Settings** > **Devices & Services**.
+2. Click **Add Integration** and search for **Simply Magic Areas** (or click Configure on existing areas).
+3. Each Home Assistant area will have its own Simply Magic Areas configuration entry.
+4. **Meta-Areas** (`Global`, `Interior`, `Exterior`) can be configured to broadcast shared policies (sleep entities, accent entities, timeouts) across all rooms automatically.
+
+> 💡 **Tip**: For detailed architecture specifications, state machines, and mathematical models, refer to [SYSTEM_SPEC.md](SYSTEM_SPEC.md) and the design documents in the [designs/](designs/) directory.
+
+---
+
+## 🐛 Troubleshooting & Debug Logging
+
+If you encounter unexpected behavior or want to inspect ML model decisions, enable debug logging in your `configuration.yaml`:
 
 ```yaml
 logger:
-    default: warning
-    logs:
-        custom_components.simply_magic_areas: debug
+  default: warning
+  logs:
+    custom_components.simply_magic_areas: debug
 ```
 
-As soon as the issue occurs capture the contents of the the log (`/config/home-assistant.log`) and open up a [ticket](https://github.com/pinkfish/hass-simply-magic-areas/issues)!
+When reporting an issue, please capture the relevant lines from `/config/home-assistant.log` and file an issue on GitHub:
+👉 [https://github.com/pinkfish/hass-simply-magic-areas/issues](https://github.com/pinkfish/hass-simply-magic-areas/issues)
+
+---
+
+## 🤝 Contributing
+
+Contributions, feature suggestions, and bug reports are warmly welcome! Please review [CONTRIBUTING.md](CONTRIBUTING.md) for testing guidelines (`pytest`) and development standards.

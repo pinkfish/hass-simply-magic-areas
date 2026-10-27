@@ -8,6 +8,13 @@ Originally forked from [jseidl/hass-magic_areas](https://github.com/jseidl/hass-
 
 Tired of writing the same automations, over and over, for each of your rooms? You wish Home Assistant just figured out all entities you have in an area and **magically** started being smarter about them? 
 
-Simply Magic Areas is the batteries that were missing! Would you like to have a single `motion` sensor that is grouped to all your other motion sensors in that area? What if all (most) of your `sensor` and `binary_sensor` entities had aggregates (grouping/average), PER AREA? Would you like for lights, fans and climate devices to turn on and off **MAGICALLY** whenever an area is occupied/clear, with on-device machine learning for lighting preferences, mmWave fan ghosting rejection, and adaptive shower ventilation?
-
 If you think all of the above features are freaking awesome, **Simply Magic Areas** is here for you!
+
+---
+
+## 📦 Installation via HACS
+
+1. Open **HACS** > Click **⋮** > **Custom repositories**.
+2. Add `https://github.com/pinkfish/hass-simply-magic-areas` as an **Integration**.
+3. Click **Download**, then restart Home Assistant.
+4. Go to **Settings** > **Devices & Services** > **Add Integration** and search for **Simply Magic Areas**.

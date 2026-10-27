@@ -85,23 +85,36 @@ They are **adaptive by default**—no manual tuning is required for everyday ope
 
 ---
 
-## 📦 Installation
+## 📦 Installation via HACS (Recommended)
 
-### HACS (Recommended)
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=pinkfish&repository=hass-simply-magic-areas&category=Integration)
+
+### Step 1: Add Custom Repository to HACS
 1. Open **HACS** in Home Assistant.
-2. Click the three dots in the top right > **Custom repositories**.
-3. Add repository URL:
-   ```text
-   https://github.com/pinkfish/hass-simply-magic-areas
-   ```
-   Category: `Integration`
-4. Click **Install**.
-5. Restart Home Assistant.
+2. Click the three dots menu (⋮) in the top-right corner and select **Custom repositories** (or click **+ Add Repository**).
+3. Enter the repository details:
+   * **Repository**: `https://github.com/pinkfish/hass-simply-magic-areas`
+   * **Type**: `Integration`
+4. Click **Add**.
 
-### Manual Installation
-1. Download the [latest release](https://github.com/pinkfish/hass-simply-magic-areas/releases).
-2. Copy the `custom_components/simply_magic_areas` directory into your Home Assistant `<config_dir>/custom_components/` folder.
+### Step 2: Download & Restart
+1. Find and open **Simply Magic Areas** in HACS.
+2. Click **Download** at the bottom right.
+3. Restart Home Assistant (**Settings** > **System** > **Restart**).
+
+### Step 3: Add Integration
+1. Go to **Settings** > **Devices & Services** > **Add Integration**.
+2. Search for **Simply Magic Areas**.
+3. Choose the area to make magic! Repeat for each area or meta-area (`Global`, `Interior`, `Exterior`).
+
+<details>
+<summary><b>Alternative: Manual Installation (Advanced)</b></summary>
+
+1. Download the [latest release](https://github.com/pinkfish/hass-simply-magic-areas/releases) ZIP.
+2. Extract and copy the `custom_components/simply_magic_areas` folder into your Home Assistant `<config_dir>/custom_components/` directory.
 3. Restart Home Assistant.
+4. Go to **Settings** > **Devices & Services** > **Add Integration** and search for **Simply Magic Areas**.
+</details>
 
 ---
 

@@ -118,12 +118,65 @@ They are **adaptive by default**—no manual tuning is required for everyday ope
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ Configuration Guide
 
-1. In Home Assistant, go to **Settings** > **Devices & Services**.
-2. Click **Add Integration** and search for **Simply Magic Areas** (or click Configure on existing areas).
-3. Each Home Assistant area will have its own Simply Magic Areas configuration entry.
-4. **Meta-Areas** (`Global`, `Interior`, `Exterior`) can be configured to broadcast shared policies (sleep entities, accent entities, timeouts) across all rooms automatically.
+Each Home Assistant area is configured through its configuration entry in **Settings** > **Devices & Services** > **Simply Magic Areas** > **Configure**.
+
+---
+
+### 🌙 How to Turn Off Fans at Night (Bathroom Sleep Suppression)
+
+Bathrooms often share walls with bedrooms, and noisy exhaust fans running during midnight bathroom visits can disturb sleep. Simply Magic Areas includes built-in **Acoustic Sleep Fan Suppression**:
+
+1. **Enable Fan Sleep Suppression**:
+   * Go to your bathroom area > **Configure** > **Area Options**.
+   * Ensure **Suppress exhaust fan in sleep mode** is checked (`fan_suppress_in_sleep: true`).
+
+2. **Define When It Is Night / Sleep Time**:
+   You can provide sleep state through any of the following methods:
+   * **Direct Sleep Entity**: In **Area Options**, set **Sleep Entity** to your sleep toggle (e.g., `input_boolean.sleep_mode`, a bed occupancy sensor, or sleep schedule switch).
+   * **Link to Master Bedroom (Ensuite Linking)**: In **Advanced Light & Illuminance Options**, set **Reference Bright Area** to your bedroom (e.g., `master_bedroom`). When the bedroom enters its `sleep` profile, the bathroom automatically suppresses the exhaust fan during nocturnal visits.
+   * **Inherit from Meta-Area**: Configure a sleep entity once on the **Interior** or **Global** Meta-Area, and all rooms will inherit the policy automatically.
+
+3. **Behavior & Safety Override**:
+   * **Routine Nocturnal Visits**: When sleep mode is active and someone enters the bathroom, lights follow the sleep profile (e.g. dimmed nightlight) and the exhaust fan **remains OFF** during the `extended` state.
+   * **Moisture Safety Guarantee**: If someone takes a midnight shower or bath causing high differential moisture, the fan will still activate to protect against mold and drywall damage, and then shut off cleanly once moisture is evacuated.
+
+---
+
+### ⏱️ Setting Up Timing Information & Timeouts
+
+Timeouts determine how quickly rooms react to motion, how long lights/fans linger after you leave, and safety limits for continuous fan operation.
+
+#### 1. Presence & Occupancy Timeouts (**Area Options**)
+| Setting | Key | Default | Description & Recommended Settings |
+| :--- | :--- | :--- | :--- |
+| **Clear Timeout** | `clear_timeout` | `360s` (6m) | Number of seconds with no motion before transitioning from `occupied` to `extended`. Recommended: **30–60s** for hallways/pantries, **120–180s** for bathrooms, **300–600s** for offices/living rooms. |
+| **Extended Timeout** | `extended_timeout` | `360s` (6m) | Number of seconds the room stays in `extended` before turning off entirely. Exhaust fans typically run during this window. Recommended: **180–300s** for bathrooms. |
+| **Update Interval** | `update_interval` | `1800s` (30m) | Periodic health-check interval to evaluate missed entity states or stuck sensors. |
+
+#### 2. Ventilation & Humidity Timers (**Advanced Ventilation & Humidity**)
+| Setting | Key | Default | Description |
+| :--- | :--- | :--- | :--- |
+| **Maximum Fan Time** | `humidity_max_fan_time` | `3600s` (60m) | Hard safety limit. If a humidity sensor malfunctions or sticks, the fan forcefully shuts off after this duration (`0` to disable). |
+| **Flatline Wait Time** | `humidity_wait_s` | `1200s` (20m) | Duration humidity rate-of-change must remain within the deadband near zero before concluding that moisture has stabilized and turning off. |
+| **Presence Gate Time** | `humidity_presence_gate_time` | `0s` (disabled) | When set (e.g., `300s`), humidity rises only trigger exhaust fans if the room was occupied within this time window, preventing false triggers from outdoor weather fronts. |
+
+#### 3. Exterior Lighting Timers (**Advanced Light Groups**)
+| Setting | Key | Default | Description |
+| :--- | :--- | :--- | :--- |
+| **Exterior Stay-On Duration** | `exterior_lighting_timeout` | `7200s` (2h) | How long exterior floodlights, porch, and garden lights remain active after sunset, resident arrival, or motion events before safely turning off. |
+
+---
+
+### 🏛️ Hierarchical Policy Inheritance (Meta-Areas)
+
+Instead of setting the same sleep switches and timeouts for every room individually:
+* Create **Meta-Areas**:
+  * **Global**: Broadcasts whole-home policies across all areas.
+  * **Interior**: Groups indoor rooms together.
+  * **Exterior**: Manages exterior lighting, gates, and motion perimeters.
+* Settings defined on a Meta-Area (such as `sleep_entity`, `clear_timeout`, or accent lighting scenes) automatically cascade down to all subordinate rooms unless explicitly overridden on a specific area.
 
 ---
 

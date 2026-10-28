@@ -29,8 +29,11 @@ You can supply sleep state through any of the following methods:
 
 ### Behavior & Safety Invariants
 - **Routine Nocturnal Visits**: When sleep mode is active and someone enters the bathroom, lights follow the sleep profile (e.g. dimmed nightlight) and the exhaust fan **remains OFF** during the `extended` state.
-- **Dynamic State Reactivity**: If sleep mode activates while the fan is running in `extended` mode, the fan is immediately extinguished. Conversely, if sleep mode ends while the room remains in `extended` mode, the fan turns on for the remainder of the timeout.
-- **Moisture Safety Guarantee**: Steam extraction takes precedence over acoustic suppression. If differential humidity triggers ventilation (`humidity_on: true`), the fan activates regardless of sleep state to protect against mold and condensation buildup.
+- **Dynamic Acoustic Sleep Suppression**: If sleep mode activates while a fan is running in post-occupancy `extended` or humidity mode, the fan is suppressed and extinguished to protect household sleep. If sleep mode ends while the room remains in `extended` mode, the fan turns on for the remainder of the timeout.
+- **Critical Emergency Moisture Failsafe**: If extreme moisture is detected ($\ge 80\%$), the fan activates unconditionally as a failsafe to protect against condensation, mold growth, or running water leaks. Moderate humidity levels honor sleep suppression.
+- **Mutual Exclusion & Post-Shower Cooldown**: When a shower event concludes (via baseline return, delta shutoff, or exponential evacuation), the fan enters a 5-minute cooldown preventing immediate re-activation loops from static resting humidity differentials.
+- **15-Minute Safety Lockout**: If maximum fan runtime (`humidity_max_fan_time`) is exceeded, the fan shuts off and engages a 15-minute motor safety lockout to prevent immediate restarts while preserving hardware.
+- **Active Watchdog Timer**: A 60-second periodic watchdog runs continuously while the fan or humidity mode is active, guaranteeing that maximum runtimes and deadband timeouts trigger reliably even if derivative/statistics sensors flatline and stop emitting state change events.
 
 ---
 
@@ -51,14 +54,14 @@ Simply Magic Areas uses dual-trigger differential mechanics and thermodynamic ra
 
 | Setting | Parameter Key | Default | Description |
 | :--- | :--- | :--- | :--- |
-| **Reference Humidity Sensor**| `reference_humidity_sensor` | *Auto-Resolved* | Baseline humidity entity. If omitted, Simply Magic Areas resolves baseline automatically from the Interior Meta-Area average, neighboring rooms, or climate sensors. |
-| **Delta Threshold** | `humidity_delta_threshold` | `10.0%` | Humidity percentage above baseline that triggers fan activation, even without a fast derivative spike (e.g., warm soaking baths). |
+| **Reference Humidity Sensor**| `reference_humidity_sensor` | *Auto-Resolved* | Baseline humidity entity. If omitted, Simply Magic Areas resolves baseline from the Interior Meta-Area average or historical resting baseline. |
+| **Delta Threshold** | `humidity_delta_threshold` | `10.0%` | Humidity percentage above baseline that triggers fan activation, guarded against nocturnal flatlines by requiring non-negative trend and recent occupancy. |
 | **Rising Rate Cutoff** | `humidity_up` | `0.03 %/s` (1.8%/min) | Minimum rate of rise required to trigger rapid shower activation within 30–60 seconds. |
 | **Delta Shutoff** | `humidity_delta_shutoff` | `3.0%` | Humidity delta above baseline below which the room is considered dry and the fan shuts off. |
 | **Falling Rate Cutoff** | `humidity_down` | `-0.015 %/s` | Falling derivative considered active evacuation. |
 | **Stationary Deadband** | `humidity_deadband` | `0.001 %/s` | Rate-of-change window considered stationary flatlining. |
 | **Flatline Wait Time** | `humidity_wait_s` | `1200s` (20m) | Duration derivative must hover inside the deadband before concluding moisture has normalized. |
-| **Maximum Fan Time** | `humidity_max_fan_time` | `3600s` (60m) | Hard safety cutoff. Protects fan motors and stops conditioned air exhaust if a sensor sticks. |
+| **Maximum Fan Time** | `humidity_max_fan_time` | `3600s` (60m) | Hard safety cutoff with 15-minute lockout. Protects fan motors and stops conditioned air exhaust. |
 | **Presence Gate Time** | `humidity_presence_gate_time` | `0s` (disabled) | Maximum seconds since last occupancy allowed to trigger fan, filtering out outdoor weather infiltration. |
 
 ### The Drying Slope Sustain Invariant

@@ -1062,6 +1062,232 @@ async def test_fan_shuts_off_when_returning_to_pre_shower_baseline_despite_refer
     assert len(calls_off) >= 1
 
 
+async def test_fan_does_not_stay_on_all_night_from_static_differential(
+    hass: HomeAssistant,
+    differential_humidity_config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_sensor_humidity: list[MockSensor],
+    _setup_differential_humidity: None,
+) -> None:
+    """Test that concluding a shower event prevents immediate Trigger B re-activation and avoids fan staying on all night."""
+    calls_on = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+    calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
+
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+
+    stats_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+
+    # Pre-shower baseline: room at 50%, reference at 50%
+    hass.states.async_set("sensor.reference_humidity", "50.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "50.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.0")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # Shower starts: spikes to 75% (delta = 25% >= 10%)
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "75.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.035")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is True
+    one_fan[0].turn_on()
+
+    # Shower concludes: humidity drops back down, reaching delta_shutoff (52% room vs 50% hallway = 2.0% <= 3.0%)
+    calls_on.clear()
+    calls_off.clear()
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "52.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "-0.005")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # Shower must conclude and fan shut off
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is False
+    assert len(calls_off) >= 1
+    assert len(calls_on) == 0
+
+    # In the middle of the night (e.g. 3 AM): flatline/falling trend with residual static differential (e.g. 61% vs 50% = 11% >= 10%)
+    # Area has been clear for hours
+    fan_group._last_occupied_ts = datetime.now(UTC).timestamp() - 7200
+    calls_on.clear()
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "61.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "-0.002")  # Negative / falling trend
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # Fan must NOT reactivate on empty, dark bathroom with negative/flatline trend
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is False
+    assert len(calls_on) == 0
+
+
+async def test_fan_max_runtime_lockout_prevents_immediate_restart(
+    hass: HomeAssistant,
+    differential_humidity_config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_sensor_humidity: list[MockSensor],
+    _setup_differential_humidity: None,
+) -> None:
+    """Test that exceeding max runtime enters a 15-minute lockout preventing immediate fan restarts."""
+    calls_on = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+    calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
+
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+
+    stats_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+
+    # Pre-shower baseline
+    hass.states.async_set("sensor.reference_humidity", "50.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "50.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.0")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # Shower turns on -> rapid rise
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "75.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.035")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is True
+    one_fan[0].turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # Simulate max runtime exceeded (max_fan_time is 60s in test config)
+    fan_group._attr_extra_state_attributes["humidity_start_ts"] = datetime.now(UTC).timestamp() - 100
+    calls_off.clear()
+    calls_on.clear()
+
+    # Trigger next event via trend sensor
+    hass.states.async_set(stats_entity_id, "0.010")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # Fan must shut off and engage lockout
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is False
+    assert len(calls_off) >= 1
+    assert fan_group._max_runtime_lockout_until is not None
+    assert fan_group._max_runtime_lockout_until > datetime.now(UTC).timestamp()
+
+    # Subsequent sensor event with elevated humidity within lockout window
+    calls_on.clear()
+    hass.states.async_set(stats_entity_id, "0.040")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # Fan must NOT restart during safety lockout
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is False
+    assert len(calls_on) == 0
+
+
+async def test_fan_suppressed_in_sleep_even_with_moderate_humidity(
+    hass: HomeAssistant,
+    differential_humidity_config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_motion: list[MockBinarySensor],
+    one_sensor_humidity: list[MockSensor],
+    _setup_differential_humidity: None,
+) -> None:
+    """Test acoustic sleep suppression turns off running fans and prevents activation unless emergency moisture."""
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+
+    # Enable sleep suppression in area config
+    fan_group.area.config[CONF_FAN_SUPPRESS_IN_SLEEP] = True
+
+    stats_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+    profile_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_lighting_profile_kitchen"
+
+    # Pre-shower: room at 50%, reference at 50%
+    hass.states.async_set("sensor.reference_humidity", "50.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "50.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.0")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    calls_on = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+    calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
+
+    # Fan turns on during daytime shower (delta = 16% >= 10%)
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "66.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.035")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is True
+    one_fan[0].turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # Sleep mode turns ON in household
+    calls_off.clear()
+    calls_on.clear()
+    hass.states.async_set(profile_entity_id, "sleep")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # Running fan must be suppressed and turned off
+    assert len(calls_off) >= 1
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is False
+    one_fan[0].turn_off()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # Moderate humidity in sleep mode (65% room vs 50% hallway) must NOT restart fan
+    calls_on.clear()
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "65.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.035")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert len(calls_on) == 0
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is False
+
+    # True emergency moisture (>= 80%) MUST override sleep suppression for mold/water damage protection
+    calls_on.clear()
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "85.0", attributes={"unit_of_measurement": "%"})
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    hass.states.async_set(stats_entity_id, "0.035")
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert len(calls_on) >= 1
+    assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is True
+
+
 
 
 

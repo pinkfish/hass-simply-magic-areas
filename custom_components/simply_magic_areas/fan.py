@@ -1,7 +1,7 @@
 """Fan controls for magic areas."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -36,6 +36,7 @@ from homeassistant.helpers.entity_registry import async_get as async_get_er
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
+    async_track_time_interval,
 )
 from homeassistant.util import slugify
 
@@ -176,6 +177,9 @@ class AreaFanGroup(MagicEntity, FanGroup):
         delattr(self, "_attr_name")
         self._icon: str = "mdi:fan-auto"
         self._manual_timeout_cb: CALLBACK_TYPE | None = None
+        self._watchdog_unsub: CALLBACK_TYPE | None = None
+        self._last_shower_concluded_ts: float | None = None
+        self._max_runtime_lockout_until: float | None = None
 
         self._controled_by_entity = True
         self._last_occupied_ts: float | None = None
@@ -482,7 +486,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if to_state == AreaState.AREA_STATE_EXTENDED:
             if (
                 self._is_fan_suppressed_in_sleep()
-                and not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+                and not self._is_emergency_moisture()
             ):
                 _LOGGER.debug(
                     "%s: Sleep suppression active, suppressing fan in extended state",
@@ -492,12 +496,27 @@ class AreaFanGroup(MagicEntity, FanGroup):
                     self._turn_off_fan()
             else:
                 self._turn_on_fan()
-        elif self.is_on and not self._attr_extra_state_attributes.get(
-            ATTR_HUMIDITY_ON, False
+        elif self.is_on and not (
+            self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            and not (
+                self._is_fan_suppressed_in_sleep()
+                and not self._is_emergency_moisture()
+            )
         ):
             self._turn_off_fan()
         else:
             _LOGGER.debug("Ignoring state change")
+
+    def _is_emergency_moisture(
+        self,
+        area_humidity: float | None = None,
+        humidity_delta: float | None = None,
+        shower_prob: float | None = None,
+    ) -> bool:
+        """Return True if moisture levels represent critical emergency (>=80%)."""
+        if area_humidity is None:
+            area_humidity = self._get_area_humidity()
+        return bool(area_humidity is not None and area_humidity >= 80.0)
 
     def _is_fan_suppressed_in_sleep(self) -> bool:
         """Check if fan should be suppressed due to sleep mode."""
@@ -510,6 +529,13 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if getattr(self.area, "lighting_profile", None) == LightingProfile.SLEEP:
             return True
         if self.area.state == AreaState.AREA_STATE_SLEEP:
+            return True
+
+        local_profile_entity = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.LIGHTING_PROFILE
+        )
+        state_obj = self.hass.states.get(local_profile_entity)
+        if state_obj and state_obj.state == LightingProfile.SLEEP:
             return True
 
         sleep_conf = self.area.all_state_configs().get(AreaState.AREA_STATE_SLEEP)
@@ -570,24 +596,27 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if event.data.get("new_state") is None:
             return
 
-        if self.area.state == AreaState.AREA_STATE_EXTENDED:
-            # If humidity is forcing the fan on, do not suppress
-            if self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
-                return
-
-            if self._is_fan_suppressed_in_sleep():
-                if self.is_on:
-                    _LOGGER.debug(
-                        "%s: Sleep became active during extended state, suppressing fan",
-                        self.name,
-                    )
-                    self._turn_off_fan()
-            elif not self.is_on:
-                _LOGGER.debug(
-                    "%s: Sleep cleared during extended state, turning fan on",
-                    self.name,
-                )
-                self._turn_on_fan()
+        if (
+            self._is_fan_suppressed_in_sleep()
+            and not self._is_emergency_moisture()
+            and self.is_on
+        ):
+            _LOGGER.debug(
+                "%s: Sleep became active, suppressing running fan",
+                self.name,
+            )
+            self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+            self._turn_off_fan()
+        elif (
+            not self._is_fan_suppressed_in_sleep()
+            and self.area.state == AreaState.AREA_STATE_EXTENDED
+            and not self.is_on
+        ):
+            _LOGGER.debug(
+                "%s: Sleep cleared during extended state, turning fan on",
+                self.name,
+            )
+            self._turn_on_fan()
 
     def _trend_state_change(self, event: Event[EventStateChangedData]):
         if event.data["old_state"] is None or event.data["new_state"] is None:
@@ -684,21 +713,6 @@ class AreaFanGroup(MagicEntity, FanGroup):
                             return float(state.state)
                         except (ValueError, TypeError):
                             pass
-
-        # Fallback to any other interior area humidity sensor if available
-        if MODULE_DATA in self.hass.data:
-            for entry in self.hass.data[MODULE_DATA].values():
-                area = entry.get(DATA_AREA_OBJECT)
-                if area and not area.is_meta() and area.id != self.area.id:
-                    sensor_id = area.simply_magic_entity_id(
-                        SENSOR_DOMAIN, SensorDeviceClass.HUMIDITY
-                    )
-                    state = self.hass.states.get(sensor_id)
-                    if state and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-                        try:
-                            return float(state.state)
-                        except (ValueError, TypeError):
-                            pass
         return None
 
     def _humidity_fan_control(self) -> None:
@@ -763,15 +777,20 @@ class AreaFanGroup(MagicEntity, FanGroup):
         area_humidity = self._get_area_humidity()
         ref_humidity = self._get_reference_humidity()
 
-        # Update historical resting baseline when fan is not forced by humidity and room is idle
+        # Update historical resting baseline when fan is not forced by humidity, room is idle, and not recently post-shower
+        is_post_shower = (
+            self._last_shower_concluded_ts is not None
+            and (now_ts - self._last_shower_concluded_ts) <= 600
+        )
         if (
             not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            and not is_post_shower
             and area_humidity is not None
             and abs(trend_val) < trend_up_cutoff
         ):
             if self._historical_baseline_humidity is None:
                 self._historical_baseline_humidity = area_humidity
-            elif area_humidity <= (self._historical_baseline_humidity + 5.0):
+            else:
                 self._historical_baseline_humidity = round(
                     0.95 * self._historical_baseline_humidity + 0.05 * area_humidity, 2
                 )
@@ -833,7 +852,14 @@ class AreaFanGroup(MagicEntity, FanGroup):
         )
         self._attr_extra_state_attributes[ATTR_SHOWER_PROBABILITY] = shower_prob
 
-        def _conclude_shower_event() -> None:
+        event_concluded = False
+
+        def _conclude_shower_event(is_max_runtime: bool = False) -> None:
+            nonlocal event_concluded
+            event_concluded = True
+            self._last_shower_concluded_ts = now_ts
+            if is_max_runtime:
+                self._max_runtime_lockout_until = now_ts + 900  # 15 minutes lockout
             if not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
                 return
             self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
@@ -915,7 +941,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
                     self.name,
                     max_fan_time,
                 )
-                _conclude_shower_event()
+                _conclude_shower_event(is_max_runtime=True)
                 max_runtime_exceeded = True
 
         # 3. Reference Delta Shutoff Check
@@ -937,6 +963,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             start_baseline is not None
             and area_humidity is not None
             and self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+            and (humidity_delta is None or humidity_delta < delta_threshold)
             and area_humidity <= (start_baseline + max(2.0, delta_shutoff))
             and trend_val <= 0.002
         ):
@@ -1000,7 +1027,27 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         # 5. Rising Trend / Activation Check
         activation_triggered = False
-        if not max_runtime_exceeded:
+        in_runtime_lockout = (
+            self._max_runtime_lockout_until is not None
+            and now_ts < self._max_runtime_lockout_until
+        )
+        in_conclude_cooldown = (
+            self._last_shower_concluded_ts is not None
+            and (now_ts - self._last_shower_concluded_ts) < 300
+        )
+
+        gate_time = humidity_feature_config.get(
+            CONF_HUMIDITY_PRESENCE_GATE_TIME, DEFAULT_HUMIDITY_PRESENCE_GATE_TIME
+        )
+        is_occupied_or_recent = (
+            gate_time == 0
+            or self.area.state
+            in (AreaState.AREA_STATE_OCCUPIED, AreaState.AREA_STATE_EXTENDED)
+            or self._last_occupied_ts is None
+            or (now_ts - self._last_occupied_ts) <= max(300, gate_time)
+        )
+
+        if not max_runtime_exceeded and not event_concluded and not in_runtime_lockout:
             # Trigger A: Rapid rising trend (catches showers early)
             # Requires exceeding the resting shutoff noise floor (Delta H > delta_shutoff)
             # If explicit reference sensor is configured, respect differential threshold gating.
@@ -1023,8 +1070,12 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 activation_triggered = True
 
             # Trigger B: Sustained elevated differential (warm baths, gradual steam accumulation)
+            # Guard against activating when humidity is flat/falling, recently concluded, or room is unoccupied
             if (
-                humidity_delta is not None
+                not in_conclude_cooldown
+                and trend_val >= -0.001
+                and is_occupied_or_recent
+                and humidity_delta is not None
                 and humidity_delta >= delta_threshold
                 and not (
                     learn_shower and ref_humidity is not None and shower_prob < 0.20
@@ -1040,10 +1091,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
             can_activate = True
 
             # Presence gating check: require recent occupancy if gate window is configured
-            gate_time = humidity_feature_config.get(
-                CONF_HUMIDITY_PRESENCE_GATE_TIME, DEFAULT_HUMIDITY_PRESENCE_GATE_TIME
-            )
-            if gate_time > 0 and self._last_occupied_ts is not None:
+            if (
+                gate_time > 0
+                and self._last_occupied_ts is not None
+            ):
                 time_since_occupied = now_ts - self._last_occupied_ts
                 if time_since_occupied > gate_time:
                     _LOGGER.debug(
@@ -1062,7 +1113,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
                         humidity_delta if humidity_delta is not None else 0.0
                     )
                     self._current_shower_start_baseline = (
-                        self._historical_baseline_humidity or area_humidity
+                        self._historical_baseline_humidity or ref_humidity or area_humidity
                     )
                     self._evacuation_model.record_peak(
                         max(4.0, self._current_shower_delta_peak), now_ts
@@ -1081,6 +1132,21 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
             if humidity_delta is None and trend_val <= trend_down_cutoff:
                 _conclude_shower_event()
+            elif (
+                self._is_fan_suppressed_in_sleep()
+                and not self._is_emergency_moisture(
+                    area_humidity=area_humidity,
+                    humidity_delta=humidity_delta,
+                    shower_prob=shower_prob,
+                )
+            ):
+                _LOGGER.debug(
+                    "%s: Sleep suppression active and moisture non-emergency; suppressing fan",
+                    self.name,
+                )
+                self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+                self._attr_extra_state_attributes.pop(ATTR_HUMIDITY_START_TS, None)
+                fans_on = False
             else:
                 fans_on = True
         else:
@@ -1125,6 +1191,11 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 self._turn_off_fan()
         else:
             self._turn_off_fan()
+
+        if fans_on or self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
+            self._start_watchdog_timer()
+        else:
+            self._stop_watchdog_timer()
 
         self.schedule_update_ha_state()
 
@@ -1203,6 +1274,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         _LOGGER.debug("%s: Turning on fans", self.name)
         self.last_update_from_entity = True
         self._attr_is_on = True
+        self._start_watchdog_timer()
         service_data = {
             ATTR_ENTITY_ID: self.entity_id,
         }
@@ -1223,10 +1295,38 @@ class AreaFanGroup(MagicEntity, FanGroup):
         _LOGGER.debug("%s: Turning fan off", self.name)
         self.last_update_from_entity = True
         self._attr_is_on = False
+        if not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
+            self._stop_watchdog_timer()
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         call_service_non_blocking(
             self.hass, FAN_DOMAIN, SERVICE_TURN_OFF, service_data
         )
+
+    def _start_watchdog_timer(self) -> None:
+        """Start periodic watchdog timer while fan or humidity mode is active."""
+        if self._watchdog_unsub is None:
+            self._watchdog_unsub = async_track_time_interval(
+                self.hass, self._watchdog_tick, timedelta(seconds=60)
+            )
+
+    def _stop_watchdog_timer(self) -> None:
+        """Stop watchdog timer."""
+        if self._watchdog_unsub is not None:
+            self._watchdog_unsub()
+            self._watchdog_unsub = None
+
+    def _watchdog_tick(self, _now: datetime | None = None) -> None:
+        """Periodic watchdog evaluation to guarantee timeouts when sensors flatline."""
+        _LOGGER.debug("%s: Watchdog evaluating fan humidity control", self.name)
+        self._humidity_fan_control()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up timers when removed from hass."""
+        self._stop_watchdog_timer()
+        if self._manual_timeout_cb is not None:
+            self._manual_timeout_cb()
+            self._manual_timeout_cb = None
+        await super().async_will_remove_from_hass()
 
     #### Control Release
     def _is_controlled_by_this_entity(self) -> bool:

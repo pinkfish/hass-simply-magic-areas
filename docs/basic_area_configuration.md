@@ -19,8 +19,10 @@ Every room or zone mapped in Home Assistant's Area Registry is managed through i
 
 | Setting | Parameter Key | Default | Description |
 | :--- | :--- | :--- | :--- |
-| **Area Type** | `type` | `interior` | Classifies the spatial characteristics of the area: `interior` for indoor rooms, `exterior` for outdoor spaces (porches, patios, driveways, yards), or `meta` for synthetic parent areas. |
-| **Area Icon** | `icon` | `mdi:texture-box` | Icon displayed across Home Assistant dashboards and diagnostic state sensors. |
+| **Area Type** | `type` | `interior` | Classifies the spatial characteristics of the area: `interior` for indoor rooms, or `exterior` for outdoor spaces (porches, patios, driveways, yards). Synthetic parent areas use `meta`. |
+
+> [!NOTE]
+> **Area Icons:** Home Assistant natively manages area icons in **Settings** > **Areas & Zones** > **Areas**. Simply Magic Areas automatically pulls and respects your configured area icon from the Area Registry without requiring redundant manual entry.
 
 ### Interior vs. Exterior Behavior
 - **Interior (`interior`)**: Standard indoor room. Subject to occupancy-based comfort lighting, climate setbacks, and indoor humidity tracking.
@@ -56,41 +58,25 @@ Simply Magic Areas gives you complete control over whether lighting and ventilat
 
 ---
 
-## 💡 Lighting Profiles & Dimming Levels (Base Setup)
-
-Simply Magic Areas maintains separate lighting states for different household contexts:
+## 🌙 Sleep Mode & Night Lighting
 
 | Setting | Parameter Key | Default | Description |
 | :--- | :--- | :--- | :--- |
-| **Occupied Dim Level** | `occupied_state_dim` | `100%` | Target brightness percentage when the area is occupied under normal conditions. |
-| **Clear Dim Level** | `clear_state_dim` | `0%` | Target brightness after the area clears. Set to `10%`–`20%` to maintain gentle nightlight illumination in hallways or staircases instead of pitch blackness. |
-| **Extended Dim Level** | `extended_state_dim` | `0%` | Dim level during the transitional `extended` period before full clearance. |
-| **Sleep Light Entity** | `sleep_lights_entity` | *None* | A binary sensor, input boolean, or switch indicating sleep mode for this room (e.g., `input_boolean.bedtime_active` or a bed sensor). |
-| **Sleep Dim Level** | `sleep_lights_state_dim` | `10%` | Dimming level applied when motion occurs while sleep mode is active. |
-| **Bright Light Entity** | `bright_lights_entity` | *None* | Entity indicating daytime or high ambient lux (e.g., illuminance threshold sensor). |
-| **Bright Dim Level** | `bright_lights_state_dim` | `100%` | Dimming level applied during daytime/bright states. |
-| **Accented Light Entity**| `accented_lights_entity`| *None* | Switch or boolean triggering mood/accent lighting scenes. |
-| **Accented Dim Level** | `accented_lights_state_dim` | `50%` | Dimming level applied when accented mode is enabled. |
+| **Sleep Light Entity** | `sleep_lights_entity` | *None* | A binary sensor, input boolean, or switch indicating sleep mode for this room (e.g., `input_boolean.bedtime_active` or a bed sensor). When active, occupancy turns on gentle sleep illumination instead of full brightness. |
 
 ---
 
-## ☀️ Photometric Baselines
+## ⚙️ Advanced Settings Relocation
 
-| Setting | Parameter Key | Default | Description |
+To provide an intuitive, clutter-free setup experience, specialized options are housed under the **Advanced Light Groups** feature flow (`advanced_light_groups`):
+
+| Setting | Parameter Key | Feature Location | Description |
 | :--- | :--- | :--- | :--- |
-| **Dark Lux Floor** | `dark_lux_floor` | `10 lx` | Ambient illuminance at or below which the room is considered dark regardless of daytime solar elevation. Guarantees lights turn on in windowless closets, pantries, and interior bathrooms. |
-| **Learn Daylight Lux** | `learn_daylight_lux` | `true` | When enabled, Simply Magic Areas continuously observes ambient sensor history to calibrate your room's natural daytime lux baseline without manual guesswork. |
-| **Daylight Lux Level** | `daylight_lux_level` | `0` (auto) | Manual override for the daytime lux threshold. When set to `0`, the autonomous learning algorithm is used. |
-| **Min Brightness Level**| `min_brightness_level` | `100` | Illuminance level at which lights begin dimming as ambient light rises. |
-| **Max Brightness Level**| `max_brightness_level` | `200` | Illuminance level at which ambient daylight is sufficient and lights turn off entirely. |
-
----
-
-## 📡 Room Tracking (MQTT)
-
-| Setting | Parameter Key | Default | Description |
-| :--- | :--- | :--- | :--- |
-| **MQTT Room Presence** | `mqqt_room` | `false` | Enables integration with BLE room-presence tracking engines (such as ESPresense or Room-Assistant). When enabled, BLE tracker entities assigned to this area participate in presence evaluation. |
+| **Bright Light Entity** | `bright_lights_entity` | Advanced Light Groups | Entity indicating daytime or high ambient lux (e.g., illuminance threshold sensor). |
+| **Bright Dim Level** | `bright_state_dim` | Advanced Light Groups | Target dim percentage applied during bright/daylight state. |
+| **Occupied Dim Level** | `occupied_state_dim` | Advanced Light Groups | Target dim percentage applied when room is occupied under standard conditions (default `100%`). |
+| **MQTT Room Presence** | `mqqt_room` | Advanced Light Groups | Enables BLE tracking engines (ESPresense, Room-Assistant) for room-level proximity. |
+| **Photometric Baselines**| `dark_lux_floor`, `learn_daylight_lux` | Advanced Light Groups | Lux floor and autonomous daylight calibration. |
 
 ---
 

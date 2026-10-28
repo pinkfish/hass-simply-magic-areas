@@ -438,6 +438,8 @@ class MagicArea(object):  # noqa: UP004
                 base = self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
             if lg.has_entity:
                 entity_ob = base.get(lg.entity_name())
+                if entity_ob is None and lg.is_advanced:
+                    entity_ob = self.config.get(lg.entity_name())
                 if entity_ob is None:
                     if lg.enable_state == AreaState.AREA_STATE_BRIGHT and (
                         int(

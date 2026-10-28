@@ -557,22 +557,25 @@ For exterior spaces of the home (both concrete areas classified as `type: exteri
 
 ### 6.1 Basic Area Configuration (`area_config` / `OPTIONS_AREA`)
 > [!TIP]
-> **Radical Simplicity:** The basic setup presents only essential intent. All adaptive daylight learning, shower humidity learning, and mmWave fan filtering algorithms run autonomously out of the box with zero user configuration required.
+> **Radical Simplicity:** The basic setup presents only 6–7 essential options for primary spatial control. Secondary and niche options are cleanly moved to Advanced Light Groups. Area icons are automatically managed via Home Assistant's native Area Registry.
 
 - `type`: Area classification (`interior`, `exterior`, `meta`).
-- `clear_timeout`: Seconds of sensor inactivity before transitioning `occupied` -> `extended` (default: `60s`).
-- `extended_timeout`: Seconds of sensor inactivity before transitioning `extended` -> `clear` (default: `120s`).
-- `icon`: Icon for the area.
-- `light_control`: Enable automatic lighting automation for this area (default: `True`).
-- `fan_control`: Enable automatic exhaust fan automation for this area (default: `True`).
-- `fan_suppress_in_sleep`: Suppress exhaust fan operation during `extended` state when sleep mode is active (default: `False`).
-- `mqtt_room`: Enable MQTT room presence tracking (default: `False`).
+- `clear_timeout`: Seconds of sensor inactivity before transitioning `occupied` -> `extended` (default: `360s` / 6 min).
+- `extended_timeout`: Seconds of sensor inactivity before transitioning `extended` -> `clear` (default: `360s` / 6 min).
+- `light_control`: Master switch for automatic lighting automation for this area (default: `True`).
+- `fan_control`: Master switch for automatic exhaust fan automation for this area (default: `True`).
+- `fan_suppress_in_sleep`: Suppress post-occupancy exhaust fan operation during `extended` state when sleep mode is active (default: `False`).
+- `sleep_lights_entity`: Binary sensor, input boolean, or switch indicating sleep mode for this room.
 
 ### 6.2 Advanced Options & Feature Overrides
 
 Advanced calibration and overrides are strictly encapsulated in dedicated advanced feature menus:
 
 #### 6.2.1 Advanced Light Groups (`CONF_FEATURE_ADVANCED_LIGHT_GROUPS`)
+- `bright_lights_entity`: Entity indicating daytime or high ambient lux (e.g. illuminance threshold sensor).
+- `bright_state_dim`: Target dim percentage during bright/daylight state.
+- `occupied_state_dim`: Target dim percentage during normal occupancy (default: `100%`).
+- `mqqt_room`: Enable MQTT room presence tracking (e.g., ESPresense, Room-Assistant) (default: `False`).
 - `learn_lighting_preferences`: Enable 100% local Bayesian online preference learning from manual brightness overrides (default: `True`).
 - `mmwave_fan_filter`: Enable mmWave radar fan vs. human discrimination (default: `True`).
 - `learn_daylight_lux`: Autonomously learn the daylight lux baseline from room sensor history (default: `True`). Toggle to `False` to turn off adaptive lighting.

@@ -823,7 +823,18 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 )
 
         # Track the mqtt room stuff.
-        if self.area.config.get(CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE):
+        mqtt_room = (
+            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_MQTT_ROOM_PRESENCE
+            )
+            if self.area.has_feature(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+            else None
+        )
+        if mqtt_room is None:
+            mqtt_room = self.area.config.get(
+                CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE
+            )
+        if mqtt_room:
             for mqtt_room_sensor in self._mqqt_room_sensors:
                 try:
                     entity = self.hass.states.get(mqtt_room_sensor)

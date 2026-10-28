@@ -549,7 +549,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
         self, user_input: dict[str, Any] | None = None
     ):
         """Configure the advanced light groups bits."""
-        options = OPTIONS_AREA_ADVANCED
+        options = list(OPTIONS_AREA_ADVANCED)
         selectors = {
             CONF_INCLUDE_ENTITIES: self._build_selector_entity_simple(
                 self.all_entities, multiple=True
@@ -575,6 +575,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
             ),
             CONF_EXTERIOR_SUNSET_TRIGGER: selector({"boolean": {}}),
             CONF_EXTERIOR_ARRIVAL_TRIGGER: selector({"boolean": {}}),
+            CONF_MQTT_ROOM_PRESENCE: selector({"boolean": {}}),
         }
         for lg in ALL_LIGHT_ENTITIES:
             options.extend(lg.advanced_config_flow_options())

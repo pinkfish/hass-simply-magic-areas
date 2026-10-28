@@ -310,7 +310,7 @@ bright_lights = LightEntityConf(
     enable_state=AreaState.AREA_STATE_BRIGHT,
     icon="mdi:ceiling-light",
     has_entity=True,
-    is_advanced=False,
+    is_advanced=True,
 )
 sleep_lights = LightEntityConf(
     name="sleep",
@@ -322,7 +322,7 @@ sleep_lights = LightEntityConf(
 )
 occupied_lights = LightEntityConf(
     name="occupied",
-    is_advanced=False,
+    is_advanced=True,
     default_dim_level=100.0,
     enable_state=AreaState.AREA_STATE_OCCUPIED,
     icon="mdi:desk-lamp",
@@ -530,6 +530,10 @@ ADVANCED_LIGHT_GROUP_FEATURE_SCHEMA: vol.Schema = vol.Schema(
             CONF_MMWAVE_FAN_FILTER,
             default=DEFAULT_MMWAVE_FAN_FILTER,
         ): bool,
+        vol.Optional(
+            CONF_MQTT_ROOM_PRESENCE,
+            default=DEFAULT_MQTT_ROOM_PRESENCE,
+        ): bool,
     }
 )
 
@@ -590,7 +594,8 @@ REGULAR_AREA_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_FAN_SUPPRESS_IN_SLEEP, default=DEFAULT_FAN_SUPPRESS_IN_SLEEP
         ): bool,
-        vol.Optional(CONF_MQTT_ROOM_PRESENCE, default=DEFAULT_MQTT_ROOM_PRESENCE): bool,
+        vol.Optional(CONF_MQTT_ROOM_PRESENCE): bool,
+        vol.Optional(bright_lights.entity_name()): vol.Any(cv.entity_id, ""),
         vol.Optional(CONF_MIN_BRIGHTNESS_LEVEL, default=DEFAULT_MIN_BRIGHTNESS_LEVEL): cv.positive_int,
         vol.Optional(CONF_MAX_BRIGHTNESS_LEVEL, default=DEFAULT_MAX_BRIGHTNESS_LEVEL): cv.positive_int,
         vol.Optional(CONF_DARK_LUX_FLOOR, default=DEFAULT_DARK_LUX_FLOOR): cv.positive_int,
@@ -633,11 +638,9 @@ OPTIONS_AREA = [
     (CONF_TYPE, DEFAULT_TYPE, vol.In([AREA_TYPE_INTERIOR, AREA_TYPE_EXTERIOR])),
     (CONF_CLEAR_TIMEOUT, DEFAULT_CLEAR_TIMEOUT, int),
     (CONF_EXTENDED_TIMEOUT, DEFAULT_EXTENDED_TIMEOUT, int),
-    (CONF_ICON, DEFAULT_ICON, str),
     (CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL, bool),
     (CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL, bool),
     (CONF_FAN_SUPPRESS_IN_SLEEP, DEFAULT_FAN_SUPPRESS_IN_SLEEP, bool),
-    (CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE, bool),
 ]
 for item in ALL_LIGHT_ENTITIES:
     OPTIONS_AREA.extend(item.config_flow_options())
@@ -664,6 +667,7 @@ OPTIONS_AREA_ADVANCED = [
     (CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR, int),
     (CONF_LEARN_DAYLIGHT_LUX, DEFAULT_LEARN_DAYLIGHT_LUX, bool),
     (CONF_DAYLIGHT_LUX_LEVEL, DEFAULT_DAYLIGHT_LUX_LEVEL, int),
+    (CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE, bool),
 ]
 
 OPTIONS_AREA_META = [

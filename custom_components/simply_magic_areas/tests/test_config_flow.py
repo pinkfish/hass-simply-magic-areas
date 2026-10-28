@@ -88,8 +88,6 @@ async def test_form(hass: HomeAssistant) -> None:
         CONF_ID: "kitchen",
         CONF_TYPE: AREA_TYPE_INTERIOR,
         CONF_EXTENDED_TIMEOUT: 360,
-        CONF_MQTT_ROOM_PRESENCE: False,
-        "bright_entity": "",
         "sleep_entity": "",
         CONF_LIGHT_CONTROL: True,
         CONF_FAN_CONTROL: True,
@@ -142,13 +140,11 @@ async def test_options(hass: HomeAssistant, config_entry: MockConfigEntry) -> No
         CONF_ENABLED_FEATURES: {},
         CONF_ICON: "mdi:texture-box",
         CONF_TYPE: AREA_TYPE_INTERIOR,
-        CONF_MQTT_ROOM_PRESENCE: False,
         CONF_MAX_BRIGHTNESS_LEVEL: 200,
         CONF_MIN_BRIGHTNESS_LEVEL: 100,
         CONF_DARK_LUX_FLOOR: 10,
         CONF_LEARN_DAYLIGHT_LUX: True,
         CONF_DAYLIGHT_LUX_LEVEL: 0,
-        "bright_entity": "",
         "sleep_entity": "",
     }
 
@@ -176,11 +172,8 @@ async def test_options_enable_advanced_lights(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "area_config"
     assert result["data_schema"]({}) == {
-        "bright_entity": "",
-        CONF_MQTT_ROOM_PRESENCE: False,
-        CONF_EXTENDED_TIMEOUT: 360.0,
-        CONF_ICON: "mdi:texture-box",
         CONF_CLEAR_TIMEOUT: 360.0,
+        CONF_EXTENDED_TIMEOUT: 360.0,
         "sleep_entity": "",
         CONF_TYPE: "interior",
         CONF_LIGHT_CONTROL: True,
@@ -261,17 +254,17 @@ async def test_options_enable_advanced_lights(
                 CONF_EXTERIOR_ARRIVAL_TRIGGER: True,
                 CONF_LEARN_LIGHTING_PREFERENCES: True,
                 CONF_MMWAVE_FAN_FILTER: True,
+                "bright_entity": "",
+                CONF_MQTT_ROOM_PRESENCE: False,
             },
         },
         CONF_ICON: "mdi:texture-box",
         CONF_TYPE: AREA_TYPE_INTERIOR,
-        CONF_MQTT_ROOM_PRESENCE: False,
         CONF_MIN_BRIGHTNESS_LEVEL: 100,
         CONF_MAX_BRIGHTNESS_LEVEL: 200,
         CONF_DARK_LUX_FLOOR: 10,
         CONF_LEARN_DAYLIGHT_LUX: True,
         CONF_DAYLIGHT_LUX_LEVEL: 0,
-        "bright_entity": "",
         "sleep_entity": "",
     }
     await hass.async_block_till_done()
@@ -298,11 +291,8 @@ async def test_options_enable_humidity(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "area_config"
     assert result["data_schema"]({}) == {
-        "bright_entity": "",
-        CONF_MQTT_ROOM_PRESENCE: False,
-        CONF_EXTENDED_TIMEOUT: 360.0,
-        CONF_ICON: "mdi:texture-box",
         CONF_CLEAR_TIMEOUT: 360.0,
+        CONF_EXTENDED_TIMEOUT: 360.0,
         "sleep_entity": "",
         CONF_TYPE: "interior",
         CONF_LIGHT_CONTROL: True,
@@ -357,8 +347,6 @@ async def test_options_enable_humidity(
         },
         CONF_ICON: "mdi:texture-box",
         CONF_TYPE: AREA_TYPE_INTERIOR,
-        CONF_MQTT_ROOM_PRESENCE: False,
-        "bright_entity": "",
         "sleep_entity": "",
         CONF_MAX_BRIGHTNESS_LEVEL: 200,
         CONF_MIN_BRIGHTNESS_LEVEL: 100,

@@ -1186,9 +1186,15 @@ class AreaFanGroup(MagicEntity, FanGroup):
         elif self.area.state == AreaState.AREA_STATE_EXTENDED:
             if (
                 self._is_fan_suppressed_in_sleep()
-                or not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+                and not self._is_emergency_moisture(
+                    area_humidity=area_humidity,
+                    humidity_delta=humidity_delta,
+                    shower_prob=shower_prob,
+                )
             ):
                 self._turn_off_fan()
+            else:
+                self._turn_on_fan()
         else:
             self._turn_off_fan()
 

@@ -1288,6 +1288,86 @@ async def test_fan_suppressed_in_sleep_even_with_moderate_humidity(
     assert fan_group._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON) is True
 
 
+async def test_fan_post_occupancy_extended_state_with_humidity_feature(
+    hass: HomeAssistant,
+    differential_humidity_config_entry: MockConfigEntry,
+    one_fan: list[MockFan],
+    one_motion: list[MockBinarySensor],
+    one_sensor_humidity: list[MockSensor],
+    _setup_differential_humidity: None,
+) -> None:
+    """Test that fan turns ON after occupancy finishes (extended state) and turns OFF on clear timeout, even when humidity tracking is active."""
+    fan_group = None
+    for entity in hass.data["entity_components"]["fan"].entities:
+        if entity.entity_id == f"{FAN_DOMAIN}.simply_magic_areas_fan_kitchen":
+            fan_group = entity
+            break
+    assert fan_group is not None
+
+    stats_entity_id = f"{SENSOR_DOMAIN}.simply_magic_areas_humidity_statistics_kitchen"
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor is not None
+    assert area_state_sensor.state == "clear"
+
+    # Set normal resting baseline humidity
+    hass.states.async_set("sensor.reference_humidity", "50.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(one_sensor_humidity[0].entity_id, "50.0", attributes={"unit_of_measurement": "%"})
+    hass.states.async_set(stats_entity_id, "0.0")
+    await hass.async_block_till_done()
+
+    calls_on = async_mock_service(hass, FAN_DOMAIN, "turn_on")
+    calls_off = async_mock_service(hass, FAN_DOMAIN, "turn_off")
+
+    # 1. Occupancy starts: motion detected -> area occupied
+    one_motion[0].turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.5)
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "occupied"
+    # Fan remains OFF during normal occupied state without humidity
+    assert len(calls_on) == 0
+
+    # 2. Occupancy finishes: motion clears -> clear_timeout (2s) expires -> area enters extended state
+    one_motion[0].turn_off()
+    await hass.async_block_till_done()
+    await asyncio.sleep(4)
+    await hass.async_block_till_done()
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "extended"
+    # Fan MUST turn on for post-occupancy exhaust ventilation in extended state
+    assert len(calls_on) >= 1
+    one_fan[0].turn_on()
+    await hass.async_block_till_done()
+
+    # 3. Normal humidity check occurs while in extended state (watchdog or statistics sensor update)
+    calls_off.clear()
+    fan_group._humidity_fan_control()
+    await hass.async_block_till_done()
+
+    # Fan MUST remain ON during extended state (not prematurely shut off by _humidity_fan_control)
+    assert len(calls_off) == 0
+
+    # 4. Extended timeout (2s) expires -> area enters clear state
+    await asyncio.sleep(3)
+    await hass.async_block_till_done()
+
+    area_state_sensor = hass.states.get(
+        f"{SENSOR_DOMAIN}.simply_magic_areas_state_kitchen"
+    )
+    assert area_state_sensor.state == "clear"
+    # Fan MUST turn off once extended state timeout finishes
+    assert len(calls_off) >= 1
+
+
+
 
 
 

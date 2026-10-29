@@ -186,6 +186,7 @@ CONF_FAN_SUPPRESS_IN_SLEEP, DEFAULT_FAN_SUPPRESS_IN_SLEEP = (
     "fan_suppress_in_sleep",
     False,
 )
+CONF_FAN_RUN_IN_EXTENDED = "fan_run_in_extended"
 # Direct lux and referenced brightness
 CONF_BRIGHT_LUX_THRESHOLD, DEFAULT_BRIGHT_LUX_THRESHOLD = "bright_lux_threshold", 0
 CONF_BRIGHT_LUX_HYSTERESIS, DEFAULT_BRIGHT_LUX_HYSTERESIS = "bright_lux_hysteresis", 25
@@ -484,6 +485,7 @@ HUMIDITY_GROUP_FEATURE_SCHEMA = vol.Schema(
             CONF_LEARN_SHOWER_HUMIDITY,
             default=DEFAULT_LEARN_SHOWER_HUMIDITY,
         ): cv.boolean,
+        vol.Optional(CONF_FAN_RUN_IN_EXTENDED): cv.boolean,
     }
 )
 
@@ -594,6 +596,7 @@ REGULAR_AREA_SCHEMA = vol.Schema(
         vol.Optional(
             CONF_FAN_SUPPRESS_IN_SLEEP, default=DEFAULT_FAN_SUPPRESS_IN_SLEEP
         ): bool,
+        vol.Optional(CONF_FAN_RUN_IN_EXTENDED): cv.boolean,
         vol.Optional(CONF_MQTT_ROOM_PRESENCE): bool,
         vol.Optional(bright_lights.entity_name()): vol.Any(cv.entity_id, ""),
         vol.Optional(CONF_MIN_BRIGHTNESS_LEVEL, default=DEFAULT_MIN_BRIGHTNESS_LEVEL): cv.positive_int,

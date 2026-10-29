@@ -62,6 +62,7 @@ from .const import (
     ATTR_MANUAL_TIMEOUT_TS,
     ATTR_REFERENCE_HUMIDITY,
     ATTR_SHOWER_PROBABILITY,
+    CONF_FAN_RUN_IN_EXTENDED,
     CONF_FAN_SUPPRESS_IN_SLEEP,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_FEATURE_HUMIDITY,
@@ -484,7 +485,20 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         # For fans we only worry about the extended state.
         if to_state == AreaState.AREA_STATE_EXTENDED:
-            if (
+            if not self._should_run_in_extended():
+                _LOGGER.debug(
+                    "%s: Area has shower humidity tracking; skipping automatic extended fan activation",
+                    self.name,
+                )
+                if self.is_on and not (
+                    self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+                    and not (
+                        self._is_fan_suppressed_in_sleep()
+                        and not self._is_emergency_moisture()
+                    )
+                ):
+                    self._turn_off_fan()
+            elif (
                 self._is_fan_suppressed_in_sleep()
                 and not self._is_emergency_moisture()
             ):
@@ -506,6 +520,37 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self._turn_off_fan()
         else:
             _LOGGER.debug("Ignoring state change")
+
+    def _has_humidity_tracking(self) -> bool:
+        """Check if area has active humidity tracking for shower detection."""
+        if self.area.has_feature(CONF_FEATURE_HUMIDITY):
+            return True
+        trend_stats = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.HUMIDITY_STATISTICS
+        )
+        return self.hass.states.get(trend_stats) is not None
+
+    def _should_run_in_extended(self) -> bool:
+        """Return True if fan should run in extended state.
+
+        In toilets (no shower/humidity feature), fan runs in extended phase.
+        In bathrooms (with shower/humidity feature), fan turns on when humidity
+        is changing and does not automatically run in extended phase.
+        """
+        # 1. Explicit override in area config
+        if CONF_FAN_RUN_IN_EXTENDED in self.area.config:
+            val = self.area.config[CONF_FAN_RUN_IN_EXTENDED]
+            if val is not None:
+                return bool(val)
+
+        # 2. Explicit override in humidity feature config
+        humidity_config = self.area.feature_config(CONF_FEATURE_HUMIDITY)
+        if CONF_FAN_RUN_IN_EXTENDED in humidity_config:
+            return bool(humidity_config[CONF_FAN_RUN_IN_EXTENDED])
+
+        # 3. Default: toilets without humidity tracking run in extended;
+        # bathrooms with shower humidity tracking do not automatically run in extended.
+        return not self._has_humidity_tracking()
 
     def _is_emergency_moisture(
         self,
@@ -611,6 +656,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             not self._is_fan_suppressed_in_sleep()
             and self.area.state == AreaState.AREA_STATE_EXTENDED
             and not self.is_on
+            and self._should_run_in_extended()
         ):
             _LOGGER.debug(
                 "%s: Sleep cleared during extended state, turning fan on",
@@ -1183,7 +1229,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         )
         if fans_on:
             self._turn_on_fan()
-        elif self.area.state == AreaState.AREA_STATE_EXTENDED:
+        elif self.area.state == AreaState.AREA_STATE_EXTENDED and self._should_run_in_extended():
             if (
                 self._is_fan_suppressed_in_sleep()
                 and not self._is_emergency_moisture(

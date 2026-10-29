@@ -37,14 +37,17 @@ You can supply sleep state through any of the following methods:
 
 ---
 
-## 💨 Post-Occupancy Exhaust Ventilation
+## 💨 Post-Occupancy Exhaust Ventilation (Toilets vs. Bathrooms)
 
 | Setting | Parameter Key | Default | Description |
 | :--- | :--- | :--- | :--- |
 | **Fan Control** | `fan_control` | `true` | Master toggle for automated fan control. |
 | **Extended Timeout** | `extended_timeout` | `360s` (6m) | Duration the fan runs after the room is vacated before turning off. |
+| **Run Fan in Extended** | `fan_run_in_extended` | `auto` | When omitted / `auto`: **Toilets** (no shower/humidity tracking) run during the `extended` phase; **Bathrooms** (with shower/humidity tracking) do **not** run in `extended` and activate only when humidity changes. Can be explicitly overridden (`true`/`false`). |
 
-When occupants leave the room and the area transitions from `occupied` to `extended` (e.g., leaving a bathroom), the lighting turns off or dims, and the exhaust fan automatically turns ON for the configured `extended_timeout` duration.
+### Bathroom vs. Toilet Behavior Distinction
+- **Toilet / Powder Room (No Shower)**: When occupants leave the room and the area transitions from `occupied` to `extended`, the exhaust fan automatically turns ON for the configured `extended_timeout` duration to exhaust air and odors.
+- **Bathroom (With Shower)**: Routine visits (e.g., washing hands, brushing teeth, using the mirror) do **not** engage the fan; it **remains OFF** during the `extended` phase. The exhaust fan turns ON when a shower or moisture change is detected (`humidity_on: true`), and runs continuously through extended and clear states until moisture has evacuated back to baseline.
 
 ---
 

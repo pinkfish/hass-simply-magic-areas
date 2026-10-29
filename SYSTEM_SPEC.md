@@ -402,14 +402,17 @@ For exterior spaces of the home (both concrete areas classified as `type: exteri
 
 ### 4.2 Ventilation & Fans (`fan.py`)
 - **Entity**: `AreaFanGroup` (`fan.simply_magic_areas_fan_<area>`).
-- **Post-Occupancy Ventilation (`extended` state)**:
-  - **Bathroom & Room Exhaust**: When occupants leave the room and the area transitions from `occupied` to `extended` (e.g. leaving a bathroom), the lighting turns off (or dims to clear level) and the exhaust fan **automatically turns ON**.
-  - **Extended Duration**: The fan remains on for the duration of the configured `extended_timeout` period before turning off when transitioning to `clear`, unless prolonged by elevated humidity.
+- **Post-Occupancy Ventilation (`extended` state) & Room Differentiation**:
+  - **Toilet / Powder Room (No Shower / No Humidity Feature)**: When occupants leave the room and the area transitions from `occupied` to `extended`, the lighting turns off (or dims to clear level) and the exhaust fan **automatically turns ON** for the configured `extended_timeout` duration (e.g. 180s–360s) to exhaust air and odors, turning OFF upon transition to `clear`.
+  - **Bathroom (With Shower / Active Humidity Feature)**: Routine visits (e.g. washing hands, brushing teeth, using the mirror) do **not** engage the fan; it **remains OFF** during the `extended` phase. In bathrooms, the exhaust fan turns ON when a shower or moisture change is detected (`humidity_on: true`), and runs continuously through extended and clear until moisture has evacuated back to baseline.
+  - **Explicit Override (`CONF_FAN_RUN_IN_EXTENDED`)**: Defaults to `auto` (toilets without humidity tracking = `true`, bathrooms with shower tracking = `false`). Can be explicitly configured (`true`/`false`) on the area or humidity feature options to override the default.
 - **Acoustic Fan Suppression in Sleep Mode (`CONF_FAN_SUPPRESS_IN_SLEEP`)**:
   - **En-Suite & Bedroom Quiet Hours**: When enabled (`fan_suppress_in_sleep: true`), exhaust fans are prevented from turning on during `extended` mode if sleep mode is active.
   - **Sleep Source Detection**: Evaluates whether the current area is in `sleep` substate, whether the area's configured `sleep_entity` is active, or whether a referenced adjacent area (e.g. Master Bedroom for an Ensuite via `CONF_REFERENCE_BRIGHT_AREA`) is in `sleep` state.
-  - **Dynamic State Reactivity**: If sleep activates while the fan is actively running in `extended` mode, the fan is immediately turned OFF. Conversely, if sleep mode ends while the room remains in `extended` mode, the fan automatically turns ON for the remaining extended timeout.
-  - **Humidity Extraction Precedence**: Steam and moisture extraction take safety precedence over acoustic suppression. If differential humidity triggers ventilation (`humidity_on: true`), the fan activates regardless of sleep state to protect against mold and condensation buildup.
+  - **Dynamic State Reactivity**: If sleep activates while the fan is actively running in `extended` mode or during non-emergency moisture, the fan is immediately turned OFF. Conversely, if sleep mode ends while the room remains in `extended` mode, the fan automatically turns ON for the remaining extended timeout (in rooms configured to run in extended).
+  - **Critical Emergency Moisture Failsafe**: Extreme moisture ($\ge 80\%$ RH) unconditionally bypasses sleep suppression to protect against condensation, mold growth, or running water leaks. Moderate humidity levels honor sleep suppression to protect household sleep.
+  - **15-Minute Motor Safety Lockout**: If maximum fan runtime (`CONF_HUMIDITY_MAX_FAN_TIME`, default: 3600s) is exceeded, the fan shuts off and engages a 15-minute motor safety lockout to prevent immediate restarts while preserving hardware.
+  - **Active 60-Second Watchdog Timer**: A periodic watchdog timer runs continuously while the fan or humidity mode is active, guaranteeing that maximum runtimes and deadband timeouts trigger reliably even if derivative/statistics sensors flatline and stop emitting state change events.
 - **Enhanced Humidity & Climate Differential Ventilation**:
   - Detailed physical and empirical calculations, rate-of-change models, and shower dynamics are codified in the [Bathroom Humidity Dynamics & Adaptive Shower Fan Control Design Document](designs/bathroom_humidity_fan_design.md).
   - **Autonomous Multi-Tier Reference Resolution (Zero-Config)**:
@@ -565,6 +568,7 @@ For exterior spaces of the home (both concrete areas classified as `type: exteri
 - `light_control`: Master switch for automatic lighting automation for this area (default: `True`).
 - `fan_control`: Master switch for automatic exhaust fan automation for this area (default: `True`).
 - `fan_suppress_in_sleep`: Suppress post-occupancy exhaust fan operation during `extended` state when sleep mode is active (default: `False`).
+- `fan_run_in_extended`: Configure whether the fan automatically runs in `extended` state (default: `auto` — `True` for toilets without humidity feature, `False` for bathrooms with shower humidity feature).
 - `sleep_lights_entity`: Binary sensor, input boolean, or switch indicating sleep mode for this room.
 
 ### 6.2 Advanced Options & Feature Overrides

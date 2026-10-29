@@ -162,7 +162,7 @@ Timeouts determine how quickly rooms react to motion, how long lights/fans linge
 | Setting | Key | Default | Description & Recommended Settings |
 | :--- | :--- | :--- | :--- |
 | **Clear Timeout** | `clear_timeout` | `360s` (6m) | Number of seconds with no motion before transitioning from `occupied` to `extended`. Recommended: **30–60s** for hallways/pantries, **120–180s** for bathrooms, **300–600s** for offices/living rooms. |
-| **Extended Timeout** | `extended_timeout` | `360s` (6m) | Number of seconds the room stays in `extended` before turning off entirely. Exhaust fans typically run during this window. Recommended: **180–300s** for bathrooms. |
+| **Extended Timeout** | `extended_timeout` | `360s` (6m) | Number of seconds the room stays in `extended` before turning off entirely. Exhaust fans run during this window in toilets/powder rooms; in bathrooms with a shower, exhaust fans only run when humidity changes (unless `fan_run_in_extended` is explicitly enabled). Recommended: **180–300s** for toilets/bathrooms. |
 | **Update Interval** | `update_interval` | `1800s` (30m) | Periodic health-check interval to evaluate missed entity states or stuck sensors. |
 
 #### 2. Ventilation & Humidity Timers (**Advanced Ventilation & Humidity**)

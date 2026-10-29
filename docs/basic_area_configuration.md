@@ -39,7 +39,7 @@ $$\text{Clear} \xrightarrow{\text{Motion}} \text{Occupied} \xrightarrow{\text{cl
 | Setting | Parameter Key | Default | Description & Recommended Values |
 | :--- | :--- | :--- | :--- |
 | **Clear Timeout** | `clear_timeout` | `360s` (6 min) | Seconds of sensor inactivity before transitioning from `occupied` to `extended`.<br>• **Hallways, Pantries, Closets**: `30`–`60s`<br>• **Bathrooms**: `120`–`180s`<br>• **Living Rooms, Kitchens**: `300`–`450s`<br>• **Offices / Workspaces**: `600s` (or use mmWave radar) |
-| **Extended Timeout** | `extended_timeout` | `360s` (6 min) | Seconds the area remains in `extended` before extinguishing lights and turning off.<br>• **Bathrooms**: `180`–`300s` (exhaust fans run during this window)<br>• **General Rooms**: `60`–`120s` |
+| **Extended Timeout** | `extended_timeout` | `360s` (6 min) | Seconds the area remains in `extended` before extinguishing lights and turning off.<br>• **Toilets / Powder Rooms**: `180`–`300s` (exhaust fans run during this window to clear odors)<br>• **Bathrooms**: `180`–`300s` (exhaust fans only run when humidity changes/shower, unless configured otherwise)<br>• **General Rooms**: `60`–`120s` |
 
 > [!TIP]
 > **Preemption Invariant:** If motion or presence is detected at any point while in `extended`, the area transitions immediately back to `occupied`, resetting all timers synchronously.
@@ -55,6 +55,7 @@ Simply Magic Areas gives you complete control over whether lighting and ventilat
 | **Light Control** | `light_control` | `true` | Master switch for automated lighting. When disabled (`false`), Simply Magic Areas continues tracking occupancy and sensor states but will not send commands to light entities. |
 | **Fan Control** | `fan_control` | `true` | Master switch for automated ventilation. When disabled (`false`), fans are never controlled automatically by occupancy or humidity. |
 | **Suppress Fan in Sleep** | `fan_suppress_in_sleep` | `false` | When enabled (`true`), post-occupancy exhaust ventilation is muted during sleep mode to prevent disturbing sleeping household members. Steam/shower extraction still activates if high moisture is detected. |
+| **Run Fan in Extended** | `fan_run_in_extended` | `auto` | When `auto` (default): toilets/powder rooms automatically run in `extended`; bathrooms with shower humidity tracking only activate on humidity changes. Can be explicitly overridden (`true`/`false`). |
 
 ---
 

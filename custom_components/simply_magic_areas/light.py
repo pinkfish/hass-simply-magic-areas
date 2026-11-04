@@ -30,6 +30,7 @@ from homeassistant.core import (
     Event,
     EventStateChangedData,
     HomeAssistant,
+    State,
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
@@ -48,11 +49,15 @@ from .const import (
     ATTR_EXTERIOR_LIGHTING_ACTIVE,
     ATTR_EXTERIOR_TIMER_TS,
     ATTR_EXTERIOR_TRIGGER_REASON,
+    ATTR_HAS_PRESENCE_SENSORS,
     ATTR_HISTORICAL_DAYLIGHT_LUX,
     ATTR_IS_WINDOWLESS,
     ATTR_LAST_UPDATE_FROM_ENTITY,
     ATTR_MANUAL_CONTROL,
     ATTR_MANUAL_TIMEOUT_TS,
+    ATTR_PRESENCE_SENSORS,
+    ATTR_SWITCH_DEFAULT_DIM_ENTITIES,
+    ATTR_SWITCH_DEFAULT_DIM_LEVEL,
     CAMERA_DOMAIN,
     CONF_DARK_LUX_FLOOR,
     CONF_DAYLIGHT_LUX_LEVEL,
@@ -66,6 +71,7 @@ from .const import (
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
     DATA_AREA_OBJECT,
+    DEFAULT_ACTUATOR_RETRY_DELAYS,
     DEFAULT_DARK_LUX_FLOOR,
     DEFAULT_EXTERIOR_ARRIVAL_TRIGGER,
     DEFAULT_EXTERIOR_LIGHTING_TIMEOUT,
@@ -75,14 +81,56 @@ from .const import (
     DEFAULT_MAX_BRIGHTNESS_LEVEL,
     DEFAULT_MIN_BRIGHTNESS_LEVEL,
     DOMAIN,
+    INVALID_STATES,
     META_AREA_EXTERIOR,
     MODULE_DATA,
+    bright_lights,
+    occupied_lights,
+    sleep_lights,
 )
 from .ml.lighting_learner import OnlineBayesianLightingLearner
 from .util import call_service_non_blocking
 
 _LOGGER = logging.getLogger(__name__)
 ATTR_LAST_ON_ILLUMINANCE: str = "last_on_illuminance"
+NUMBER_DOMAIN: str = "number"
+SERVICE_SET_VALUE: str = "set_value"
+
+SWITCH_DEFAULT_DIM_KEYWORDS: tuple[str, ...] = (
+    "default_level",
+    "default_brightness",
+    "default_dim",
+    "default_on_level",
+    "default_turn_on",
+    "custom_brightness",
+    "forced_brightness",
+    "forced_switch_on_brightness",
+    "preset_light_level",
+    "preset_level",
+    "single_tap_turn_on_brightness",
+    "turn_on_brightness",
+    "local_start_level",
+    "start_up_current_level",
+    "startup_current_level",
+    "on_level",
+)
+
+SWITCH_DEFAULT_DIM_EXCLUSIONS: tuple[str, ...] = (
+    "ramp",
+    "speed",
+    "duration",
+    "time",
+    "rate",
+    "min_",
+    "max_",
+    "minimum",
+    "maximum",
+    "led_indicator",
+    "notification",
+    "auto_off",
+    "auto_turn_off",
+    "double_tap",
+)
 
 
 async def async_setup_entry(
@@ -172,8 +220,14 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         delattr(self, "_attr_name")
         self._manual_timeout_cb: CALLBACK_TYPE | None = None
+        self._manual_brightness_override: bool = False
         self._attr_icon: str = "mdi:ceiling-light"
         self._last_turn_off_ts: float = 0.0
+        self._retry_timer_cb: CALLBACK_TYPE | None = None
+        self._retry_attempt: int = 0
+        self._expected_state: str | None = None
+        self._expected_brightness: int | None = None
+        self._command_in_flight_until: float = 0.0
 
         # Exterior lighting state
         self._exterior_timer_cb: CALLBACK_TYPE | None = None
@@ -293,6 +347,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
         # Setup state change listeners
         await self._setup_listeners()
 
+        self._sync_switch_default_dim_level()
+
         await super().async_added_to_hass()
 
     async def _setup_listeners(self) -> None:
@@ -402,6 +458,15 @@ class AreaLightGroup(MagicEntity, LightGroup):
             _LOGGER.debug("%s: In manual mode, leaving lights as is", self.name)
             return
 
+        if not self.is_exterior and not self._has_presence_sensors():
+            if from_state == AreaState.AREA_STATE_MANUAL:
+                self._reset_control()
+                if self.is_on or self._has_any_working_light_on():
+                    conf = self._get_active_profile_config()
+                    if conf is not None:
+                        self._turn_on_light(conf)
+            return
+
         if occupancy_changed:
             if not self._is_controlled_by_this_entity():
                 _LOGGER.info(
@@ -483,11 +548,312 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 self._turn_off_light()
             return
 
+    def _has_presence_sensors(self) -> bool:
+        """Return True if this room has presence or contact sensors configured."""
+        state_sensor_id = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.STATE
+        )
+        state_sensor = self.hass.states.get(state_sensor_id)
+        if state_sensor is not None:
+            if ATTR_HAS_PRESENCE_SENSORS in state_sensor.attributes:
+                return bool(state_sensor.attributes[ATTR_HAS_PRESENCE_SENSORS])
+            if ATTR_PRESENCE_SENSORS in state_sensor.attributes:
+                sensors = state_sensor.attributes[ATTR_PRESENCE_SENSORS]
+                if isinstance(sensors, (list, tuple, set)):
+                    return len(sensors) > 0
+            if state_sensor.state in (
+                AreaState.AREA_STATE_OCCUPIED,
+                AreaState.AREA_STATE_EXTENDED,
+            ):
+                return True
+        if self.area.state in (
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_EXTENDED,
+        ):
+            return True
+        return self.area.has_configured_presence_sensors()
+
+    def _is_switch_default_dim_entity(self, entity_id: str) -> bool:
+        """Return True if entity_id is a switch/dimmer default turn-on brightness number entity."""
+        if not entity_id.startswith(f"{NUMBER_DOMAIN}."):
+            return False
+        object_id = entity_id.split(".", 1)[1].lower()
+        st = self.hass.states.get(entity_id)
+        friendly = (
+            str(st.attributes.get("friendly_name", "")).lower().replace(" ", "_")
+            if st is not None
+            else ""
+        )
+        combined = f"{object_id} {friendly}"
+        if any(excl in combined for excl in SWITCH_DEFAULT_DIM_EXCLUSIONS):
+            return False
+        return any(kw in combined for kw in SWITCH_DEFAULT_DIM_KEYWORDS)
+
+    def _get_switch_default_dim_entities(self) -> list[str]:
+        """Discover switch default turn-on dim level number.* entities for this room's lights."""
+        matched: list[str] = []
+        area_lights = [
+            e[ATTR_ENTITY_ID]
+            for e in self.area.entities.get(LIGHT_DOMAIN, [])
+            if ATTR_ENTITY_ID in e
+        ] or list(self._entity_ids)
+
+        # 1. Explicit number entities loaded into the area
+        for ent in self.area.entities.get(NUMBER_DOMAIN, []):
+            ent_id = ent.get(ATTR_ENTITY_ID) if isinstance(ent, dict) else None
+            if (
+                ent_id
+                and self._is_switch_default_dim_entity(ent_id)
+                and ent_id not in matched
+            ):
+                matched.append(ent_id)
+
+        # 2. Entity Registry device/area siblings of the room's lights
+        try:
+            er = async_get_er(self.hass)
+            if er is not None and hasattr(er, "entities"):
+                light_device_ids: set[str] = set()
+                for light_id in area_lights:
+                    entry = er.async_get(light_id)
+                    if entry is not None and getattr(entry, "device_id", None):
+                        light_device_ids.add(entry.device_id)
+                for entry in er.entities.values():
+                    if getattr(entry, "disabled_by", None) is not None:
+                        continue
+                    ent_id = getattr(entry, "entity_id", "")
+                    if not ent_id.startswith(f"{NUMBER_DOMAIN}."):
+                        continue
+                    if (
+                        (
+                            getattr(entry, "device_id", None) in light_device_ids
+                            or getattr(entry, "area_id", None) == self.area.id
+                        )
+                        and self._is_switch_default_dim_entity(ent_id)
+                        and ent_id not in matched
+                    ):
+                        matched.append(ent_id)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Unable to inspect entity registry for switch dim entities: %s", err)
+
+        # 3. State machine number.* entities matching light object_ids or area slug
+        prefixes: list[str] = []
+        if getattr(self.area, "slug", None):
+            prefixes.append(self.area.slug.lower())
+        for light_id in area_lights:
+            if "." in light_id:
+                obj_id = light_id.split(".", 1)[1].lower()
+                prefixes.append(obj_id)
+                for suffix in ("_light", "_lights", "_dimmer", "_switch"):
+                    if obj_id.endswith(suffix) and len(obj_id[: -len(suffix)]) >= 4:
+                        prefixes.append(obj_id[: -len(suffix)])
+
+        for num_id in self.hass.states.async_entity_ids(NUMBER_DOMAIN):
+            if num_id in matched:
+                continue
+            num_obj = num_id.split(".", 1)[1].lower()
+            if any(pref in num_obj for pref in prefixes) and self._is_switch_default_dim_entity(
+                num_id
+            ):
+                matched.append(num_id)
+
+        return matched
+
+    def _sync_switch_default_dim_level(self, profile: str | None = None) -> None:
+        """Set default turn-on dim level on smart switches in the room for the active profile."""
+        active_profile = profile or getattr(
+            self.area, "lighting_profile", LightingProfile.STANDARD
+        )
+        if active_profile in (LightingProfile.SLEEP, AreaState.AREA_STATE_SLEEP):
+            conf = self._get_profile_config_for(LightingProfile.SLEEP)
+            raw_pct = (
+                conf.dim_level
+                if conf is not None
+                else sleep_lights.default_dim_level
+            )
+            target_pct = max(
+                1,
+                min(
+                    100,
+                    int(raw_pct) if raw_pct > 0 else sleep_lights.default_dim_level,
+                ),
+            )
+        elif active_profile in (
+            LightingProfile.ACCENTED,
+            AreaState.AREA_STATE_ACCENTED,
+        ):
+            conf = self._get_profile_config_for(LightingProfile.ACCENTED)
+            raw_pct = conf.dim_level if conf is not None else 100
+            target_pct = max(1, min(100, int(raw_pct) if raw_pct > 0 else 100))
+        else:
+            conf = (
+                self.area.state_config(AreaState.AREA_STATE_OCCUPIED)
+                if self.area.has_configured_state(AreaState.AREA_STATE_OCCUPIED)
+                else None
+            )
+            raw_pct = (
+                conf.dim_level
+                if conf is not None
+                else occupied_lights.default_dim_level
+            )
+            target_pct = max(
+                1,
+                min(
+                    100,
+                    int(raw_pct)
+                    if raw_pct > 0
+                    else occupied_lights.default_dim_level,
+                ),
+            )
+
+        dim_entities = self._get_switch_default_dim_entities()
+        if not dim_entities:
+            return
+
+        self._attr_extra_state_attributes[ATTR_SWITCH_DEFAULT_DIM_ENTITIES] = (
+            dim_entities
+        )
+        self._attr_extra_state_attributes[ATTR_SWITCH_DEFAULT_DIM_LEVEL] = target_pct
+
+        if not self.area.is_control_enabled(ControlType.System):
+            return
+
+        for num_id in dim_entities:
+            st = self.hass.states.get(num_id)
+            if st is not None and st.state in INVALID_STATES:
+                continue
+            try:
+                min_val = float(st.attributes.get("min", 0)) if st is not None else 0.0
+            except (ValueError, TypeError):
+                min_val = 0.0
+            try:
+                max_val = (
+                    float(st.attributes.get("max", 100)) if st is not None else 100.0
+                )
+            except (ValueError, TypeError):
+                max_val = 100.0
+
+            if max_val == 99:
+                scaled = max(int(min_val), min(99, round(target_pct * 99 / 100)))
+            elif max_val > 100:
+                scaled = max(
+                    int(min_val),
+                    min(int(max_val), round(target_pct * max_val / 100)),
+                )
+            else:
+                scaled = max(int(min_val), min(int(max_val), round(target_pct)))
+
+            if st is not None:
+                try:
+                    if abs(float(st.state) - float(scaled)) < 0.5:
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+            call_service_non_blocking(
+                self.hass,
+                NUMBER_DOMAIN,
+                SERVICE_SET_VALUE,
+                {ATTR_ENTITY_ID: num_id, "value": scaled},
+            )
+
+    def _get_profile_config_for(
+        self, profile: str, dim_only: bool = False
+    ) -> StateConfigData | None:
+        """Resolve lighting profile configuration for a specific profile."""
+        enforce_non_zero_dim = dim_only or not self._has_presence_sensors()
+        occ_conf = (
+            self.area.state_config(AreaState.AREA_STATE_OCCUPIED)
+            if self.area.has_configured_state(AreaState.AREA_STATE_OCCUPIED)
+            else None
+        )
+        if self.area.has_configured_state(profile):
+            conf = self.area.state_config(profile)
+            if (
+                conf is not None
+                and enforce_non_zero_dim
+                and conf.dim_level <= 0
+            ):
+                fallback_dim = (
+                    occ_conf.dim_level
+                    if occ_conf and occ_conf.dim_level > 0
+                    else occupied_lights.default_dim_level
+                )
+                return StateConfigData(
+                    name=conf.name,
+                    entity=conf.entity,
+                    entity_state_on=conf.entity_state_on,
+                    dim_level=fallback_dim,
+                    for_state=conf.for_state,
+                    icon=conf.icon,
+                    control_entity=conf.control_entity,
+                    lights=list(conf.lights),
+                )
+            return conf
+
+        default_lights = (
+            list(occ_conf.lights)
+            if occ_conf
+            else (
+                [
+                    e[ATTR_ENTITY_ID]
+                    for e in self.area.entities.get(LIGHT_DOMAIN, [])
+                    if ATTR_ENTITY_ID in e
+                ]
+                or list(self._entity_ids)
+            )
+        )
+        if profile in (
+            LightingProfile.SLEEP,
+            AreaState.AREA_STATE_SLEEP,
+            LightingProfile.BRIGHT,
+            AreaState.AREA_STATE_BRIGHT,
+        ) and default_lights:
+            lg = (
+                sleep_lights
+                if profile in (LightingProfile.SLEEP, AreaState.AREA_STATE_SLEEP)
+                else bright_lights
+            )
+            adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+            lights = (
+                adv_conf.get(lg.advanced_lights_to_control(), default_lights)
+                or default_lights
+            )
+            dim_level = int(
+                adv_conf.get(
+                    lg.state_dim_level(),
+                    self.area.config.get(lg.state_dim_level(), lg.default_dim_level),
+                )
+            )
+            if enforce_non_zero_dim and dim_level <= 0:
+                dim_level = (
+                    occ_conf.dim_level
+                    if occ_conf and occ_conf.dim_level > 0
+                    else occupied_lights.default_dim_level
+                )
+            return StateConfigData(
+                name=lg.name,
+                entity=None,
+                entity_state_on=adv_conf.get(lg.advanced_state_check(), "on"),
+                dim_level=dim_level,
+                for_state=lg.enable_state,
+                icon=lg.icon,
+                control_entity=self.area.simply_magic_entity_id(
+                    SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
+                ),
+                lights=list(lights),
+            )
+
+        if occ_conf is not None:
+            return occ_conf
+        return None
+
     def _get_active_profile_config(self) -> StateConfigData | None:
         """Resolve the active lighting profile configuration."""
         profile = getattr(self.area, "lighting_profile", LightingProfile.STANDARD)
         if self.area.has_configured_state(profile):
             return self.area.state_config(profile)
+        if not self._has_presence_sensors():
+            return self._get_profile_config_for(profile)
         if self.area.has_configured_state(AreaState.AREA_STATE_OCCUPIED):
             return self.area.state_config(AreaState.AREA_STATE_OCCUPIED)
         return None
@@ -512,6 +878,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
             new_profile,
         )
 
+        # Pre-stage smart switch default turn-on dim levels across all rooms
+        self._sync_switch_default_dim_level(new_profile)
+
         if self.is_exterior and not self._is_nighttime():
             return
 
@@ -522,17 +891,42 @@ class AreaLightGroup(MagicEntity, LightGroup):
             AreaState.AREA_STATE_ACCENTED,
         }
 
-        # Profile change only updates lights when area is occupied
-        if self.area.state in occupied_states:
-            if not self._is_controlled_by_this_entity():
+        if (
+            self.area.state == AreaState.AREA_STATE_MANUAL
+            or not self.area.is_control_enabled(ControlType.System)
+        ):
+            return
+
+        if getattr(self, "_manual_brightness_override", False):
+            _LOGGER.debug(
+                "%s: In manual brightness override; ignoring profile change from %s to %s",
+                self.name,
+                old_profile,
+                new_profile,
+            )
+            return
+
+        is_currently_on = bool(self.is_on or self._has_any_working_light_on())
+
+        # If light is manually ON (in a sensor or sensorless room) or room has no sensors,
+        # only adjust the dim level without changing the ON/OFF state.
+        if not self._is_controlled_by_this_entity() or not self._has_presence_sensors():
+            if is_currently_on:
+                conf = self._get_profile_config_for(new_profile, dim_only=True)
+                if conf is not None:
+                    self._turn_on_light(conf, force=True, dim_only=True)
+            else:
                 _LOGGER.debug(
-                    "%s: In manual override; ignoring profile change from %s to %s",
+                    "%s: Lights are off; maintaining manual off state on profile change from %s to %s",
                     self.name,
                     old_profile,
                     new_profile,
                 )
-                return
-            if self.is_on:
+            return
+
+        # Normal automatic occupancy in a sensor-equipped room
+        if self.area.state in occupied_states:
+            if is_currently_on:
                 conf = self._get_active_profile_config()
                 if conf is not None:
                     self._turn_on_light(conf)
@@ -565,6 +959,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 )
             return
 
+        now_ts = datetime.now(UTC).timestamp()
+        in_command_grace = now_ts <= getattr(self, "_command_in_flight_until", 0.0)
+
         # Check for user manual brightness adjustment while light remains ON
         if (
             old_state.state == STATE_ON
@@ -572,12 +969,20 @@ class AreaLightGroup(MagicEntity, LightGroup):
             and old_state.attributes.get(ATTR_BRIGHTNESS)
             != new_state.attributes.get(ATTR_BRIGHTNESS)
         ):
-            if self.last_update_from_entity:
+            new_brightness = new_state.attributes.get(ATTR_BRIGHTNESS)
+            if self.last_update_from_entity or (
+                in_command_grace
+                and getattr(self, "_expected_state", None) == STATE_ON
+                and new_brightness is not None
+                and getattr(self, "_expected_brightness", None) is not None
+                and abs(int(new_brightness) - int(self._expected_brightness)) <= 3
+            ):
                 self.last_update_from_entity = False
                 return
 
-            new_brightness = new_state.attributes.get(ATTR_BRIGHTNESS)
             if new_brightness is not None and isinstance(new_brightness, (int, float)):
+                self._cancel_retry_timer()
+                self._command_in_flight_until = 0.0
                 lux = self._get_illuminance()
                 profile = getattr(
                     self.area, "lighting_profile", LightingProfile.STANDARD
@@ -605,6 +1010,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 self._attr_extra_state_attributes.update(
                     self._lighting_learner.get_attributes()
                 )
+                self._manual_brightness_override = True
                 self._set_controlled_by_this_entity(False)
                 self.schedule_update_ha_state()
             return
@@ -623,12 +1029,28 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         self._attr_is_on = new_state.state == STATE_ON
 
-        # If this update was initiated by internal automation, consume the flag and return
-        if self.last_update_from_entity:
+        # If this update was initiated by internal automation (or delayed Z-Wave report
+        # matching the in-flight command), consume the flag and return
+        if self.last_update_from_entity or (
+            in_command_grace
+            and new_state.state == getattr(self, "_expected_state", None)
+        ):
             self.last_update_from_entity = False
             return
 
         # External manual interaction (physical switch, UI, external integration)
+        self._cancel_retry_timer()
+        self._expected_state = None
+        self._command_in_flight_until = 0.0
+        self._manual_brightness_override = False
+
+        if not self._has_presence_sensors() and new_state.state == STATE_OFF:
+            if self.is_exterior:
+                self._clear_exterior_lighting()
+            self._reset_control()
+            self.schedule_update_ha_state()
+            return
+
         _LOGGER.debug(
             "%s: Light turned %s externally; entering manual override until occupied state change",
             self.name,
@@ -645,6 +1067,41 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if self._manual_timeout_cb is not None:
             self._manual_timeout_cb()
             self._manual_timeout_cb = None
+
+        # When a switch is manually turned ON in any room (sensor or sensorless),
+        # still adjust the dim level if the room is in sleep/accented mode without changing ON/OFF state
+        if (
+            old_state.state == STATE_OFF
+            and new_state.state == STATE_ON
+            and self.area.state != AreaState.AREA_STATE_MANUAL
+            and self.area.is_control_enabled(ControlType.System)
+        ):
+            active_profile = getattr(
+                self.area, "lighting_profile", LightingProfile.STANDARD
+            )
+            if active_profile in (
+                LightingProfile.SLEEP,
+                AreaState.AREA_STATE_SLEEP,
+                LightingProfile.ACCENTED,
+                AreaState.AREA_STATE_ACCENTED,
+            ):
+                conf = self._get_profile_config_for(active_profile, dim_only=True)
+                if conf is not None and 0 < conf.dim_level < 100:
+                    target_brightness = int(conf.dim_level * 255 / 100)
+                    current_brightness = new_state.attributes.get(ATTR_BRIGHTNESS)
+                    if (
+                        current_brightness is None
+                        or abs(int(current_brightness) - target_brightness) > 5
+                    ):
+                        _LOGGER.debug(
+                            "%s: Light switched ON manually during %s mode; adjusting dim level to %s%%",
+                            self.name,
+                            active_profile,
+                            conf.dim_level,
+                        )
+                        self._turn_on_light(conf, force=True, dim_only=True)
+                        return
+
         self.schedule_update_ha_state()
 
     def _reset_manual_timeout(self, now: datetime | None = None) -> None:
@@ -654,12 +1111,142 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self.schedule_update_ha_state()
 
     ####  Light Handling
-    def _turn_on_light(self, conf: StateConfigData, force: bool = False) -> None:
+    def _get_available_member_states(self) -> list[tuple[str, State]]:
+        """Return available (non-unavailable/unknown) member light states."""
+        available: list[tuple[str, State]] = []
+        for ent_id in self._entity_ids:
+            st = self.hass.states.get(ent_id)
+            if st is not None and st.state not in INVALID_STATES:
+                available.append((ent_id, st))
+        return available
+
+    def _has_any_working_light_on(self) -> bool:
+        """Return True if at least one available member light is ON."""
+        available = self._get_available_member_states()
+        if available:
+            return any(st.state == STATE_ON for _, st in available)
+        return bool(self.is_on)
+
+    def _has_any_working_light_off(self) -> bool:
+        """Return True if at least one available member light is OFF."""
+        available = self._get_available_member_states()
+        if available:
+            return any(st.state == STATE_OFF for _, st in available)
+        return not bool(self.is_on)
+
+    def _get_unresponsive_lights(self, target_state: str) -> list[str]:
+        """Return available member lights that have not reached target_state."""
+        available = self._get_available_member_states()
+        if available:
+            return [
+                ent_id for ent_id, st in available if st.state != target_state
+            ]
+        group_state = self.hass.states.get(self.entity_id)
+        if (
+            group_state is not None
+            and group_state.state not in INVALID_STATES
+            and group_state.state != target_state
+        ):
+            return [self.entity_id]
+        return []
+
+    def _cancel_retry_timer(self) -> None:
+        """Cancel any pending actuator sliding backoff retry timer."""
+        if getattr(self, "_retry_timer_cb", None) is not None:
+            self._retry_timer_cb()
+            self._retry_timer_cb = None
+        self._retry_attempt = 0
+
+    def _schedule_actuator_retry(
+        self, target_state: str, brightness: int | None = None
+    ) -> None:
+        """Schedule sliding backoff retry to verify Z-Wave/physical lights responded."""
+        self._cancel_retry_timer()
+        self._expected_state = target_state
+        self._expected_brightness = brightness
+        if not DEFAULT_ACTUATOR_RETRY_DELAYS:
+            return
+        self._retry_timer_cb = async_call_later(
+            self.hass,
+            DEFAULT_ACTUATOR_RETRY_DELAYS[0],
+            self._execute_actuator_retry,
+        )
+
+    def _execute_actuator_retry(self, _now: datetime | None = None) -> None:
+        """Check if available member lights reached expected state; retry with backoff if not."""
+        self._retry_timer_cb = None
+        if not self.area.is_control_enabled(ControlType.System):
+            return
+        if not self._is_controlled_by_this_entity():
+            return
+        target_state = getattr(self, "_expected_state", None)
+        if target_state not in (STATE_ON, STATE_OFF):
+            return
+
+        unresponsive = self._get_unresponsive_lights(target_state)
+        if not unresponsive:
+            self._retry_attempt = 0
+            return
+
+        self._retry_attempt += 1
+        _LOGGER.warning(
+            "%s: Lights %s did not respond to %s command; retrying (attempt %d/%d)",
+            self.name,
+            unresponsive,
+            target_state,
+            self._retry_attempt,
+            len(DEFAULT_ACTUATOR_RETRY_DELAYS),
+        )
+        self.last_update_from_entity = True
+        self._command_in_flight_until = datetime.now(UTC).timestamp() + 2.5
+        if target_state == STATE_ON:
+            self._attr_is_on = True
+            service_data: dict[str, object] = {ATTR_ENTITY_ID: self.entity_id}
+            if getattr(self, "_expected_brightness", None) is not None:
+                service_data[ATTR_BRIGHTNESS] = self._expected_brightness
+            call_service_non_blocking(
+                self.hass, LIGHT_DOMAIN, SERVICE_TURN_ON, service_data
+            )
+        else:
+            self._attr_is_on = False
+            service_data = {ATTR_ENTITY_ID: self.entity_id}
+            call_service_non_blocking(
+                self.hass, LIGHT_DOMAIN, SERVICE_TURN_OFF, service_data
+            )
+
+        if self._retry_attempt < len(DEFAULT_ACTUATOR_RETRY_DELAYS):
+            next_delay = DEFAULT_ACTUATOR_RETRY_DELAYS[self._retry_attempt]
+            self._retry_timer_cb = async_call_later(
+                self.hass,
+                next_delay,
+                self._execute_actuator_retry,
+            )
+
+    def _turn_on_light(
+        self,
+        conf: StateConfigData,
+        force: bool = False,
+        dim_only: bool = False,
+    ) -> None:
         """Turn on the light group."""
 
         if not force and not self._is_controlled_by_this_entity():
             _LOGGER.debug(
                 "%s: Light in manual override, aborting automatic turn on",
+                self.name,
+            )
+            return
+
+        enforce_dim_only = dim_only or (
+            not self.is_exterior and not self._has_presence_sensors()
+        )
+        if (
+            enforce_dim_only
+            and not self.is_on
+            and not self._has_any_working_light_on()
+        ):
+            _LOGGER.debug(
+                "%s: Light is off and dim_only is active; preserving manual off state",
                 self.name,
             )
             return
@@ -678,7 +1265,14 @@ class AreaLightGroup(MagicEntity, LightGroup):
         brightness = int(conf.dim_level * 255 / 100)
         now_ts = datetime.now(UTC).timestamp()
         recent_turn_off = (now_ts - getattr(self, "_last_turn_off_ts", 0.0)) < 3.0
-        if not force and not recent_turn_off and self.is_on and self.brightness == brightness:
+        all_working_on = not self._has_any_working_light_off()
+        if (
+            not force
+            and not recent_turn_off
+            and self.is_on
+            and all_working_on
+            and self.brightness == brightness
+        ):
             _LOGGER.debug("%s: Already on at %s", self.name, brightness)
             return
 
@@ -822,6 +1416,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if not self.area.is_control_enabled(ControlType.System):
             return
 
+        if enforce_dim_only and brightness <= 0:
+            brightness = max(1, int(conf.dim_level * 255 / 100) or 255)
+
         if brightness == 0:
             _LOGGER.debug("%s: Brightness is 0", self.name)
             self._turn_off_light(force=True)
@@ -830,6 +1427,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         _LOGGER.debug("Turning on lights")
         self.last_update_from_entity = True
         self._attr_is_on = True
+        self._command_in_flight_until = datetime.now(UTC).timestamp() + 2.5
         self.schedule_update_ha_state()
         service_data = {
             ATTR_ENTITY_ID: self.entity_id,
@@ -838,11 +1436,19 @@ class AreaLightGroup(MagicEntity, LightGroup):
         call_service_non_blocking(
             self.hass, LIGHT_DOMAIN, SERVICE_TURN_ON, service_data
         )
+        self._schedule_actuator_retry(STATE_ON, brightness)
 
         return
 
     def _turn_off_light(self, force: bool = False) -> None:
         """Turn off the light group."""
+        if not self.is_exterior and not self._has_presence_sensors():
+            _LOGGER.debug(
+                "%s: Sensorless room on/off state is manual; aborting automatic turn off",
+                self.name,
+            )
+            return
+
         if not force and not self._is_controlled_by_this_entity():
             _LOGGER.debug(
                 "%s: Light in manual override, aborting automatic turn off",
@@ -875,21 +1481,24 @@ class AreaLightGroup(MagicEntity, LightGroup):
             )
             return
 
-        if not self.is_on:
+        if not self.is_on and not self._has_any_working_light_on():
             _LOGGER.debug("%s: Light already off", self.name)
             return
 
         if not self.area.is_control_enabled(ControlType.System):
             return
 
-        self._last_turn_off_ts = datetime.now(UTC).timestamp()
+        now_ts = datetime.now(UTC).timestamp()
+        self._last_turn_off_ts = now_ts
         self.last_update_from_entity = True
         self._attr_is_on = False
+        self._command_in_flight_until = now_ts + 2.5
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         # await self.async_turn_off()
         call_service_non_blocking(
             self.hass, LIGHT_DOMAIN, SERVICE_TURN_OFF, service_data
         )
+        self._schedule_actuator_retry(STATE_OFF)
 
         return
 
@@ -914,6 +1523,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     def _set_controlled_by_this_entity(self, enabled: bool) -> None:
         if enabled:
+            self._manual_brightness_override = False
             self._attr_extra_state_attributes.pop(ATTR_MANUAL_CONTROL, None)
             self._attr_extra_state_attributes.pop(ATTR_MANUAL_TIMEOUT_TS, None)
         else:
@@ -1013,6 +1623,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             if not self.is_on:
                 self.last_update_from_entity = True
                 self._attr_is_on = True
+                self._command_in_flight_until = datetime.now(UTC).timestamp() + 2.5
                 service_data = {
                     ATTR_ENTITY_ID: self.entity_id,
                     ATTR_BRIGHTNESS: 255,
@@ -1020,6 +1631,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 call_service_non_blocking(
                     self.hass, LIGHT_DOMAIN, SERVICE_TURN_ON, service_data
                 )
+                self._schedule_actuator_retry(STATE_ON, 255)
 
         self.schedule_update_ha_state()
 
@@ -1188,3 +1800,14 @@ class AreaLightGroup(MagicEntity, LightGroup):
             ]
             if entity_id in cam_entities:
                 self._camera_state_change(event)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up timers when removed from hass."""
+        self._cancel_retry_timer()
+        if self._manual_timeout_cb is not None:
+            self._manual_timeout_cb()
+            self._manual_timeout_cb = None
+        if self._exterior_timer_cb is not None:
+            self._exterior_timer_cb()
+            self._exterior_timer_cb = None
+        await super().async_will_remove_from_hass()

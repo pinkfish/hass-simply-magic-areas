@@ -246,7 +246,7 @@ flowchart TD
     end
 
     subgraph Architectural Interlocks
-        DoorContact["Door Contact Closed + Prior Occupancy"]
+        DoorContact["Door / Window Contact Edge-Triggers (on <-> off)"]
     end
 
     PIR -->|Any Active| FUSED["Fused Presence Active"]
@@ -254,7 +254,7 @@ flowchart TD
     Media -->|Any Active| FUSED
     BLE -->|Any Active| FUSED
     HumRise -->|Any Active| FUSED
-    DoorContact -->|Interlock Latched| FUSED
+    DoorContact -->|State Transition Pulse| FUSED
 
     FUSED --> OCCUPIED["Main State: OCCUPIED"]
 ```
@@ -263,8 +263,9 @@ flowchart TD
 2. **Sustained Stillness Detection (mmWave Presence)**: Detects micro-movements (breathing, typing, reading) to maintain occupancy when occupants remain stationary.
 3. **Active Engagement Latch (Media Players)**: When media players in the area are actively `playing` (e.g. TV, music streamer), the room is automatically maintained in `occupied` to prevent lights or displays extinguishing during passive viewing or listening.
 4. **Micro-Climate Derivative Indicators (Humidity Rate-of-Rise)**: A rapid spike in humidity (`change_second > 0.03 %/s`) indicates an active shower, bath, or cooking session, immediately engaging or preserving presence even before optical sensors register through fogged glass or closed shower curtains.
-5. **Architectural Interlocks (Door Contact Occupancy Latching)**: When an area is occupied and a perimeter/entry door closes (such as a bathroom or private office), presence is latched to eliminate sensor blind spots until the door is reopened.
+5. **Door / Opening Contact Edge-Triggers (`BinarySensorDeviceClass.DOOR`, `GARAGE_DOOR`, `OPENING`, `WINDOW`)**: Contact sensors are evaluated strictly as **edge triggers** when transitioning between valid states (`on -> off` or `off -> on`). Opening or closing a door triggers an occupancy pulse and initiates the `clear_timeout` countdown, whereas a door left statically open (`on`) or closed (`off`) never continuously holds the area occupied. Transitions to or from `unavailable`/`unknown` are ignored.
 6. **Room Proximity & BLE (MQTT Room Presence)**: Proximity RSSI sensors track individual device locations to reinforce presence.
+7. **Broken Sensor Resilience**: If an active presence sensor disconnects or transitions to `unavailable`/`unknown` while an area is `occupied`, `AreaStateSensor` immediately updates `_last_off_time` and schedules the `clear_timeout` countdown so a dead sensor never traps the room in permanent occupancy. During startup, `MagicArea._load_entity_list` falls back to Home Assistant's `EntityRegistry` for `device_class` and `unit_of_measurement` metadata when an entity's state is not yet available.
 
 #### 3.5.2 Instantaneous Preemption & State Assertion (`force=True`)
 - The moment any presence sensor fires, `AreaStateSensor` transitions immediately to `occupied`.
@@ -281,6 +282,8 @@ Rooms never abruptly drop from `occupied` to `clear`. Departure follows a multi-
 - **Startup & Restart Validation (`_validate_state_consistency()`)**: When Home Assistant restarts or the integration reloads, the state machine cross-references current sensor states. If all presence sensors are off and no timers were persisted, stale or orphaned `occupied` states are safely cleared to prevent rooms becoming stuck indefinitely.
 - **Anti-Fighting Wall Switch Resilience**: If an external command or physical switch turns off lights while human presence remains affirmatively verified (and no manual override was set), the system automatically re-asserts lighting to protect occupants from accidental deactivation.
 - **Context Isolation**: Substates (`sleep`, `bright`, `accented`) modulate *how* the room is illuminated, but never influence *whether* human presence exists. Presence detection is completely decoupled from contextual scene profiles.
+- **Sensorless & Sensor-Equipped Manual Switch ON/OFF + Automatic Dim Level**: In both sensor-equipped and sensorless rooms, flipping a switch ON or OFF externally sets manual ON/OFF override (`manual_control = True`, held until the area clears in sensor rooms or until switched off in sensorless rooms). While a switch is manually ON, `AreaLightGroup` still automatically adjusts the **dim level** across `sleep` (night), `bright` (daytime), and `standard` profiles (and immediately dims to `sleep_state_dim` if switched ON during `sleep` mode) without ever changing the manual ON/OFF state (`dim_only=True`). Manual dimmer/brightness adjustments while the light is ON (`_manual_brightness_override = True`) lock both the ON/OFF state and the chosen brightness until the switch is turned OFF or the room clears.
+- **Smart Switch Default Turn-On Dim Level Pre-Staging (All Rooms)**: Across all rooms (both sensor-equipped and sensorless), `AreaLightGroup._sync_switch_default_dim_level` automatically discovers `number.*` entities on the room's light switches/dimmers that configure hardware default turn-on brightness (e.g. Z-Wave JS `default_level_local`, `custom_brightness_level_on`, `default_brightness`, `preset_light_level`, `forced_brightness_level`, and Zigbee/Matter `on_level`, while excluding ramp-rate, min/max bound, and timer entities). When entering `sleep` mode, the integration sets each switch's default turn-on level to the `sleep` dim percentage (scaled to the entity's `[min, max]` range, such as `1..99` for Z-Wave multilevel dimmers or `1..100` for standard dimmers), and restores the `occupied` dim level when leaving `sleep` mode.
 
 ### 3.6 Adaptive Lux, In-Situ Daylight Learning & Dark Floor Architecture
 
@@ -371,10 +374,14 @@ flowchart TD
   - **Transition to Manual State**: If someone manually adjusts a light (turns a light on or off, adjusts brightness, or changes color via a physical wall switch, smart dimmer, external integration, or Home Assistant UI), the light entity automatically transitions into a **Manual State** (exposing `manual_control: true` in its extra state attributes).
   - **Override Automatic State**: While in this manual state, the automatic lighting control is completely overridden and suspended. Contextual lighting profile shifts (e.g. `standard` to `sleep` or `bright`) or ambient illuminance fluctuations will **not** modify, extinguish, or alter the light fixtures. This guarantees that automated routines never fight human manual preferences.
   - **Occupancy-Hold Duration**: The manual state persists and is held steadily until an **occupied state change** occurs:
-    - **Clear $\to$ Occupied**: When presence is detected in a previously clear area, manual override resets and normal profile-based automated lighting engages.
+    - **Clear / Extended $\to$ Occupied**: When presence is detected in a previously clear area or re-detected during the `extended` grace period, manual override resets and normal profile-based automated lighting engages.
     - **Occupied / Extended $\to$ Clear**: When an occupied or extended room completely clears, manual override resets and lights extinguish in accordance with clear state automation.
-    - **Occupied $\leftrightarrow$ Extended**: Transitions between occupied and extended buffers (or vice-versa) do not reset manual override, preserving human intent while the room remains occupied.
+    - **Occupied $\to$ Extended**: Transitioning from `occupied` into the `extended` grace buffer does not reset manual override if the user manually turned the lights off while in the room; however, re-entering (`extended -> occupied`) resets manual override and restores lighting.
     - **Master Switch Reset**: Toggling the Area System Control Switch (`switch.simply_magic_areas_system_control_<area>`) back ON immediately clears any manual holds.
+- **Z-Wave / Wireless Actuator Sliding Backoff Retry & Broken Device Resilience**:
+  - **Sliding Backoff Verification (`DEFAULT_ACTUATOR_RETRY_DELAYS = (3.5, 7.0, 15.0)`)**: When `AreaLightGroup` or `AreaFanGroup` dispatches a `turn_on` or `turn_off` command, a sliding backoff timer verifies that all available (`state not in ("unavailable", "unknown")`) member entities actually transitioned to the target state. If a Z-Wave or wireless packet is dropped and a working light or fan fails to respond, the command is automatically re-sent at `3.5s`, `7.0s`, and `15.0s` intervals until confirmed or superseded.
+  - **Delayed Report Grace Window**: A 2.5-second directional command-in-flight grace window prevents delayed Z-Wave dimmer state and brightness reports (including ±3 step hardware rounding) from being falsely misclassified as human manual overrides.
+  - **Broken Device Isolation**: Unavailable or broken member lights, fans, or sensors (`unavailable` / `unknown`) are excluded from readiness and retry checks so a single failed bulb, fan, or sensor never blocks working devices in the area or triggers endless retries.
 - **Rapid Transition & Race Condition Resilience**:
   - **Forced Turn-On on Occupancy**: When transitioning into an occupied state from non-occupied (`clear` or `extended`), `_turn_on_light` enforces execution (`force=True`). It bypasses cached state checks (`is_on` / matching brightness) so that a pending in-flight turn-off never prevents the lights from being commanded on.
   - **Turn-Off Occupancy Guard**: `_turn_off_light` verifies that the area is not currently in an occupied state before issuing any off command. If the area has transitioned back to occupied, the turn-off is aborted immediately.

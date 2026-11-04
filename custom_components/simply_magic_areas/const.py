@@ -65,6 +65,9 @@ ATTR_LAST_OFF_TIME = "last_off_time"
 ATTR_ACTIVE_SENSORS = "active_sensors"
 ATTR_LAST_ACTIVE_SENSORS = "last_active_sensors"
 ATTR_PRESENCE_SENSORS = "presence_sensors"
+ATTR_HAS_PRESENCE_SENSORS = "has_presence_sensors"
+ATTR_SWITCH_DEFAULT_DIM_ENTITIES = "switch_default_dim_entities"
+ATTR_SWITCH_DEFAULT_DIM_LEVEL = "switch_default_dim_level"
 ATTR_LAST_UPDATE_FROM_ENTITY: str = "last_update_from_entity"
 DEFAULT_LIGHTING_PROFILE = LightingProfile.STANDARD
 
@@ -108,6 +111,15 @@ AREA_TYPE_EXTERIOR = "exterior"
 AVAILABLE_ON_STATES = [STATE_ON, STATE_HOME, STATE_PLAYING, STATE_OPEN]
 
 INVALID_STATES = [STATE_UNAVAILABLE, STATE_UNKNOWN]
+
+CONTACT_SENSOR_DEVICE_CLASSES = {
+    BinarySensorDeviceClass.DOOR,
+    BinarySensorDeviceClass.GARAGE_DOOR,
+    BinarySensorDeviceClass.OPENING,
+    BinarySensorDeviceClass.WINDOW,
+}
+
+DEFAULT_ACTUATOR_RETRY_DELAYS: tuple[float, ...] = (3.5, 7.0, 15.0)
 
 # Configuration parameters
 CONF_ID = "id"
@@ -688,6 +700,8 @@ OPTIONS_AREA_META = [
 INHERITABLE_CONF_KEYS = {
     sleep_lights.entity_name(),
     sleep_lights.state_dim_level(),
+    bright_lights.entity_name(),
+    bright_lights.state_dim_level(),
     accented_lights.entity_name(),
     accented_lights.state_dim_level(),
     CONF_CLEAR_TIMEOUT,

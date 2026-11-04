@@ -20,7 +20,7 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
-from homeassistant.core import Event, EventStateChangedData, callback
+from homeassistant.core import Event, EventStateChangedData, State, callback
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -57,6 +57,7 @@ from ..const import (
     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
+    CONF_INCLUDE_ENTITIES,
     CONF_MMWAVE_FAN_FILTER,
     CONF_MQTT_ROOM_PRESENCE,
     CONF_ON_STATES,
@@ -65,6 +66,7 @@ from ..const import (
     CONF_REFERENCE_HUMIDITY_SENSOR,
     CONF_TYPE,
     CONF_UPDATE_INTERVAL,
+    CONTACT_SENSOR_DEVICE_CLASSES,
     DEFAULT_HUMIDITY_DEADBAND,
     DEFAULT_HUMIDITY_DELTA_SHUTOFF,
     DEFAULT_HUMIDITY_DELTA_THRESHOLD,
@@ -117,6 +119,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self._mqqt_room_sensors: list[str] = []
         self._mode: str = "one"
         self._sensor_changed_in_extended: bool = False
+        self._contact_triggered: bool = False
         self._filtered_fan_sensors: list[str] = []
         self._mmwave_filter: MMWaveFanFilter = MMWaveFanFilter(area.hass, area)
 
@@ -275,6 +278,25 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             async_track_time_interval(self.hass, self._update_state, delta)
         )
 
+    def _is_contact_sensor(
+        self, sensor_id: str, entity_state: State | None = None
+    ) -> bool:
+        """Return True if the sensor is a door/window/opening contact sensor."""
+        if not sensor_id.startswith(f"{BINARY_SENSOR_DOMAIN}."):
+            return False
+        state = entity_state or self.hass.states.get(sensor_id)
+        if state is not None:
+            dev_class = state.attributes.get(ATTR_DEVICE_CLASS)
+            if dev_class in CONTACT_SENSOR_DEVICE_CLASSES:
+                return True
+        for entity_meta in self.area.entities.get(BINARY_SENSOR_DOMAIN, []):
+            if (
+                entity_meta.get(ATTR_ENTITY_ID) == sensor_id
+                and entity_meta.get(ATTR_DEVICE_CLASS) in CONTACT_SENSOR_DEVICE_CLASSES
+            ):
+                return True
+        return False
+
     def _load_presence_sensors(self) -> None:
         if self.area.is_meta():
             # MetaAreas track their children
@@ -284,9 +306,20 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 self._sensors.append(entity_id)
             return
 
-        valid_presence_platforms = self.area.feature_config(
-            CONF_FEATURE_ADVANCED_LIGHT_GROUPS
-        ).get(CONF_PRESENCE_DEVICE_PLATFORMS, DEFAULT_PRESENCE_DEVICE_PLATFORMS)
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        valid_presence_platforms = adv_conf.get(
+            CONF_PRESENCE_DEVICE_PLATFORMS, DEFAULT_PRESENCE_DEVICE_PLATFORMS
+        )
+        configured_classes = (
+            set(
+                adv_conf.get(
+                    CONF_PRESENCE_SENSOR_DEVICE_CLASS,
+                    DEFAULT_PRESENCE_DEVICE_SENSOR_CLASS,
+                )
+            )
+            | CONTACT_SENSOR_DEVICE_CLASSES
+        )
+        include_entities = set(adv_conf.get(CONF_INCLUDE_ENTITIES, []))
 
         for component, entities in self.area.entities.items():
             if component == "mqtt_room" + SENSOR_DOMAIN:
@@ -303,19 +336,19 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 if not entity:
                     continue
 
-                if component == BINARY_SENSOR_DOMAIN:
+                ent_id = entity.get(ATTR_ENTITY_ID)
+                if not ent_id:
+                    continue
+
+                if component == BINARY_SENSOR_DOMAIN and ent_id not in include_entities:
                     if ATTR_DEVICE_CLASS not in entity:
                         continue
 
-                    if entity[ATTR_DEVICE_CLASS] not in self.area.feature_config(
-                        CONF_FEATURE_ADVANCED_LIGHT_GROUPS
-                    ).get(
-                        CONF_PRESENCE_SENSOR_DEVICE_CLASS,
-                        DEFAULT_PRESENCE_DEVICE_SENSOR_CLASS,
-                    ):
+                    if entity[ATTR_DEVICE_CLASS] not in configured_classes:
                         continue
 
-                self._sensors.append(entity[ATTR_ENTITY_ID])
+                if ent_id not in self._sensors:
+                    self._sensors.append(ent_id)
 
     async def _load_attributes(self) -> None:
         # Set attributes
@@ -387,12 +420,15 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         clear_timeout: int = self._get_clear_timeout()
         extended_timeout: int = self._get_extended_timeout() + clear_timeout
         if not occupied_state:
-            # If the area was in extended mode and a sensor changed, move back to occupied
-            if self._sensor_changed_in_extended:
+            # If a contact sensor edge-triggered or a sensor changed in extended mode,
+            # transition to occupied and schedule the clear_timeout countdown
+            if self._contact_triggered or self._sensor_changed_in_extended:
+                self._contact_triggered = False
                 self._sensor_changed_in_extended = False
                 self._remove_extended_timeout()
                 self._remove_clear_timeout()
                 self._set_clear_timeout(clear_timeout)
+                return AreaState.AREA_STATE_OCCUPIED
             # If the area was already clear, non-occupied sensor state keeps it clear
             elif self.area.state == AreaState.AREA_STATE_CLEAR:
                 self._remove_clear_timeout()
@@ -431,6 +467,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                     )
                 return AreaState.AREA_STATE_EXTENDED
         else:
+            self._contact_triggered = False
             self._sensor_changed_in_extended = False
             self._remove_clear_timeout()
             self._remove_extended_timeout()
@@ -603,6 +640,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
     @callback
     def _cleanup_timers(self) -> None:
+        self._contact_triggered = False
         self._sensor_changed_in_extended = False
         self._remove_clear_timeout()
         self._remove_extended_timeout()
@@ -680,6 +718,12 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         old_state = event.data.get("old_state")
         old_state_val = old_state.state if old_state is not None else None
+        valid_on_states = (
+            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_ON_STATES, DEFAULT_ON_STATES
+            )
+            or [STATE_ON]
+        )
 
         if to_state in INVALID_STATES:
             _LOGGER.debug(
@@ -688,10 +732,49 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 entity_id,
                 to_state,
             )
+            # If an active presence sensor became unavailable/broken while area was occupied,
+            # update _last_off_time and re-evaluate so the area does not get stuck occupied.
+            if (
+                old_state_val is not None
+                and old_state_val not in INVALID_STATES
+                and old_state_val in valid_on_states
+                and not self._is_contact_sensor(entity_id, old_state)
+            ):
+                if self.area.state == AreaState.AREA_STATE_OCCUPIED:
+                    self._last_off_time = datetime.now(UTC)
+                self.hass.loop.call_soon_threadsafe(
+                    self._update_state, datetime.now(UTC)
+                )
+            return
+
+        # Contact sensors (door, window, opening, garage_door) act strictly as edge-triggers
+        # when transitioning between valid states (on -> off or off -> on).
+        if self._is_contact_sensor(entity_id, event.data["new_state"]):
+            if (
+                old_state is None
+                or old_state_val in INVALID_STATES
+                or old_state_val == to_state
+            ):
+                return
+            _LOGGER.info(
+                "%s: Contact sensor '%s' transitioned from %s to %s; triggering occupancy pulse",
+                self.name,
+                entity_id,
+                old_state_val,
+                to_state,
+            )
+            self._contact_triggered = True
+            self._last_off_time = datetime.now(UTC)
+            self._attr_extra_state_attributes[ATTR_LAST_ACTIVE_SENSORS] = [entity_id]
+            self._remove_clear_timeout()
+            self._remove_extended_timeout()
+            self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
             return
 
         if (
             self.area.state == AreaState.AREA_STATE_EXTENDED
+            and old_state_val not in INVALID_STATES
+            and old_state_val is not None
             and old_state_val != to_state
         ):
             _LOGGER.info(
@@ -706,9 +789,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self._remove_extended_timeout()
             self._remove_clear_timeout()
 
-        if to_state and to_state not in self.area.feature_config(
-            CONF_FEATURE_ADVANCED_LIGHT_GROUPS
-        ).get(CONF_ON_STATES, DEFAULT_ON_STATES):
+        if to_state and to_state not in valid_on_states:
             _LOGGER.debug(
                 "Setting last non-normal time %s %s",
                 event.data["old_state"],
@@ -743,6 +824,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             valid_states = [STATE_ON]
 
         active_sensors: list[str] = []
+        available_continuous_sensors: list[str] = []
         filtered_fan_sensors: list[str] = []
         radar_fan_override_sensors: list[str] = []
         active_areas: set[str] = set()
@@ -765,6 +847,10 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                     )
                     continue
 
+                # Contact sensors are edge-triggered only; their static state never holds occupancy
+                if self._is_contact_sensor(sensor, entity):
+                    continue
+
                 _LOGGER.debug(
                     "[Area: %s] Sensor %s state: %s",
                     self.area.slug,
@@ -780,6 +866,8 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                         sensor,
                     )
                     continue
+
+                available_continuous_sensors.append(sensor)
 
                 if entity.state in valid_states:
                     if enable_mmwave_filter and self._mmwave_filter:
@@ -805,6 +893,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                                     sensor,
                                 )
                                 filtered_fan_sensors.append(sensor)
+                                available_continuous_sensors.remove(sensor)
                                 continue
 
                     _LOGGER.debug(
@@ -1003,5 +1092,8 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self._attr_extra_state_attributes[ATTR_ACTIVE_AREAS] = active_areas
 
         if self._mode == "all":
-            return len(active_sensors) == len(self._sensors)
+            return (
+                len(available_continuous_sensors) > 0
+                and len(active_sensors) == len(available_continuous_sensors)
+            )
         return len(active_sensors) > 0

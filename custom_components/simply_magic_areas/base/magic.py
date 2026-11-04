@@ -1,6 +1,7 @@
 """The device setup for the simply magic areas."""
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -14,6 +15,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
+    ATTR_UNIT_OF_MEASUREMENT,
     LIGHT_LUX,
     STATE_ON,
     STATE_UNAVAILABLE,
@@ -37,6 +39,8 @@ from ..const import (
     AREA_TYPE_EXTERIOR,
     AREA_TYPE_INTERIOR,
     AREA_TYPE_META,
+    ATTR_PRESENCE_SENSORS,
+    BINARY_SENSOR_DOMAIN,
     CONF_BRIGHT_LUX_THRESHOLD,
     CONF_ENABLED_FEATURES,
     CONF_EXCLUDE_ENTITIES,
@@ -47,13 +51,20 @@ from ..const import (
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
     CONF_LIGHT_CONTROL,
+    CONF_MQTT_ROOM_PRESENCE,
+    CONF_PRESENCE_DEVICE_PLATFORMS,
+    CONF_PRESENCE_SENSOR_DEVICE_CLASS,
     CONF_REFERENCE_BRIGHT_AREA,
     CONF_REFERENCE_ILLUMINANCE_SENSOR,
     CONF_TYPE,
+    CONTACT_SENSOR_DEVICE_CLASSES,
     DATA_AREA_OBJECT,
     DEFAULT_BRIGHT_LUX_THRESHOLD,
     DEFAULT_FAN_CONTROL,
     DEFAULT_LIGHT_CONTROL,
+    DEFAULT_MQTT_ROOM_PRESENCE,
+    DEFAULT_PRESENCE_DEVICE_PLATFORMS,
+    DEFAULT_PRESENCE_DEVICE_SENSOR_CLASS,
     DOMAIN,
     EVENT_MAGICAREAS_AREA_READY,
     EVENT_MAGICAREAS_READY,
@@ -375,13 +386,14 @@ class MagicArea(object):  # noqa: UP004
         _LOGGER.debug("%s: Loaded entities for area  %s", self.slug, self.entities)  # type: ignore
 
     def _load_entity_list(self, prefix: str, entity_list: list[str]) -> None:
+        entity_registry = async_get_er(self.hass)
         for entity_id in entity_list:
             try:
                 entity_component, _ = entity_id.split(".")
 
                 # Get latest state and create object
                 latest_state = self.hass.states.get(entity_id)
-                updated_entity = {ATTR_ENTITY_ID: entity_id}
+                updated_entity: dict[str, Any] = {ATTR_ENTITY_ID: entity_id}
 
                 if latest_state:
                     # Need to exclude entity_id if present but latest_state.attributes
@@ -390,6 +402,29 @@ class MagicArea(object):  # noqa: UP004
                     for attr_key, attr_value in latest_state.attributes.items():
                         if attr_key != ATTR_ENTITY_ID:
                             updated_entity[attr_key] = attr_value
+
+                # Fallback to EntityRegistry metadata if device_class or unit_of_measurement
+                # is missing (e.g. sensor is unavailable or uninitialized at startup)
+                if (
+                    ATTR_DEVICE_CLASS not in updated_entity
+                    or ATTR_UNIT_OF_MEASUREMENT not in updated_entity
+                ):
+                    reg_entry = entity_registry.async_get(entity_id)
+                    if reg_entry is not None:
+                        if ATTR_DEVICE_CLASS not in updated_entity:
+                            dev_class = (
+                                reg_entry.device_class
+                                or reg_entry.original_device_class
+                            )
+                            if dev_class:
+                                updated_entity[ATTR_DEVICE_CLASS] = dev_class
+                        if (
+                            ATTR_UNIT_OF_MEASUREMENT not in updated_entity
+                            and reg_entry.unit_of_measurement
+                        ):
+                            updated_entity[ATTR_UNIT_OF_MEASUREMENT] = (
+                                reg_entry.unit_of_measurement
+                            )
 
                 # Ignore groups
                 if is_entity_list(updated_entity[ATTR_ENTITY_ID]):
@@ -425,6 +460,66 @@ class MagicArea(object):  # noqa: UP004
     def has_entities(self, domain: str) -> bool:
         """Check and see if this areas has entites with the specified domain."""
         return domain in self.entities
+
+    def has_configured_presence_sensors(self) -> bool:
+        """Return True if this area has any configured presence or contact sensors."""
+        if self.is_meta():
+            return len(self.get_child_areas()) > 0
+
+        state_sensor_id = self.simply_magic_entity_id(SENSOR_DOMAIN, EntityNames.STATE)
+        state_obj = self.hass.states.get(state_sensor_id)
+        if state_obj is not None and ATTR_PRESENCE_SENSORS in state_obj.attributes:
+            sensors_attr = state_obj.attributes.get(ATTR_PRESENCE_SENSORS)
+            if isinstance(sensors_attr, (list, tuple, set)):
+                return len(sensors_attr) > 0
+
+        adv_conf = self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        valid_presence_platforms = adv_conf.get(
+            CONF_PRESENCE_DEVICE_PLATFORMS, DEFAULT_PRESENCE_DEVICE_PLATFORMS
+        )
+        configured_classes = (
+            set(
+                adv_conf.get(
+                    CONF_PRESENCE_SENSOR_DEVICE_CLASS,
+                    DEFAULT_PRESENCE_DEVICE_SENSOR_CLASS,
+                )
+            )
+            | CONTACT_SENSOR_DEVICE_CLASSES
+        )
+        include_entities = set(adv_conf.get(CONF_INCLUDE_ENTITIES, []))
+
+        for component, entities in self.entities.items():
+            if component == "mqtt_room" + SENSOR_DOMAIN:
+                mqtt_room = (
+                    adv_conf.get(CONF_MQTT_ROOM_PRESENCE)
+                    if self.has_feature(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+                    else None
+                )
+                if mqtt_room is None:
+                    mqtt_room = self.config.get(
+                        CONF_MQTT_ROOM_PRESENCE, DEFAULT_MQTT_ROOM_PRESENCE
+                    )
+                if mqtt_room and entities:
+                    return True
+                continue
+
+            if component not in valid_presence_platforms:
+                continue
+
+            for entity in entities:
+                if not entity:
+                    continue
+                ent_id = entity.get(ATTR_ENTITY_ID)
+                if not ent_id:
+                    continue
+                if component == BINARY_SENSOR_DOMAIN and ent_id not in include_entities:
+                    if ATTR_DEVICE_CLASS not in entity:
+                        continue
+                    if entity[ATTR_DEVICE_CLASS] not in configured_classes:
+                        continue
+                return True
+
+        return False
 
     async def _load_state_config(self) -> None:
         light_entities = []
@@ -520,18 +615,27 @@ class MagicArea(object):  # noqa: UP004
             area_name = self.name
         return f"{domain}.{MAGIC_DEVICE_ID_PREFIX}{slugify(name)}_{slugify(area_name)}"
 
+    @staticmethod
+    def _parse_valid_lux(state_obj: Any) -> float | None:
+        """Parse a finite non-negative illuminance value from a state object."""
+        if state_obj and state_obj.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            try:
+                val = float(state_obj.state)
+                if math.isfinite(val) and val >= 0:
+                    return val
+            except (ValueError, TypeError):
+                pass
+        return None
+
     def get_effective_illuminance(self) -> float | None:
         """Get the current illuminance value for this area from local or reference sensors."""
         # 1. Local illuminance sensor
         local_lux_sensor = self.simply_magic_entity_id(
             SENSOR_DOMAIN, EntityNames.ILLUMINANCE
         )
-        state = self.hass.states.get(local_lux_sensor)
-        if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
-            try:
-                return float(state.state)
-            except (ValueError, TypeError):
-                pass
+        val = self._parse_valid_lux(self.hass.states.get(local_lux_sensor))
+        if val is not None:
+            return val
 
         if SENSOR_DOMAIN in self.entities:
             for entity in self.entities[SENSOR_DOMAIN]:
@@ -539,12 +643,11 @@ class MagicArea(object):  # noqa: UP004
                     entity.get(ATTR_DEVICE_CLASS) == SensorDeviceClass.ILLUMINANCE
                     or entity.get("unit_of_measurement") == LIGHT_LUX
                 ):
-                    state = self.hass.states.get(entity[ATTR_ENTITY_ID])
-                    if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
-                        try:
-                            return float(state.state)
-                        except (ValueError, TypeError):
-                            pass
+                    val = self._parse_valid_lux(
+                        self.hass.states.get(entity[ATTR_ENTITY_ID])
+                    )
+                    if val is not None:
+                        return val
 
         # 2. Reference illuminance sensor
         ref_sensor = self.config.get(
@@ -554,12 +657,9 @@ class MagicArea(object):  # noqa: UP004
             ),
         )
         if ref_sensor:
-            state = self.hass.states.get(ref_sensor)
-            if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
-                try:
-                    return float(state.state)
-                except (ValueError, TypeError):
-                    pass
+            val = self._parse_valid_lux(self.hass.states.get(ref_sensor))
+            if val is not None:
+                return val
 
         # 3. Reference area illuminance sensor
         ref_area = self.config.get(
@@ -572,12 +672,9 @@ class MagicArea(object):  # noqa: UP004
             ref_lux_sensor = self.simply_magic_entity_id(
                 SENSOR_DOMAIN, EntityNames.ILLUMINANCE, area_name=ref_area
             )
-            state = self.hass.states.get(ref_lux_sensor)
-            if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
-                try:
-                    return float(state.state)
-                except (ValueError, TypeError):
-                    pass
+            val = self._parse_valid_lux(self.hass.states.get(ref_lux_sensor))
+            if val is not None:
+                return val
 
             if MODULE_DATA in self.hass.data:
                 for entry in self.hass.data[MODULE_DATA].values():
@@ -597,15 +694,11 @@ class MagicArea(object):  # noqa: UP004
                                 == SensorDeviceClass.ILLUMINANCE
                                 or entity.get("unit_of_measurement") == LIGHT_LUX
                             ):
-                                state = self.hass.states.get(entity[ATTR_ENTITY_ID])
-                                if state and state.state not in (
-                                    STATE_UNKNOWN,
-                                    STATE_UNAVAILABLE,
-                                ):
-                                    try:
-                                        return float(state.state)
-                                    except (ValueError, TypeError):
-                                        pass
+                                val = self._parse_valid_lux(
+                                    self.hass.states.get(entity[ATTR_ENTITY_ID])
+                                )
+                                if val is not None:
+                                    return val
 
         return None
 

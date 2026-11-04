@@ -17,6 +17,7 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
@@ -30,6 +31,7 @@ from homeassistant.core import (
     Event,
     EventStateChangedData,
     HomeAssistant,
+    State,
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
@@ -79,6 +81,7 @@ from .const import (
     CONF_REFERENCE_BRIGHT_AREA,
     CONF_REFERENCE_HUMIDITY_SENSOR,
     DATA_AREA_OBJECT,
+    DEFAULT_ACTUATOR_RETRY_DELAYS,
     DEFAULT_FAN_SUPPRESS_IN_SLEEP,
     DEFAULT_HUMIDITY_DEADBAND,
     DEFAULT_HUMIDITY_DELTA_SHUTOFF,
@@ -91,6 +94,7 @@ from .const import (
     DEFAULT_LEARN_SHOWER_HUMIDITY,
     DEFAULT_MANUAL_TIMEOUT,
     DOMAIN,
+    INVALID_STATES,
     META_AREA_INTERIOR,
     MODULE_DATA,
 )
@@ -179,6 +183,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self._icon: str = "mdi:fan-auto"
         self._manual_timeout_cb: CALLBACK_TYPE | None = None
         self._watchdog_unsub: CALLBACK_TYPE | None = None
+        self._retry_timer_cb: CALLBACK_TYPE | None = None
+        self._retry_attempt: int = 0
+        self._expected_state: str | None = None
+        self._command_in_flight_until: float = 0.0
         self._last_shower_concluded_ts: float | None = None
         self._max_runtime_lockout_until: float | None = None
 
@@ -354,14 +362,25 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 )
             )
 
-        # Track temperature sensor for thermal flux shower classification
+        # Track temperature sensor(s) for thermal flux shower classification
+        temp_entities_to_track: list[str] = []
         temp_sensor = self.area.simply_magic_entity_id(
             SENSOR_DOMAIN, SensorDeviceClass.TEMPERATURE
         )
         if self.hass.states.get(temp_sensor) is not None:
+            temp_entities_to_track.append(temp_sensor)
+        for entity_meta in self.area.entities.get(SENSOR_DOMAIN, []):
+            ent_id = entity_meta.get(ATTR_ENTITY_ID)
+            if (
+                ent_id
+                and entity_meta.get(ATTR_DEVICE_CLASS) == SensorDeviceClass.TEMPERATURE
+                and ent_id not in temp_entities_to_track
+            ):
+                temp_entities_to_track.append(ent_id)
+        if temp_entities_to_track:
             self.async_on_remove(
                 async_track_state_change_event(
-                    self.hass, [temp_sensor], self._temperature_state_change
+                    self.hass, temp_entities_to_track, self._temperature_state_change
                 )
             )
 
@@ -445,11 +464,23 @@ class AreaFanGroup(MagicEntity, FanGroup):
             AreaState.AREA_STATE_ACCENTED,
             AreaState.AREA_STATE_EXTENDED,
         }
+        active_occupied_states = {
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_BRIGHT,
+            AreaState.AREA_STATE_SLEEP,
+            AreaState.AREA_STATE_ACCENTED,
+        }
 
         was_occupied = from_state in occupied_states
         now_occupied = to_state in occupied_states
-        occupancy_changed = (was_occupied != now_occupied) or (
-            from_state == AreaState.AREA_STATE_MANUAL
+        reentered_from_extended = (
+            from_state == AreaState.AREA_STATE_EXTENDED
+            and to_state in active_occupied_states
+        )
+        occupancy_changed = (
+            (was_occupied != now_occupied)
+            or reentered_from_extended
+            or (from_state == AreaState.AREA_STATE_MANUAL)
         )
 
         # Manual control, ignore all changes
@@ -700,6 +731,27 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 return float(state.state)
             except (ValueError, TypeError):
                 pass
+        # Fallback to available individual area temperature sensors
+        vals: list[float] = []
+        for entity_meta in self.area.entities.get(SENSOR_DOMAIN, []):
+            ent_id = entity_meta.get(ATTR_ENTITY_ID)
+            if not ent_id:
+                continue
+            st = self.hass.states.get(ent_id)
+            dev_class = entity_meta.get(ATTR_DEVICE_CLASS) or (
+                st.attributes.get(ATTR_DEVICE_CLASS) if st else None
+            )
+            if (
+                dev_class == SensorDeviceClass.TEMPERATURE
+                and st
+                and st.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+            ):
+                try:
+                    vals.append(float(st.state))
+                except (ValueError, TypeError):
+                    continue
+        if vals:
+            return sum(vals) / len(vals)
         return None
 
     def _is_door_closed(self) -> bool | None:
@@ -709,10 +761,13 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 if not ent_id:
                     continue
                 state = self.hass.states.get(ent_id)
+                dev_class = entity_meta.get(ATTR_DEVICE_CLASS) or (
+                    state.attributes.get(ATTR_DEVICE_CLASS) if state else None
+                )
                 if (
                     state
-                    and state.attributes.get("device_class")
-                    == BinarySensorDeviceClass.DOOR
+                    and state.state not in INVALID_STATES
+                    and dev_class == BinarySensorDeviceClass.DOOR
                 ):
                     return state.state == STATE_OFF
         return None
@@ -727,6 +782,27 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 return float(state.state)
             except (ValueError, TypeError):
                 pass
+        # Fallback to available individual area humidity sensors
+        vals: list[float] = []
+        for entity_meta in self.area.entities.get(SENSOR_DOMAIN, []):
+            ent_id = entity_meta.get(ATTR_ENTITY_ID)
+            if not ent_id:
+                continue
+            st = self.hass.states.get(ent_id)
+            dev_class = entity_meta.get(ATTR_DEVICE_CLASS) or (
+                st.attributes.get(ATTR_DEVICE_CLASS) if st else None
+            )
+            if (
+                dev_class == SensorDeviceClass.HUMIDITY
+                and st
+                and st.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+            ):
+                try:
+                    vals.append(float(st.state))
+                except (ValueError, TypeError):
+                    continue
+        if vals:
+            return sum(vals) / len(vals)
         return None
 
     def _get_reference_humidity(self) -> float | None:
@@ -1286,11 +1362,20 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         self._attr_is_on = new_state.state == STATE_ON
 
-        if self.last_update_from_entity:
+        now_ts = datetime.now(UTC).timestamp()
+        in_command_grace = now_ts <= getattr(self, "_command_in_flight_until", 0.0)
+
+        if self.last_update_from_entity or (
+            in_command_grace
+            and new_state.state == getattr(self, "_expected_state", None)
+        ):
             self.last_update_from_entity = False
             return
 
         # External manual interaction (physical switch, UI, external integration)
+        self._cancel_retry_timer()
+        self._expected_state = None
+        self._command_in_flight_until = 0.0
         _LOGGER.debug(
             "%s: Fan turned %s externally; entering manual override until occupied state change",
             self.name,
@@ -1310,9 +1395,114 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self.schedule_update_ha_state()
 
     ####  Fan Handling
+    def _get_available_member_states(self) -> list[tuple[str, State]]:
+        """Return available (non-unavailable/unknown) member fan states."""
+        available: list[tuple[str, State]] = []
+        for ent_id in self._entity_ids:
+            st = self.hass.states.get(ent_id)
+            if st is not None and st.state not in INVALID_STATES:
+                available.append((ent_id, st))
+        return available
+
+    def _has_any_working_fan_on(self) -> bool:
+        """Return True if at least one available member fan is ON."""
+        available = self._get_available_member_states()
+        if available:
+            return any(st.state == STATE_ON for _, st in available)
+        return bool(self.is_on)
+
+    def _has_any_working_fan_off(self) -> bool:
+        """Return True if at least one available member fan is OFF."""
+        available = self._get_available_member_states()
+        if available:
+            return any(st.state == STATE_OFF for _, st in available)
+        return not bool(self.is_on)
+
+    def _get_unresponsive_fans(self, target_state: str) -> list[str]:
+        """Return available member fans that have not reached target_state."""
+        available = self._get_available_member_states()
+        if available:
+            return [
+                ent_id for ent_id, st in available if st.state != target_state
+            ]
+        group_state = self.hass.states.get(self.entity_id)
+        if (
+            group_state is not None
+            and group_state.state not in INVALID_STATES
+            and group_state.state != target_state
+        ):
+            return [self.entity_id]
+        return []
+
+    def _cancel_retry_timer(self) -> None:
+        """Cancel any pending actuator sliding backoff retry timer."""
+        if getattr(self, "_retry_timer_cb", None) is not None:
+            self._retry_timer_cb()
+            self._retry_timer_cb = None
+        self._retry_attempt = 0
+
+    def _schedule_actuator_retry(self, target_state: str) -> None:
+        """Schedule sliding backoff retry to verify Z-Wave/physical fans responded."""
+        self._cancel_retry_timer()
+        self._expected_state = target_state
+        if not DEFAULT_ACTUATOR_RETRY_DELAYS:
+            return
+        self._retry_timer_cb = async_call_later(
+            self.hass,
+            DEFAULT_ACTUATOR_RETRY_DELAYS[0],
+            self._execute_actuator_retry,
+        )
+
+    def _execute_actuator_retry(self, _now: datetime | None = None) -> None:
+        """Check if available member fans reached expected state; retry with backoff if not."""
+        self._retry_timer_cb = None
+        if not self.area.is_control_enabled(ControlType.System):
+            return
+        if not self._is_controlled_by_this_entity():
+            return
+        target_state = getattr(self, "_expected_state", None)
+        if target_state not in (STATE_ON, STATE_OFF):
+            return
+
+        unresponsive = self._get_unresponsive_fans(target_state)
+        if not unresponsive:
+            self._retry_attempt = 0
+            return
+
+        self._retry_attempt += 1
+        _LOGGER.warning(
+            "%s: Fans %s did not respond to %s command; retrying (attempt %d/%d)",
+            self.name,
+            unresponsive,
+            target_state,
+            self._retry_attempt,
+            len(DEFAULT_ACTUATOR_RETRY_DELAYS),
+        )
+        self.last_update_from_entity = True
+        self._command_in_flight_until = datetime.now(UTC).timestamp() + 2.5
+        service_data = {ATTR_ENTITY_ID: self.entity_id}
+        if target_state == STATE_ON:
+            self._attr_is_on = True
+            call_service_non_blocking(
+                self.hass, FAN_DOMAIN, SERVICE_TURN_ON, service_data
+            )
+        else:
+            self._attr_is_on = False
+            call_service_non_blocking(
+                self.hass, FAN_DOMAIN, SERVICE_TURN_OFF, service_data
+            )
+
+        if self._retry_attempt < len(DEFAULT_ACTUATOR_RETRY_DELAYS):
+            next_delay = DEFAULT_ACTUATOR_RETRY_DELAYS[self._retry_attempt]
+            self._retry_timer_cb = async_call_later(
+                self.hass,
+                next_delay,
+                self._execute_actuator_retry,
+            )
+
     def _turn_on_fan(self) -> None:
         """Turn on the fan group."""
-        if self.is_on:
+        if self.is_on and not self._has_any_working_fan_off():
             _LOGGER.debug("%s: Fan already on", self.name)
             return
 
@@ -1326,15 +1516,17 @@ class AreaFanGroup(MagicEntity, FanGroup):
         _LOGGER.debug("%s: Turning on fans", self.name)
         self.last_update_from_entity = True
         self._attr_is_on = True
+        self._command_in_flight_until = datetime.now(UTC).timestamp() + 2.5
         self._start_watchdog_timer()
         service_data = {
             ATTR_ENTITY_ID: self.entity_id,
         }
         call_service_non_blocking(self.hass, FAN_DOMAIN, SERVICE_TURN_ON, service_data)
+        self._schedule_actuator_retry(STATE_ON)
 
     def _turn_off_fan(self) -> None:
         """Turn off the fan group."""
-        if not self.is_on:
+        if not self.is_on and not self._has_any_working_fan_on():
             _LOGGER.debug("%s: Fan already off", self.name)
             return
 
@@ -1347,12 +1539,14 @@ class AreaFanGroup(MagicEntity, FanGroup):
         _LOGGER.debug("%s: Turning fan off", self.name)
         self.last_update_from_entity = True
         self._attr_is_on = False
+        self._command_in_flight_until = datetime.now(UTC).timestamp() + 2.5
         if not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
             self._stop_watchdog_timer()
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         call_service_non_blocking(
             self.hass, FAN_DOMAIN, SERVICE_TURN_OFF, service_data
         )
+        self._schedule_actuator_retry(STATE_OFF)
 
     def _start_watchdog_timer(self) -> None:
         """Start periodic watchdog timer while fan or humidity mode is active."""
@@ -1374,6 +1568,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up timers when removed from hass."""
+        self._cancel_retry_timer()
         self._stop_watchdog_timer()
         if self._manual_timeout_cb is not None:
             self._manual_timeout_cb()

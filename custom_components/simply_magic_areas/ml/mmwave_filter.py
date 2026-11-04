@@ -24,11 +24,14 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
     STATE_OFF,
     STATE_ON,
 )
 from homeassistant.core import HomeAssistant, State
+
+from ..const import CONTACT_SENSOR_DEVICE_CLASSES, INVALID_STATES
 
 if TYPE_CHECKING:
     from ..base.magic import MagicArea
@@ -486,17 +489,34 @@ class MMWaveFanFilter:
 
             # Only engage binary dwell filter if fan has been running for at least 30s
             if time_fan_running >= 30.0:
-                # Check other presence sensors (e.g. PIR, BLE, door)
+                # If the radar sensor itself freshly triggered ON (< 30s ago and after fan started),
+                # treat it as a fresh human entry rather than stuck fan interference.
+                if state.last_changed is not None:
+                    sensor_on_ts = state.last_changed.timestamp()
+                    sensor_dwell_time = now_ts - sensor_on_ts
+                    if sensor_dwell_time < 30.0 and sensor_on_ts > fan_start:
+                        return False
+
+                # Check other continuous presence sensors (e.g. PIR, BLE), ignoring contact/broken sensors
                 other_active = False
+                has_available_companion = False
                 for other_id in all_area_sensors:
                     if other_id == sensor_id:
                         continue
                     other_state = self.hass.states.get(other_id)
-                    if other_state and other_state.state == STATE_ON:
+                    if not other_state or other_state.state in INVALID_STATES:
+                        continue
+                    if (
+                        other_state.attributes.get(ATTR_DEVICE_CLASS)
+                        in CONTACT_SENSOR_DEVICE_CLASSES
+                    ):
+                        continue
+                    has_available_companion = True
+                    if other_state.state == STATE_ON:
                         other_active = True
                         break
 
-                if not other_active:
+                if has_available_companion and not other_active:
                     return True
 
         return False

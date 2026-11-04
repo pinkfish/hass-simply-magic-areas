@@ -193,6 +193,24 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
         if accented_entity:
             tracked_entities.append(accented_entity)
 
+        # 7. Parent meta-area lighting profile and illuminance sensors
+        if not self.area.is_meta():
+            for parent in self.area.get_parent_meta_areas():
+                tracked_entities.append(
+                    self.area.simply_magic_entity_id(
+                        SENSOR_DOMAIN,
+                        EntityNames.LIGHTING_PROFILE,
+                        area_name=parent.slug,
+                    )
+                )
+                tracked_entities.append(
+                    self.area.simply_magic_entity_id(
+                        SENSOR_DOMAIN,
+                        EntityNames.ILLUMINANCE,
+                        area_name=parent.slug,
+                    )
+                )
+
         # Filter unique non-empty entities
         unique_tracked = list(dict.fromkeys([e for e in tracked_entities if e]))
         if unique_tracked:
@@ -375,6 +393,22 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
             state_obj = self.hass.states.get(ref_state_sensor)
             if state_obj and state_obj.state == AreaState.AREA_STATE_SLEEP:
                 return LightingProfile.SLEEP
+        elif (
+            not sleep_entity
+            and "sleep_entity" not in self.area.config
+            and not self.area.is_meta()
+        ):
+            for parent in self.area.get_parent_meta_areas():
+                if getattr(parent, "lighting_profile", None) == LightingProfile.SLEEP:
+                    return LightingProfile.SLEEP
+                parent_profile_sensor = self.area.simply_magic_entity_id(
+                    SENSOR_DOMAIN,
+                    EntityNames.LIGHTING_PROFILE,
+                    area_name=parent.slug,
+                )
+                state_obj = self.hass.states.get(parent_profile_sensor)
+                if state_obj and state_obj.state == LightingProfile.SLEEP:
+                    return LightingProfile.SLEEP
 
         # 3. Bright Profile
         if self._is_bright_condition_met():
@@ -512,6 +546,25 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
                     CONF_FEATURE_ADVANCED_LIGHT_GROUPS
                 ).get("bright_state_check", STATE_ON)
                 if entity and entity.state.lower() == check_state.lower():
+                    return True
+
+        # Tier 4 parent meta-area bright profile fallback when no local lux or reference area
+        if (
+            lux is None
+            and not ref_area
+            and "bright_entity" not in self.area.config
+            and not self.area.is_meta()
+        ):
+            for parent in self.area.get_parent_meta_areas():
+                if getattr(parent, "lighting_profile", None) == LightingProfile.BRIGHT:
+                    return True
+                parent_profile_sensor = self.area.simply_magic_entity_id(
+                    SENSOR_DOMAIN,
+                    EntityNames.LIGHTING_PROFILE,
+                    area_name=parent.slug,
+                )
+                state_obj = self.hass.states.get(parent_profile_sensor)
+                if state_obj and state_obj.state == LightingProfile.BRIGHT:
                     return True
 
         return False

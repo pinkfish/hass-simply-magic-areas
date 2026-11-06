@@ -60,7 +60,10 @@
         "title": "Feature: Climate Groups",
         "description": "Configure the Climate Groups feature",
         "data": {
-          "turn_on_state": "State to turn on the climate group."
+          "turn_on_state": "State to turn on the climate group.",
+          "hvac_run_overhead_fans": "Run overhead fans at slow speed when HVAC is running",
+          "hvac_overhead_fan_speed": "Overhead fan speed percentage when HVAC is running (default: 25%)",
+          "linked_climate_entity": "Linked climate entity for HVAC air circulation"
         }
       },
       "feature_conf_advanced_light_groups": {

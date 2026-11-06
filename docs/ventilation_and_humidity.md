@@ -101,3 +101,12 @@ When you manually turn a fan on or off (via a physical wall switch, smart button
 - The fan enters **Manual Override Mode** (`manual_control: true`).
 - The integration holds your commanded state and suspends automated humidity adjustments.
 - **Occupancy-Hold Release**: As soon as the room undergoes an **occupied state transition** (`occupied/extended -> clear` or `clear -> occupied`), manual override resets automatically and normal automation resumes.
+
+---
+
+## 🌀 HVAC Slow-Speed Overhead Fan Circulation
+
+When an area's local, linked (`linked_climate_entity`), or house-wide HVAC (`climate.*`) is actively heating or cooling (`hvac_action` in `heating`, `cooling`, `drying`, `fan`, `preheating`), `AreaFanGroup` automatically runs **overhead / ceiling fans** at a gentle circulation speed (`hvac_overhead_fan_speed`, default `25%`) to distribute conditioned air evenly across the room:
+- **Enabled by Default**: Controlled by `hvac_run_overhead_fans` (defaults to `true`).
+- **Exhaust Fan Exclusion**: Bathroom, toilet, powder room, laundry, and kitchen exhaust fans are automatically excluded so conditioned air is never vented outdoors.
+- **Automatic Shutoff**: When the HVAC cycle returns to `idle` or `off`, overhead fans automatically turn off (unless held on by manual override or `extended` state).

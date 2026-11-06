@@ -22,10 +22,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .base.entities import MagicEntity
-from .base.magic import MagicArea
+from .base.magic import ControlType, MagicArea
 from .config.area_state import AreaState, LightingProfile
 from .config.entity_names import EntityNames
 from .const import (
+    ATTR_STATE,
     CONF_FEATURE_AREA_AWARE_MEDIA_PLAYER,
     CONF_MEDIA_PLAYER_GROUPS,
     CONF_NOTIFICATION_DEVICES,
@@ -308,8 +309,22 @@ class AreaMediaPlayerGroup(MagicEntity, MediaPlayerGroup):
             "%s: Media Player group detected area state change", self.area.name
         )
 
-        new_state = event.data["new_state"]
+        old_state = event.data.get("old_state")
+        new_state = event.data.get("new_state")
         if new_state is None:
+            return
+
+        if (
+            old_state is not None
+            and old_state.state == new_state.state
+            and ATTR_STATE in new_state.attributes
+        ):
+            return
+
+        if (
+            new_state.state == AreaState.AREA_STATE_MANUAL
+            or not self.area.is_control_enabled(ControlType.System)
+        ):
             return
 
         if new_state.state == AreaState.AREA_STATE_CLEAR:

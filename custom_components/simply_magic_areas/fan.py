@@ -10,7 +10,14 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
 )
-from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
+from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
+from homeassistant.components.fan import (
+    ATTR_PERCENTAGE,
+    FanEntityFeature,
+)
+from homeassistant.components.fan import (
+    DOMAIN as FAN_DOMAIN,
+)
 from homeassistant.components.group.fan import FanGroup
 from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.components.sensor import SensorDeviceClass
@@ -19,6 +26,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
+    EVENT_STATE_CHANGED,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
     STATE_OFF,
@@ -56,10 +64,13 @@ from .const import (
     ATTR_HUMIDITY_DELTA,
     ATTR_HUMIDITY_ON,
     ATTR_HUMIDITY_START_TS,
+    ATTR_HVAC_CIRCULATION_ON,
+    ATTR_HVAC_CIRCULATION_SPEED,
     ATTR_LAST_UPDATE_FROM_ENTITY,
     ATTR_LEARNED_HUMIDITY_DELTA_SHUTOFF,
     ATTR_LEARNED_HUMIDITY_DELTA_THRESHOLD,
     ATTR_LEARNED_HUMIDITY_TREND_UP_CUTOFF,
+    ATTR_LINKED_CLIMATE_ENTITIES,
     ATTR_MANUAL_CONTROL,
     ATTR_MANUAL_TIMEOUT_TS,
     ATTR_REFERENCE_HUMIDITY,
@@ -67,6 +78,7 @@ from .const import (
     CONF_FAN_RUN_IN_EXTENDED,
     CONF_FAN_SUPPRESS_IN_SLEEP,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
+    CONF_FEATURE_CLIMATE_GROUPS,
     CONF_FEATURE_HUMIDITY,
     CONF_HUMIDITY_DEADBAND,
     CONF_HUMIDITY_DELTA_SHUTOFF,
@@ -76,7 +88,10 @@ from .const import (
     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
+    CONF_HVAC_OVERHEAD_FAN_SPEED,
+    CONF_HVAC_RUN_OVERHEAD_FANS,
     CONF_LEARN_SHOWER_HUMIDITY,
+    CONF_LINKED_CLIMATE_ENTITY,
     CONF_MANUAL_TIMEOUT,
     CONF_REFERENCE_BRIGHT_AREA,
     CONF_REFERENCE_HUMIDITY_SENSOR,
@@ -91,12 +106,17 @@ from .const import (
     DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
     DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
     DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
+    DEFAULT_HVAC_OVERHEAD_FAN_SPEED,
+    DEFAULT_HVAC_RUN_OVERHEAD_FANS,
     DEFAULT_LEARN_SHOWER_HUMIDITY,
     DEFAULT_MANUAL_TIMEOUT,
     DOMAIN,
+    EXHAUST_AREA_KEYWORDS,
+    EXHAUST_FAN_KEYWORDS,
     INVALID_STATES,
     META_AREA_INTERIOR,
     MODULE_DATA,
+    OVERHEAD_FAN_KEYWORDS,
 )
 from .ml import MoistureEvacuationModel, ShowerClassifier
 from .util import call_service_non_blocking
@@ -224,6 +244,26 @@ class AreaFanGroup(MagicEntity, FanGroup):
         """Return the icon to be used for this entity."""
         return self._icon
 
+    async def async_turn_on(
+        self,
+        percentage: int | None = None,
+        preset_mode: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Forward the turn_on command to all fans in the fan group."""
+        if preset_mode is not None:
+            await self.async_set_preset_mode(preset_mode)
+            return
+        if percentage is not None:
+            await self.async_set_percentage(percentage)
+            await self._async_call_supported_entities(
+                SERVICE_TURN_ON, FanEntityFeature.TURN_ON, {}
+            )
+            return
+        await self._async_call_supported_entities(
+            SERVICE_TURN_ON, FanEntityFeature.TURN_ON, {}
+        )
+
     async def async_added_to_hass(self) -> None:
         """Run when this is added into hass."""
         # Get last state
@@ -319,6 +359,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         await self._setup_listeners("ignore")
 
         await super().async_added_to_hass()
+        self._evaluate_hvac_fan_circulation()
 
     async def _setup_listeners(self, _: Any = None) -> None:
         self.async_on_remove(
@@ -432,6 +473,13 @@ class AreaFanGroup(MagicEntity, FanGroup):
                     )
                 )
 
+        # Listen for climate entity state/hvac_action changes for overhead fan circulation
+        self.async_on_remove(
+            self.hass.bus.async_listen(
+                EVENT_STATE_CHANGED, self._handle_climate_event
+            )
+        )
+
     ### State Change Handling
     def _area_state_change(self, event: Event[EventStateChangedData]) -> None:
         if event.data["old_state"] is None or event.data["new_state"] is None:
@@ -521,12 +569,16 @@ class AreaFanGroup(MagicEntity, FanGroup):
                     "%s: Area has shower humidity tracking; skipping automatic extended fan activation",
                     self.name,
                 )
-                if self.is_on and not (
-                    self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+                if (
+                    self.is_on
                     and not (
-                        self._is_fan_suppressed_in_sleep()
-                        and not self._is_emergency_moisture()
+                        self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False)
+                        and not (
+                            self._is_fan_suppressed_in_sleep()
+                            and not self._is_emergency_moisture()
+                        )
                     )
+                    and not self._evaluate_hvac_fan_circulation()
                 ):
                     self._turn_off_fan()
             elif (
@@ -548,9 +600,11 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 and not self._is_emergency_moisture()
             )
         ):
-            self._turn_off_fan()
+            if not self._evaluate_hvac_fan_circulation():
+                self._turn_off_fan()
         else:
-            _LOGGER.debug("Ignoring state change")
+            if not self._evaluate_hvac_fan_circulation():
+                _LOGGER.debug("Ignoring state change")
 
     def _has_humidity_tracking(self) -> bool:
         """Check if area has active humidity tracking for shower detection."""
@@ -682,6 +736,9 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 self.name,
             )
             self._attr_extra_state_attributes[ATTR_HUMIDITY_ON] = False
+            self._attr_extra_state_attributes.pop(ATTR_HVAC_CIRCULATION_ON, None)
+            self._attr_extra_state_attributes.pop(ATTR_HVAC_CIRCULATION_SPEED, None)
+            self._attr_extra_state_attributes.pop(ATTR_LINKED_CLIMATE_ENTITIES, None)
             self._turn_off_fan()
         elif (
             not self._is_fan_suppressed_in_sleep()
@@ -694,6 +751,8 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 self.name,
             )
             self._turn_on_fan()
+        elif not self._is_fan_suppressed_in_sleep():
+            self._evaluate_hvac_fan_circulation()
 
     def _trend_state_change(self, event: Event[EventStateChangedData]):
         if event.data["old_state"] is None or event.data["new_state"] is None:
@@ -1318,7 +1377,8 @@ class AreaFanGroup(MagicEntity, FanGroup):
             else:
                 self._turn_on_fan()
         else:
-            self._turn_off_fan()
+            if not self._evaluate_hvac_fan_circulation():
+                self._turn_off_fan()
 
         if fans_on or self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
             self._start_watchdog_timer()
@@ -1395,6 +1455,292 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self.schedule_update_ha_state()
 
     ####  Fan Handling
+    def _handle_climate_event(self, event: Event[EventStateChangedData]) -> None:
+        """Handle state or hvac_action updates on climate.* entities."""
+        entity_id = event.data.get("entity_id", "")
+        if not entity_id.startswith(f"{CLIMATE_DOMAIN}."):
+            return
+        self._evaluate_hvac_fan_circulation()
+
+    def _is_hvac_overhead_fan_enabled(self) -> bool:
+        """Return True if overhead fans should run at slow speed when HVAC is running."""
+        if CONF_HVAC_RUN_OVERHEAD_FANS in self.area.config:
+            val = self.area.config[CONF_HVAC_RUN_OVERHEAD_FANS]
+            if val is not None:
+                return bool(val)
+        climate_cfg = self.area.feature_config(CONF_FEATURE_CLIMATE_GROUPS)
+        if CONF_HVAC_RUN_OVERHEAD_FANS in climate_cfg:
+            return bool(climate_cfg[CONF_HVAC_RUN_OVERHEAD_FANS])
+        humidity_cfg = self.area.feature_config(CONF_FEATURE_HUMIDITY)
+        if CONF_HVAC_RUN_OVERHEAD_FANS in humidity_cfg:
+            return bool(humidity_cfg[CONF_HVAC_RUN_OVERHEAD_FANS])
+        return DEFAULT_HVAC_RUN_OVERHEAD_FANS
+
+    def _get_hvac_overhead_fan_speed(self) -> int:
+        """Return target speed percentage for overhead fans during HVAC operation."""
+        raw_speed = self.area.config.get(
+            CONF_HVAC_OVERHEAD_FAN_SPEED,
+            self.area.feature_config(CONF_FEATURE_CLIMATE_GROUPS).get(
+                CONF_HVAC_OVERHEAD_FAN_SPEED,
+                self.area.feature_config(CONF_FEATURE_HUMIDITY).get(
+                    CONF_HVAC_OVERHEAD_FAN_SPEED,
+                    DEFAULT_HVAC_OVERHEAD_FAN_SPEED,
+                ),
+            ),
+        )
+        try:
+            return max(1, min(100, int(raw_speed)))
+        except (ValueError, TypeError):
+            return DEFAULT_HVAC_OVERHEAD_FAN_SPEED
+
+    def _get_overhead_fan_entities(self) -> list[str]:
+        """Return member fan entity_ids that are overhead/circulation fans (excluding exhaust fans)."""
+        if self.area.is_exterior() or self.area.is_meta():
+            return []
+        area_tokens = f"{self.area.slug} {self.area.name}".lower()
+        is_exhaust_area = self._has_humidity_tracking() or any(
+            kw in area_tokens for kw in EXHAUST_AREA_KEYWORDS
+        )
+        overhead: list[str] = []
+        for ent_id in self._entity_ids:
+            st = self.hass.states.get(ent_id)
+            friendly = st.attributes.get("friendly_name", "") if st else ""
+            fan_tokens = f"{ent_id} {friendly}".lower()
+            if any(kw in fan_tokens for kw in EXHAUST_FAN_KEYWORDS):
+                continue
+            if (
+                any(kw in fan_tokens for kw in OVERHEAD_FAN_KEYWORDS)
+                or not is_exhaust_area
+            ):
+                overhead.append(ent_id)
+        return overhead
+
+    def _get_linked_climate_entities(self) -> list[str]:
+        """Resolve linked climate.* entities for this area."""
+        linked: list[str] = []
+        # 1. Explicit linked_climate_entity config
+        for cfg in (
+            self.area.config,
+            self.area.feature_config(CONF_FEATURE_CLIMATE_GROUPS),
+            self.area.feature_config(CONF_FEATURE_HUMIDITY),
+        ):
+            explicit = cfg.get(CONF_LINKED_CLIMATE_ENTITY)
+            if explicit:
+                if isinstance(explicit, list):
+                    for e in explicit:
+                        if e and e not in linked:
+                            linked.append(str(e))
+                elif str(explicit) not in linked:
+                    linked.append(str(explicit))
+        if linked:
+            return linked
+
+        # 2. Local area climate entities
+        for entity_meta in self.area.entities.get(CLIMATE_DOMAIN, []):
+            ent_id = entity_meta.get(ATTR_ENTITY_ID)
+            if ent_id and ent_id not in linked:
+                linked.append(ent_id)
+        if linked:
+            return linked
+
+        # 3. Reference area climate entities
+        ref_area = self.area.config.get(
+            CONF_REFERENCE_BRIGHT_AREA,
+            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                CONF_REFERENCE_BRIGHT_AREA
+            ),
+        )
+        if ref_area and MODULE_DATA in self.hass.data:
+            for entry in self.hass.data[MODULE_DATA].values():
+                area_obj = entry.get(DATA_AREA_OBJECT)
+                if area_obj and (
+                    area_obj.id == ref_area
+                    or area_obj.slug == ref_area
+                    or area_obj.name == ref_area
+                ):
+                    for entity_meta in area_obj.entities.get(CLIMATE_DOMAIN, []):
+                        ent_id = entity_meta.get(ATTR_ENTITY_ID)
+                        if ent_id and ent_id not in linked:
+                            linked.append(ent_id)
+        if linked:
+            return linked
+
+        # 4. Interior / Global meta-area climate entities
+        if MODULE_DATA in self.hass.data:
+            for entry in self.hass.data[MODULE_DATA].values():
+                area_obj = entry.get(DATA_AREA_OBJECT)
+                if area_obj and area_obj.is_meta():
+                    for entity_meta in area_obj.entities.get(CLIMATE_DOMAIN, []):
+                        ent_id = entity_meta.get(ATTR_ENTITY_ID)
+                        if ent_id and ent_id not in linked:
+                            linked.append(ent_id)
+        if linked:
+            return linked
+
+        # 5. Fallback to house-wide climate.* entities in Home Assistant states
+        for ent_id in self.hass.states.async_entity_ids(CLIMATE_DOMAIN):
+            if ent_id not in linked:
+                linked.append(ent_id)
+        return linked
+
+    def _is_hvac_actively_running(self) -> bool:
+        """Return True if any linked climate.* entity is actively heating, cooling, or circulating air."""
+        active_actions = {"heating", "cooling", "drying", "fan", "preheating"}
+        for ent_id in self._get_linked_climate_entities():
+            st = self.hass.states.get(ent_id)
+            if st is None or st.state in (STATE_OFF, STATE_UNAVAILABLE, STATE_UNKNOWN):
+                continue
+            hvac_action = st.attributes.get("hvac_action")
+            if hvac_action is not None:
+                if str(hvac_action).lower() in active_actions:
+                    return True
+                continue
+            mode = st.state.lower()
+            if mode == "fan_only":
+                return True
+            curr_temp = st.attributes.get("current_temperature")
+            if curr_temp is not None:
+                try:
+                    curr_f = float(curr_temp)
+                    target = st.attributes.get("temperature")
+                    target_low = st.attributes.get("target_temp_low")
+                    target_high = st.attributes.get("target_temp_high")
+                    if mode == "heat" and target is not None and curr_f < float(target):
+                        return True
+                    if mode == "cool" and target is not None and curr_f > float(target):
+                        return True
+                    if mode in ("heat_cool", "auto"):
+                        if target_low is not None and curr_f < float(target_low):
+                            return True
+                        if target_high is not None and curr_f > float(target_high):
+                            return True
+                except (ValueError, TypeError):
+                    pass
+        return False
+
+    def _evaluate_hvac_fan_circulation(self) -> bool:
+        """Run overhead fans at a slow speed when linked HVAC is actively running."""
+        was_circulating = bool(
+            self._attr_extra_state_attributes.get(ATTR_HVAC_CIRCULATION_ON, False)
+        )
+        if (
+            not self._is_hvac_overhead_fan_enabled()
+            or not self.area.is_control_enabled(ControlType.System)
+            or not self._is_controlled_by_this_entity()
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            if was_circulating:
+                self._attr_extra_state_attributes.pop(ATTR_HVAC_CIRCULATION_ON, None)
+                self._attr_extra_state_attributes.pop(ATTR_HVAC_CIRCULATION_SPEED, None)
+                self._attr_extra_state_attributes.pop(
+                    ATTR_LINKED_CLIMATE_ENTITIES, None
+                )
+                if (
+                    self.area.is_control_enabled(ControlType.System)
+                    and self._is_controlled_by_this_entity()
+                    and not self._attr_extra_state_attributes.get(
+                        ATTR_HUMIDITY_ON, False
+                    )
+                    and not (
+                        self.area.state == AreaState.AREA_STATE_EXTENDED
+                        and self._should_run_in_extended()
+                    )
+                ):
+                    self._turn_off_fan()
+                self.schedule_update_ha_state()
+            return False
+
+        overhead_fans = self._get_overhead_fan_entities()
+        if not overhead_fans:
+            if was_circulating:
+                self._attr_extra_state_attributes.pop(ATTR_HVAC_CIRCULATION_ON, None)
+                self._attr_extra_state_attributes.pop(ATTR_HVAC_CIRCULATION_SPEED, None)
+                self._attr_extra_state_attributes.pop(
+                    ATTR_LINKED_CLIMATE_ENTITIES, None
+                )
+            return False
+
+        if self._is_fan_suppressed_in_sleep() and not self._is_emergency_moisture():
+            if was_circulating:
+                self._attr_extra_state_attributes.pop(ATTR_HVAC_CIRCULATION_ON, None)
+                self._attr_extra_state_attributes.pop(ATTR_HVAC_CIRCULATION_SPEED, None)
+                self._attr_extra_state_attributes.pop(
+                    ATTR_LINKED_CLIMATE_ENTITIES, None
+                )
+                if not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
+                    self._turn_off_fan()
+                self.schedule_update_ha_state()
+            return False
+
+        if self._is_hvac_actively_running():
+            speed_pct = self._get_hvac_overhead_fan_speed()
+            linked_climates = self._get_linked_climate_entities()
+            self._attr_extra_state_attributes[ATTR_HVAC_CIRCULATION_ON] = True
+            self._attr_extra_state_attributes[ATTR_HVAC_CIRCULATION_SPEED] = speed_pct
+            self._attr_extra_state_attributes[ATTR_LINKED_CLIMATE_ENTITIES] = (
+                linked_climates
+            )
+            # Only set slow speed if full-speed humidity/extended is not currently overriding
+            if not self._attr_extra_state_attributes.get(
+                ATTR_HUMIDITY_ON, False
+            ) and not (
+                self.area.state == AreaState.AREA_STATE_EXTENDED
+                and self._should_run_in_extended()
+            ):
+                self._turn_on_fan_slow(speed_pct, overhead_fans)
+            self.schedule_update_ha_state()
+            return True
+
+        if was_circulating:
+            self._attr_extra_state_attributes.pop(ATTR_HVAC_CIRCULATION_ON, None)
+            self._attr_extra_state_attributes.pop(ATTR_HVAC_CIRCULATION_SPEED, None)
+            self._attr_extra_state_attributes.pop(ATTR_LINKED_CLIMATE_ENTITIES, None)
+            if not self._attr_extra_state_attributes.get(
+                ATTR_HUMIDITY_ON, False
+            ) and not (
+                self.area.state == AreaState.AREA_STATE_EXTENDED
+                and self._should_run_in_extended()
+            ):
+                self._turn_off_fan()
+            self.schedule_update_ha_state()
+        return False
+
+    def _turn_on_fan_slow(
+        self, speed_pct: int, overhead_fans: list[str] | None = None
+    ) -> None:
+        """Turn on overhead fans at a slow circulation speed percentage."""
+        if (
+            self.is_on
+            and not self._has_any_working_fan_off()
+            and getattr(self, "_last_hvac_speed_pct", None) == speed_pct
+        ):
+            return
+        if not self.area.is_control_enabled(ControlType.System):
+            return
+        if not self._is_controlled_by_this_entity():
+            return
+
+        _LOGGER.debug(
+            "%s: Turning on overhead fans at slow HVAC circulation speed (%d%%)",
+            self.name,
+            speed_pct,
+        )
+        self._last_hvac_speed_pct = speed_pct
+        self.last_update_from_entity = True
+        self._attr_is_on = True
+        self._command_in_flight_until = datetime.now(UTC).timestamp() + 2.5
+        target_entity: str | list[str] = (
+            self.entity_id
+            if not overhead_fans or set(overhead_fans) == set(self._entity_ids)
+            else overhead_fans
+        )
+        service_data = {
+            ATTR_ENTITY_ID: target_entity,
+            ATTR_PERCENTAGE: speed_pct,
+        }
+        call_service_non_blocking(self.hass, FAN_DOMAIN, SERVICE_TURN_ON, service_data)
+        self._schedule_actuator_retry(STATE_ON)
+
     def _get_available_member_states(self) -> list[tuple[str, State]]:
         """Return available (non-unavailable/unknown) member fan states."""
         available: list[tuple[str, State]] = []
@@ -1514,6 +1860,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             return
 
         _LOGGER.debug("%s: Turning on fans", self.name)
+        self._last_hvac_speed_pct = None
         self.last_update_from_entity = True
         self._attr_is_on = True
         self._command_in_flight_until = datetime.now(UTC).timestamp() + 2.5
@@ -1537,6 +1884,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             _LOGGER.debug("%s: Fan in manual override, ignoring automatic turn off", self.name)
             return
         _LOGGER.debug("%s: Turning fan off", self.name)
+        self._last_hvac_speed_pct = None
         self.last_update_from_entity = True
         self._attr_is_on = False
         self._command_in_flight_until = datetime.now(UTC).timestamp() + 2.5

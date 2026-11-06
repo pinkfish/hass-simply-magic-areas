@@ -98,6 +98,10 @@ For areas classified as `type: exterior` (Driveways, Patios, Porches, Gardens, a
 - **Sunrise Clearance Guarantee**: At sunrise (`sun.sun` transitions to `above_horizon`), any running exterior timer is cancelled and lights are unconditionally extinguished (`force=True`).
 - **Decoupled Clearance Invariant**: Physical area clearance does not extinguish exterior lights while the 2-hour stay-on timer is running, ensuring outdoor spaces remain safely illuminated without misrepresenting empty yards as occupied on Home Assistant dashboards.
 - **Restart Rehydration**: Exterior timers persist across Home Assistant restarts; remaining countdowns resume seamlessly.
+- **Interior Front-Room / Entry Arrival Pre-Warming ("Welcome Home")**: When a resident arrives home (`person.*` transitions to `home`), approaches home (`proximity.*` with `dir_of_travel: towards` within `1500m` while the house interior is `clear`), or triggers an exterior arrival/motion sensor while the house interior is vacant at night, interior entry rooms (`front_room`, `foyer`, `entry`, `mudroom`, or rooms with a front/entry/garage door sensor) automatically turn on their lights for a 10-minute welcome window (`arrival_prewarm_timeout: 600s`) and hand off seamlessly once the resident steps inside.
+- **Gentle 50% Warning Dim in Extended Mode (`extended_warning_dim: 50`)**: When an occupied room enters `extended` mode, active lights gently dim to 50% of their active profile brightness as a visual warning before turning completely OFF at `clear`.
+- **All-Away Departure Sweep (`all_away_sweep: true`)**: When all tracked `person.*` entities leave home, any forgotten lights or lingering `manual_control` overrides in unoccupied or sensorless interior rooms are automatically turned OFF.
+- **Sustained Activity Wake-Up in Living Areas (`sleep_wakeup_delay: 300s`)**: If a living area (`kitchen`, `office`, `living_room`, `study`, `dining_room`, `family_room`) remains continuously occupied for 5 minutes while `sleep` mode is active, its lights automatically promote from `sleep` dim (`30%`) to `standard` (`100%`) without disturbing bedrooms.
 
 ---
 

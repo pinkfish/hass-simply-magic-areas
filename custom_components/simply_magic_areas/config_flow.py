@@ -54,12 +54,15 @@ from .const import (
     CONF_HUMIDITY_TREND_DOWN_CUT_OFF,
     CONF_HUMIDITY_TREND_UP_CUT_OFF,
     CONF_HUMIDITY_ZERO_WAIT_TIME,
+    CONF_HVAC_OVERHEAD_FAN_SPEED,
+    CONF_HVAC_RUN_OVERHEAD_FANS,
     CONF_ICON,
     CONF_ID,
     CONF_INCLUDE_ENTITIES,
     CONF_LEARN_DAYLIGHT_LUX,
     CONF_LEARN_SHOWER_HUMIDITY,
     CONF_LIGHT_CONTROL,
+    CONF_LINKED_CLIMATE_ENTITY,
     CONF_MEDIA_PLAYER_GROUPS,
     CONF_MQTT_ROOM_PRESENCE,
     CONF_NOTIFICATION_DEVICES,
@@ -606,6 +609,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
             AreaState.AREA_STATE_OCCUPIED,
             AreaState.AREA_STATE_EXTENDED,
         ]
+        climate_entities = [
+            ent_id
+            for ent_id in self.all_entities
+            if ent_id.startswith("climate.")
+        ]
 
         return await self.do_feature_config(
             name=CONF_FEATURE_CLIMATE_GROUPS,
@@ -618,11 +626,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
                 CONF_CLIMATE_GROUPS_TURN_ON_STATE: vol.In(
                     EMPTY_ENTRY + available_states
                 ),
+                CONF_HVAC_RUN_OVERHEAD_FANS: cv.boolean,
+                CONF_HVAC_OVERHEAD_FAN_SPEED: vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=100)
+                ),
+                CONF_LINKED_CLIMATE_ENTITY: vol.Any(cv.entity_id, None, ""),
             },
             selectors={
                 CONF_CLIMATE_GROUPS_TURN_ON_STATE: self._build_selector_select(
                     EMPTY_ENTRY + available_states
-                )
+                ),
+                CONF_HVAC_RUN_OVERHEAD_FANS: selector({"boolean": {}}),
+                CONF_HVAC_OVERHEAD_FAN_SPEED: self._build_selector_number(
+                    min=1, max=100, unit_of_measurement="%"
+                ),
+                CONF_LINKED_CLIMATE_ENTITY: self._build_selector_entity_simple(
+                    climate_entities
+                ),
             },
             user_input=user_input,
         )

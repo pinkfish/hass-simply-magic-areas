@@ -68,6 +68,13 @@ ATTR_PRESENCE_SENSORS = "presence_sensors"
 ATTR_HAS_PRESENCE_SENSORS = "has_presence_sensors"
 ATTR_SWITCH_DEFAULT_DIM_ENTITIES = "switch_default_dim_entities"
 ATTR_SWITCH_DEFAULT_DIM_LEVEL = "switch_default_dim_level"
+ATTR_ARRIVAL_PREWARM_ACTIVE = "arrival_prewarm_active"
+ATTR_ARRIVAL_PREWARM_TS = "arrival_prewarm_ts"
+ATTR_ARRIVAL_PREWARM_REASON = "arrival_prewarm_reason"
+ATTR_SLEEP_WAKEUP_BOOST = "sleep_wakeup_boost"
+ATTR_HVAC_CIRCULATION_ON = "hvac_circulation_on"
+ATTR_HVAC_CIRCULATION_SPEED = "hvac_circulation_speed"
+ATTR_LINKED_CLIMATE_ENTITIES = "linked_climate_entities"
 ATTR_LAST_UPDATE_FROM_ENTITY: str = "last_update_from_entity"
 DEFAULT_LIGHTING_PROFILE = LightingProfile.STANDARD
 
@@ -120,6 +127,96 @@ CONTACT_SENSOR_DEVICE_CLASSES = {
 }
 
 DEFAULT_ACTUATOR_RETRY_DELAYS: tuple[float, ...] = (3.5, 7.0, 15.0)
+
+ENTRY_AREA_KEYWORDS: tuple[str, ...] = (
+    "front_room",
+    "front",
+    "foyer",
+    "entry",
+    "entryway",
+    "mudroom",
+    "mud_room",
+    "vestibule",
+    "entrance",
+    "lobby",
+)
+
+LIVING_AREA_KEYWORDS: tuple[str, ...] = (
+    "kitchen",
+    "office",
+    "living_room",
+    "living",
+    "study",
+    "dining_room",
+    "dining",
+    "family_room",
+    "den",
+    "workshop",
+)
+
+CONF_ARRIVAL_PREWARM, DEFAULT_ARRIVAL_PREWARM = ("arrival_prewarm", True)
+CONF_ARRIVAL_PREWARM_TIMEOUT, DEFAULT_ARRIVAL_PREWARM_TIMEOUT = (
+    "arrival_prewarm_timeout",
+    600,
+)
+CONF_EXTENDED_WARNING_DIM, DEFAULT_EXTENDED_WARNING_DIM = (
+    "extended_warning_dim",
+    50,
+)
+CONF_ALL_AWAY_SWEEP, DEFAULT_ALL_AWAY_SWEEP = ("all_away_sweep", True)
+CONF_SLEEP_WAKEUP_DELAY, DEFAULT_SLEEP_WAKEUP_DELAY = ("sleep_wakeup_delay", 300)
+
+CONF_HVAC_RUN_OVERHEAD_FANS, DEFAULT_HVAC_RUN_OVERHEAD_FANS = (
+    "hvac_run_overhead_fans",
+    True,
+)
+CONF_HVAC_OVERHEAD_FAN_SPEED, DEFAULT_HVAC_OVERHEAD_FAN_SPEED = (
+    "hvac_overhead_fan_speed",
+    25,
+)
+CONF_LINKED_CLIMATE_ENTITY, DEFAULT_LINKED_CLIMATE_ENTITY = (
+    "linked_climate_entity",
+    None,
+)
+
+EXHAUST_FAN_KEYWORDS: tuple[str, ...] = (
+    "exhaust",
+    "vent",
+    "extractor",
+    "range_hood",
+    "hood",
+    "toilet",
+    "wc",
+    "powder",
+    "restroom",
+)
+
+EXHAUST_AREA_KEYWORDS: tuple[str, ...] = (
+    "bathroom",
+    "bath",
+    "toilet",
+    "wc",
+    "powder_room",
+    "powder",
+    "restroom",
+    "washroom",
+    "ensuite",
+    "laundry",
+)
+
+OVERHEAD_FAN_KEYWORDS: tuple[str, ...] = (
+    "ceiling",
+    "overhead",
+    "circulation",
+    "paddle",
+    "bedroom",
+    "living",
+    "office",
+    "study",
+    "dining",
+    "family",
+    "den",
+)
 
 # Configuration parameters
 CONF_ID = "id"
@@ -452,6 +549,18 @@ CLIMATE_GROUP_FEATURE_SCHEMA = vol.Schema(
             CONF_CLIMATE_GROUPS_TURN_ON_STATE,
             default=DEFAULT_CLIMATE_GROUPS_TURN_ON_STATE,
         ): str,
+        vol.Optional(
+            CONF_HVAC_RUN_OVERHEAD_FANS,
+            default=DEFAULT_HVAC_RUN_OVERHEAD_FANS,
+        ): cv.boolean,
+        vol.Optional(
+            CONF_HVAC_OVERHEAD_FAN_SPEED,
+            default=DEFAULT_HVAC_OVERHEAD_FAN_SPEED,
+        ): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+        vol.Optional(
+            CONF_LINKED_CLIMATE_ENTITY,
+            default=DEFAULT_LINKED_CLIMATE_ENTITY,
+        ): vol.Any(cv.entity_id, None, ""),
     }
 )
 
@@ -609,6 +718,11 @@ REGULAR_AREA_SCHEMA = vol.Schema(
             CONF_FAN_SUPPRESS_IN_SLEEP, default=DEFAULT_FAN_SUPPRESS_IN_SLEEP
         ): bool,
         vol.Optional(CONF_FAN_RUN_IN_EXTENDED): cv.boolean,
+        vol.Optional(CONF_HVAC_RUN_OVERHEAD_FANS): cv.boolean,
+        vol.Optional(CONF_HVAC_OVERHEAD_FAN_SPEED): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=100)
+        ),
+        vol.Optional(CONF_LINKED_CLIMATE_ENTITY): vol.Any(cv.entity_id, None, ""),
         vol.Optional(CONF_MQTT_ROOM_PRESENCE): bool,
         vol.Optional(bright_lights.entity_name()): vol.Any(cv.entity_id, ""),
         vol.Optional(CONF_MIN_BRIGHTNESS_LEVEL, default=DEFAULT_MIN_BRIGHTNESS_LEVEL): cv.positive_int,
@@ -708,6 +822,9 @@ INHERITABLE_CONF_KEYS = {
     CONF_EXTENDED_TIMEOUT,
     CONF_DARK_LUX_FLOOR,
     CONF_FAN_SUPPRESS_IN_SLEEP,
+    CONF_HVAC_RUN_OVERHEAD_FANS,
+    CONF_HVAC_OVERHEAD_FAN_SPEED,
+    CONF_LINKED_CLIMATE_ENTITY,
 }
 
 
@@ -719,10 +836,24 @@ OPTIONS_GROUP_CREATION = [
 
 OPTIONS_CLIMATE_GROUP = [
     (CONF_CLIMATE_GROUPS_TURN_ON_STATE, DEFAULT_CLIMATE_GROUPS_TURN_ON_STATE, str),
+    (CONF_HVAC_RUN_OVERHEAD_FANS, DEFAULT_HVAC_RUN_OVERHEAD_FANS, bool),
+    (CONF_HVAC_OVERHEAD_FAN_SPEED, DEFAULT_HVAC_OVERHEAD_FAN_SPEED, int),
+    (
+        CONF_LINKED_CLIMATE_ENTITY,
+        DEFAULT_LINKED_CLIMATE_ENTITY,
+        vol.Any(cv.entity_id, None, ""),
+    ),
 ]
 
 OPTIONS_CLIMATE_GROUP_META = [
     (CONF_CLIMATE_GROUPS_TURN_ON_STATE, None, str),
+    (CONF_HVAC_RUN_OVERHEAD_FANS, DEFAULT_HVAC_RUN_OVERHEAD_FANS, bool),
+    (CONF_HVAC_OVERHEAD_FAN_SPEED, DEFAULT_HVAC_OVERHEAD_FAN_SPEED, int),
+    (
+        CONF_LINKED_CLIMATE_ENTITY,
+        DEFAULT_LINKED_CLIMATE_ENTITY,
+        vol.Any(cv.entity_id, None, ""),
+    ),
 ]
 
 OPTIONS_AREA_AWARE_MEDIA_PLAYER = [

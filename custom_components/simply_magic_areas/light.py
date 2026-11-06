@@ -3,6 +3,7 @@
 import logging
 from datetime import UTC, datetime
 
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.group.light import LightGroup
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
@@ -17,6 +18,7 @@ from homeassistant.components.sensor import (
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
     EVENT_STATE_CHANGED,
     SERVICE_TURN_OFF,
@@ -44,6 +46,9 @@ from .base.magic import ControlType, MagicArea, StateConfigData
 from .config.area_state import AreaState, LightingProfile
 from .config.entity_names import EntityNames
 from .const import (
+    ATTR_ARRIVAL_PREWARM_ACTIVE,
+    ATTR_ARRIVAL_PREWARM_REASON,
+    ATTR_ARRIVAL_PREWARM_TS,
     ATTR_DARK_LUX_FLOOR,
     ATTR_DARKNESS_RATIO,
     ATTR_EXTERIOR_LIGHTING_ACTIVE,
@@ -56,11 +61,17 @@ from .const import (
     ATTR_MANUAL_CONTROL,
     ATTR_MANUAL_TIMEOUT_TS,
     ATTR_PRESENCE_SENSORS,
+    ATTR_SLEEP_WAKEUP_BOOST,
     ATTR_SWITCH_DEFAULT_DIM_ENTITIES,
     ATTR_SWITCH_DEFAULT_DIM_LEVEL,
+    BINARY_SENSOR_DOMAIN,
     CAMERA_DOMAIN,
+    CONF_ALL_AWAY_SWEEP,
+    CONF_ARRIVAL_PREWARM,
+    CONF_ARRIVAL_PREWARM_TIMEOUT,
     CONF_DARK_LUX_FLOOR,
     CONF_DAYLIGHT_LUX_LEVEL,
+    CONF_EXTENDED_WARNING_DIM,
     CONF_EXTERIOR_ARRIVAL_TRIGGER,
     CONF_EXTERIOR_LIGHTING_TIMEOUT,
     CONF_EXTERIOR_SUNSET_TRIGGER,
@@ -70,9 +81,13 @@ from .const import (
     CONF_MANUAL_TIMEOUT,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
+    CONF_SLEEP_WAKEUP_DELAY,
     DATA_AREA_OBJECT,
     DEFAULT_ACTUATOR_RETRY_DELAYS,
+    DEFAULT_ALL_AWAY_SWEEP,
+    DEFAULT_ARRIVAL_PREWARM_TIMEOUT,
     DEFAULT_DARK_LUX_FLOOR,
+    DEFAULT_EXTENDED_WARNING_DIM,
     DEFAULT_EXTERIOR_ARRIVAL_TRIGGER,
     DEFAULT_EXTERIOR_LIGHTING_TIMEOUT,
     DEFAULT_EXTERIOR_SUNSET_TRIGGER,
@@ -80,11 +95,15 @@ from .const import (
     DEFAULT_MANUAL_TIMEOUT,
     DEFAULT_MAX_BRIGHTNESS_LEVEL,
     DEFAULT_MIN_BRIGHTNESS_LEVEL,
+    DEFAULT_SLEEP_WAKEUP_DELAY,
     DOMAIN,
+    ENTRY_AREA_KEYWORDS,
     INVALID_STATES,
+    LIVING_AREA_KEYWORDS,
     META_AREA_EXTERIOR,
     MODULE_DATA,
     bright_lights,
+    extended_lights,
     occupied_lights,
     sleep_lights,
 )
@@ -233,6 +252,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._exterior_timer_cb: CALLBACK_TYPE | None = None
         self._exterior_timer_ts: float | None = None
         self._exterior_trigger_reason: str | None = None
+
+        # Interior arrival pre-warming and sustained sleep wake-up state
+        self._arrival_prewarm_timer_cb: CALLBACK_TYPE | None = None
+        self._arrival_prewarm_ts: float | None = None
+        self._arrival_prewarm_reason: str | None = None
+        self._sleep_wakeup_timer_cb: CALLBACK_TYPE | None = None
+        self._sleep_wakeup_boost_active: bool = False
 
         # Add static attributes
         self.last_update_from_entity: bool = False
@@ -403,12 +429,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
                         self._camera_state_change,
                     )
                 )
-            self.async_on_remove(
-                self.hass.bus.async_listen(
-                    EVENT_STATE_CHANGED,
-                    self._handle_global_state_change,
-                )
+
+        self.async_on_remove(
+            self.hass.bus.async_listen(
+                EVENT_STATE_CHANGED,
+                self._handle_global_state_change,
             )
+        )
 
     ### State Change Handling
     def _area_state_change(self, event: Event[EventStateChangedData]) -> None:
@@ -455,6 +482,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         )
 
         if to_state == AreaState.AREA_STATE_MANUAL:
+            self._cancel_sleep_wakeup_timer()
             _LOGGER.debug("%s: In manual mode, leaving lights as is", self.name)
             return
 
@@ -486,6 +514,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             return
 
         if to_state == AreaState.AREA_STATE_CLEAR:
+            self._cancel_sleep_wakeup_timer()
             if self.is_exterior:
                 if (
                     from_state in occupied_states
@@ -508,6 +537,14 @@ class AreaLightGroup(MagicEntity, LightGroup):
                     ATTR_EXTERIOR_LIGHTING_ACTIVE, False
                 ):
                     return
+            if self._attr_extra_state_attributes.get(
+                ATTR_ARRIVAL_PREWARM_ACTIVE, False
+            ):
+                _LOGGER.debug(
+                    "%s: Arrival pre-warm active; keeping entry lights on while waiting for entry",
+                    self.name,
+                )
+                return
             self._turn_off_light()
             return
 
@@ -527,12 +564,19 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 self._trigger_exterior_lighting(reason="motion")
                 return
 
+            if self._attr_extra_state_attributes.get(
+                ATTR_ARRIVAL_PREWARM_ACTIVE, False
+            ):
+                self._clear_arrival_prewarm()
+
             conf = self._get_active_profile_config()
             if conf is not None:
                 self._turn_on_light(conf, force=True)
+            self._schedule_sleep_wakeup_if_needed()
             return
 
         if to_state == AreaState.AREA_STATE_EXTENDED:
+            self._cancel_sleep_wakeup_timer()
             if self.is_exterior:
                 if not self._is_nighttime():
                     self._turn_off_light()
@@ -542,8 +586,55 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
             if self.area.has_configured_state(to_state):
                 conf = self.area.state_config(to_state)
-                if conf is not None:
+                adv_conf = self.area.feature_config(
+                    CONF_FEATURE_ADVANCED_LIGHT_GROUPS
+                )
+                ext_dim_key = extended_lights.state_dim_level()
+                has_explicit_ext_dim = (
+                    ext_dim_key in adv_conf or ext_dim_key in self.area.config
+                )
+                if conf is not None and (conf.dim_level > 0 or has_explicit_ext_dim):
                     self._turn_on_light(conf)
+                elif self.is_on or self._has_any_working_light_on():
+                    warning_pct = int(
+                        adv_conf.get(
+                            CONF_EXTENDED_WARNING_DIM,
+                            self.area.config.get(
+                                CONF_EXTENDED_WARNING_DIM,
+                                DEFAULT_EXTENDED_WARNING_DIM,
+                            ),
+                        )
+                    )
+                    if warning_pct > 0:
+                        active_conf = self._get_active_profile_config()
+                        base_dim = (
+                            active_conf.dim_level
+                            if active_conf is not None and active_conf.dim_level > 0
+                            else occupied_lights.default_dim_level
+                        )
+                        target_dim = max(
+                            10, min(100, round(base_dim * warning_pct / 100))
+                        )
+                        lights_list = (
+                            list(conf.lights)
+                            if conf is not None and conf.lights
+                            else list(self._entity_ids)
+                        )
+                        warning_conf = StateConfigData(
+                            name="extended_warning",
+                            entity=None,
+                            entity_state_on=STATE_ON,
+                            dim_level=target_dim,
+                            for_state=AreaState.AREA_STATE_EXTENDED,
+                            icon=extended_lights.icon,
+                            control_entity=self.area.simply_magic_entity_id(
+                                SWITCH_DOMAIN, EntityNames.LIGHT_CONTROL
+                            ),
+                            lights=lights_list,
+                        )
+                        self._turn_on_light(warning_conf, dim_only=True)
+                    else:
+                        self._turn_off_light()
             else:
                 self._turn_off_light()
             return
@@ -880,6 +971,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         # Pre-stage smart switch default turn-on dim levels across all rooms
         self._sync_switch_default_dim_level(new_profile)
+        if new_profile not in (LightingProfile.SLEEP, AreaState.AREA_STATE_SLEEP):
+            self._cancel_sleep_wakeup_timer()
+        else:
+            self._schedule_sleep_wakeup_if_needed()
 
         if self.is_exterior and not self._is_nighttime():
             return
@@ -1227,6 +1322,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         conf: StateConfigData,
         force: bool = False,
         dim_only: bool = False,
+        allow_sensorless: bool = False,
     ) -> None:
         """Turn on the light group."""
 
@@ -1238,7 +1334,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
             return
 
         enforce_dim_only = dim_only or (
-            not self.is_exterior and not self._has_presence_sensors()
+            not allow_sensorless
+            and not self.is_exterior
+            and not self._has_presence_sensors()
         )
         if (
             enforce_dim_only
@@ -1440,9 +1538,15 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         return
 
-    def _turn_off_light(self, force: bool = False) -> None:
+    def _turn_off_light(
+        self, force: bool = False, allow_sensorless: bool = False
+    ) -> None:
         """Turn off the light group."""
-        if not self.is_exterior and not self._has_presence_sensors():
+        if (
+            not allow_sensorless
+            and not self.is_exterior
+            and not self._has_presence_sensors()
+        ):
             _LOGGER.debug(
                 "%s: Sensorless room on/off state is manual; aborting automatic turn off",
                 self.name,
@@ -1452,6 +1556,15 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if not force and not self._is_controlled_by_this_entity():
             _LOGGER.debug(
                 "%s: Light in manual override, aborting automatic turn off",
+                self.name,
+            )
+            return
+
+        if not force and self._attr_extra_state_attributes.get(
+            ATTR_ARRIVAL_PREWARM_ACTIVE, False
+        ):
+            _LOGGER.debug(
+                "%s: Arrival pre-warm timer is active, aborting turn off",
                 self.name,
             )
             return
@@ -1725,9 +1838,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._turn_off_light(force=True)
 
     def _person_state_change(self, event: Event[EventStateChangedData]) -> None:
-        """Handle resident person state changes for arrival at night."""
-        if not self.is_exterior:
-            return
+        """Handle resident person state changes for arrival pre-warming and all-away departure."""
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
         if old_state is None or new_state is None:
@@ -1737,21 +1848,338 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         # Resident arrival: person transitions from non-home to home
         if new_state.state == STATE_HOME and old_state.state != STATE_HOME:
-            if not self._is_exterior_arrival_trigger_enabled():
-                return
-            if not self._is_nighttime():
-                _LOGGER.debug(
-                    "%s: Person %s arrived home during daytime; exterior lighting suppressed",
+            if self.is_exterior:
+                if not self._is_exterior_arrival_trigger_enabled():
+                    return
+                if not self._is_nighttime():
+                    _LOGGER.debug(
+                        "%s: Person %s arrived home during daytime; exterior lighting suppressed",
+                        self.name,
+                        event.data.get("entity_id"),
+                    )
+                    return
+                _LOGGER.info(
+                    "%s: Person %s arrived home at night, triggering exterior lighting",
                     self.name,
                     event.data.get("entity_id"),
                 )
-                return
-            _LOGGER.info(
-                "%s: Person %s arrived home at night, triggering exterior lighting",
-                self.name,
-                event.data.get("entity_id"),
+                self._trigger_exterior_lighting(reason="arrival")
+            elif self._is_entry_area():
+                self._trigger_arrival_prewarm(reason="person_arrival")
+            return
+
+        # Resident departure: person transitions from home to away
+        if (
+            old_state.state == STATE_HOME
+            and new_state.state != STATE_HOME
+            and not self.is_exterior
+            and self._are_all_persons_away()
+        ):
+            self._handle_all_away_departure()
+
+    def _proximity_state_change(self, event: Event[EventStateChangedData]) -> None:
+        """Handle proximity sensor updates to pre-warm entry lighting before arrival."""
+        if self.is_exterior or not self._is_entry_area():
+            return
+        new_state = event.data.get("new_state")
+        if new_state is None or new_state.state in INVALID_STATES:
+            return
+        dir_of_travel = str(
+            new_state.attributes.get("dir_of_travel", "")
+        ).lower()
+        if dir_of_travel != "towards":
+            return
+        try:
+            distance = float(new_state.state)
+        except (ValueError, TypeError):
+            return
+        if 0 < distance <= 1500 and self._is_interior_vacant():
+            self._trigger_arrival_prewarm(reason="proximity_approaching")
+
+    def _is_entry_area(self) -> bool:
+        """Return True if this interior room is an entry/front room eligible for arrival pre-warming."""
+        if self.is_exterior or self.area.is_meta():
+            return False
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        explicit = adv_conf.get(
+            CONF_ARRIVAL_PREWARM,
+            self.area.config.get(CONF_ARRIVAL_PREWARM, None),
+        )
+        if explicit is not None:
+            return bool(explicit)
+
+        slug = (getattr(self.area, "slug", "") or "").lower()
+        name = (getattr(self.area, "name", "") or "").lower().replace(" ", "_")
+        combined = f"{slug} {name}"
+        if any(kw in combined for kw in ENTRY_AREA_KEYWORDS):
+            return True
+
+        for ent in self.area.entities.get(BINARY_SENSOR_DOMAIN, []):
+            if not isinstance(ent, dict):
+                continue
+            ent_id = str(ent.get(ATTR_ENTITY_ID, "")).lower()
+            st = self.hass.states.get(ent_id) if ent_id else None
+            dev_cls = ent.get(ATTR_DEVICE_CLASS) or (
+                st.attributes.get(ATTR_DEVICE_CLASS) if st is not None else None
             )
-            self._trigger_exterior_lighting(reason="arrival")
+            if dev_cls == BinarySensorDeviceClass.GARAGE_DOOR:
+                return True
+            if dev_cls == BinarySensorDeviceClass.DOOR and any(
+                kw in ent_id
+                for kw in ("front", "entry", "foyer", "main", "mudroom", "garage")
+            ):
+                return True
+        return False
+
+    def _is_dark_for_arrival(self) -> bool:
+        """Return True if it is nighttime or the room is dark enough to need arrival lighting."""
+        if self._is_nighttime():
+            return True
+        sun_state = self.hass.states.get("sun.sun")
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        dark_lux_floor = float(
+            getattr(self.area, "dark_lux_floor", None)
+            or adv_conf.get(CONF_DARK_LUX_FLOOR)
+            or self.area.config.get(CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR)
+        )
+        val = self.area.get_effective_illuminance()
+        if val is not None:
+            return float(val) <= dark_lux_floor
+        return sun_state is None
+
+    def _is_interior_vacant(self) -> bool:
+        """Return True if all interior areas are currently clear."""
+        interior_state = self.hass.states.get(
+            "sensor.simply_magic_areas_state_interior"
+        )
+        if interior_state is not None:
+            return interior_state.state == AreaState.AREA_STATE_CLEAR
+
+        occupied_states = {
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_BRIGHT,
+            AreaState.AREA_STATE_SLEEP,
+            AreaState.AREA_STATE_ACCENTED,
+            AreaState.AREA_STATE_EXTENDED,
+        }
+        for entry_data in self.hass.data.get(MODULE_DATA, {}).values():
+            if not isinstance(entry_data, dict):
+                continue
+            other_area = entry_data.get(DATA_AREA_OBJECT)
+            if (
+                other_area is not None
+                and not other_area.is_meta()
+                and not other_area.is_exterior()
+                and getattr(other_area, "state", None) in occupied_states
+            ):
+                return False
+        return True
+
+    def _get_arrival_prewarm_timeout(self) -> float:
+        """Return the arrival pre-warm timeout in seconds."""
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        val = adv_conf.get(
+            CONF_ARRIVAL_PREWARM_TIMEOUT,
+            self.area.config.get(
+                CONF_ARRIVAL_PREWARM_TIMEOUT, DEFAULT_ARRIVAL_PREWARM_TIMEOUT
+            ),
+        )
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return float(DEFAULT_ARRIVAL_PREWARM_TIMEOUT)
+
+    def _trigger_arrival_prewarm(self, reason: str) -> None:
+        """Pre-warm interior entry/front-room lights when a resident arrives or approaches home at night."""
+        if not self._is_entry_area() or not self._is_dark_for_arrival():
+            return
+        if (
+            self.area.state == AreaState.AREA_STATE_MANUAL
+            or not self.area.is_control_enabled(ControlType.System)
+        ):
+            return
+        if not self._is_exterior_arrival_trigger_enabled():
+            return
+
+        if self._arrival_prewarm_timer_cb is not None:
+            self._arrival_prewarm_timer_cb()
+            self._arrival_prewarm_timer_cb = None
+
+        timeout = self._get_arrival_prewarm_timeout()
+        now_ts = datetime.now(UTC).timestamp()
+        self._arrival_prewarm_ts = now_ts + timeout
+        self._arrival_prewarm_reason = reason
+        self._attr_extra_state_attributes[ATTR_ARRIVAL_PREWARM_ACTIVE] = True
+        self._attr_extra_state_attributes[ATTR_ARRIVAL_PREWARM_TS] = (
+            self._arrival_prewarm_ts
+        )
+        self._attr_extra_state_attributes[ATTR_ARRIVAL_PREWARM_REASON] = reason
+
+        self._arrival_prewarm_timer_cb = async_call_later(
+            self.hass, timeout, self._arrival_prewarm_expired
+        )
+
+        self._reset_control()
+        active_profile = getattr(
+            self.area, "lighting_profile", LightingProfile.STANDARD
+        )
+        conf = self._get_profile_config_for(active_profile, dim_only=True)
+        if conf is not None:
+            _LOGGER.info(
+                "%s: Pre-warming entry lights for resident arrival (%s)",
+                self.name,
+                reason,
+            )
+            self._turn_on_light(conf, force=True, allow_sensorless=True)
+        self.schedule_update_ha_state()
+
+    def _clear_arrival_prewarm(self) -> None:
+        """Cancel arrival pre-warm timer and clean up state attributes."""
+        if self._arrival_prewarm_timer_cb is not None:
+            self._arrival_prewarm_timer_cb()
+            self._arrival_prewarm_timer_cb = None
+        self._arrival_prewarm_ts = None
+        self._arrival_prewarm_reason = None
+        self._attr_extra_state_attributes.pop(ATTR_ARRIVAL_PREWARM_ACTIVE, None)
+        self._attr_extra_state_attributes.pop(ATTR_ARRIVAL_PREWARM_TS, None)
+        self._attr_extra_state_attributes.pop(ATTR_ARRIVAL_PREWARM_REASON, None)
+
+    def _arrival_prewarm_expired(self, _now: datetime | None = None) -> None:
+        """Handle expiration of the arrival pre-warm window if no occupancy followed."""
+        self._arrival_prewarm_timer_cb = None
+        self._clear_arrival_prewarm()
+        if self.area.state == AreaState.AREA_STATE_CLEAR:
+            self._turn_off_light(force=True, allow_sensorless=True)
+        self.schedule_update_ha_state()
+
+    def _is_all_away_sweep_enabled(self) -> bool:
+        """Return True if all-away departure light sweep is enabled."""
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        return bool(
+            adv_conf.get(
+                CONF_ALL_AWAY_SWEEP,
+                self.area.config.get(CONF_ALL_AWAY_SWEEP, DEFAULT_ALL_AWAY_SWEEP),
+            )
+        )
+
+    def _are_all_persons_away(self) -> bool:
+        """Return True if at least one person entity exists and all valid person entities are away."""
+        person_states = self.hass.states.async_all("person")
+        valid_states = [
+            st for st in person_states if st.state not in INVALID_STATES
+        ]
+        return bool(valid_states) and all(
+            st.state != STATE_HOME for st in valid_states
+        )
+
+    def _handle_all_away_departure(self) -> None:
+        """Sweep forgotten lights off and clear manual overrides when all residents leave home."""
+        if self.is_exterior or not self._is_all_away_sweep_enabled():
+            return
+        if (
+            self.area.state == AreaState.AREA_STATE_MANUAL
+            or not self.area.is_control_enabled(ControlType.System)
+        ):
+            return
+        self._clear_arrival_prewarm()
+        self._cancel_sleep_wakeup_timer()
+        self._reset_control()
+        if (
+            self.area.state == AreaState.AREA_STATE_CLEAR
+            or not self._has_presence_sensors()
+        ) and (self.is_on or self._has_any_working_light_on()):
+            _LOGGER.info(
+                "%s: All residents away; sweeping forgotten lights off",
+                self.name,
+            )
+            self._turn_off_light(force=True, allow_sensorless=True)
+
+    def _is_living_area(self) -> bool:
+        """Return True if this room is a daytime/living area eligible for sustained sleep wake-up."""
+        if self.is_exterior or self.area.is_meta():
+            return False
+        slug = (getattr(self.area, "slug", "") or "").lower()
+        name = (getattr(self.area, "name", "") or "").lower().replace(" ", "_")
+        return any(kw in f"{slug} {name}" for kw in LIVING_AREA_KEYWORDS)
+
+    def _get_sleep_wakeup_delay(self) -> float:
+        """Return the sustained-occupancy delay in seconds before boosting sleep brightness in living areas."""
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        val = adv_conf.get(
+            CONF_SLEEP_WAKEUP_DELAY,
+            self.area.config.get(
+                CONF_SLEEP_WAKEUP_DELAY, DEFAULT_SLEEP_WAKEUP_DELAY
+            ),
+        )
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return float(DEFAULT_SLEEP_WAKEUP_DELAY)
+
+    def _cancel_sleep_wakeup_timer(self) -> None:
+        """Cancel any active sleep wake-up timer and reset boost flag."""
+        if self._sleep_wakeup_timer_cb is not None:
+            self._sleep_wakeup_timer_cb()
+            self._sleep_wakeup_timer_cb = None
+        self._sleep_wakeup_boost_active = False
+        self._attr_extra_state_attributes.pop(ATTR_SLEEP_WAKEUP_BOOST, None)
+
+    def _schedule_sleep_wakeup_if_needed(self) -> None:
+        """Schedule a sustained-activity brightness boost when a living area is occupied during sleep mode."""
+        if not self._is_living_area():
+            return
+        active_profile = getattr(
+            self.area, "lighting_profile", LightingProfile.STANDARD
+        )
+        if (
+            active_profile not in (LightingProfile.SLEEP, AreaState.AREA_STATE_SLEEP)
+            or self.area.state != AreaState.AREA_STATE_OCCUPIED
+        ):
+            self._cancel_sleep_wakeup_timer()
+            return
+        delay = self._get_sleep_wakeup_delay()
+        if delay <= 0:
+            return
+        if (
+            self._sleep_wakeup_timer_cb is None
+            and not self._sleep_wakeup_boost_active
+        ):
+            self._sleep_wakeup_timer_cb = async_call_later(
+                self.hass, delay, self._sleep_wakeup_timer_expired
+            )
+
+    def _sleep_wakeup_timer_expired(self, _now: datetime | None = None) -> None:
+        """Promote living area brightness from sleep dim to standard when occupied continuously."""
+        self._sleep_wakeup_timer_cb = None
+        if not self._is_living_area():
+            return
+        if (
+            self.area.state != AreaState.AREA_STATE_OCCUPIED
+            or not self.area.is_control_enabled(ControlType.System)
+            or not self._is_controlled_by_this_entity()
+        ):
+            return
+        active_profile = getattr(
+            self.area, "lighting_profile", LightingProfile.STANDARD
+        )
+        if active_profile not in (
+            LightingProfile.SLEEP,
+            AreaState.AREA_STATE_SLEEP,
+        ):
+            return
+        occ_conf = self._get_profile_config_for(
+            LightingProfile.STANDARD, dim_only=True
+        )
+        if occ_conf is not None:
+            self._sleep_wakeup_boost_active = True
+            self._attr_extra_state_attributes[ATTR_SLEEP_WAKEUP_BOOST] = True
+            _LOGGER.info(
+                "%s: Sustained occupancy in living area during sleep mode; boosting lights to %s%%",
+                self.name,
+                occ_conf.dim_level,
+            )
+            self._turn_on_light(occ_conf, force=True, dim_only=True)
+            self.schedule_update_ha_state()
 
     def _camera_state_change(self, event: Event[EventStateChangedData]) -> None:
         """Handle camera state changes or attribute updates for motion/person detection."""
@@ -1787,13 +2215,39 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._trigger_exterior_lighting(reason="motion")
 
     def _handle_global_state_change(self, event: Event[EventStateChangedData]) -> None:
-        """Handle global state changed events for person and camera entities."""
-        if not self.is_exterior:
-            return
+        """Handle global state changed events for person, proximity, exterior arrival, and camera entities."""
         entity_id = event.data.get("entity_id", "")
         if entity_id.startswith("person."):
             self._person_state_change(event)
-        elif entity_id.startswith("camera."):
+            return
+        if entity_id.startswith("proximity."):
+            self._proximity_state_change(event)
+            return
+        if (
+            not self.is_exterior
+            and entity_id.startswith(f"{LIGHT_DOMAIN}.")
+            and entity_id != self.entity_id
+            and self._is_entry_area()
+        ):
+            new_state = event.data.get("new_state")
+            old_state = event.data.get("old_state")
+            if (
+                new_state is not None
+                and new_state.attributes.get(ATTR_EXTERIOR_LIGHTING_ACTIVE) is True
+                and (
+                    old_state is None
+                    or old_state.attributes.get(ATTR_EXTERIOR_LIGHTING_ACTIVE)
+                    is not True
+                )
+                and new_state.attributes.get(ATTR_EXTERIOR_TRIGGER_REASON)
+                in ("arrival", "motion")
+                and self._is_interior_vacant()
+            ):
+                self._trigger_arrival_prewarm(reason="exterior_arrival")
+            return
+        if not self.is_exterior:
+            return
+        if entity_id.startswith("camera."):
             cam_entities = [
                 e[ATTR_ENTITY_ID]
                 for e in self.area.entities.get(CAMERA_DOMAIN, [])
@@ -1804,6 +2258,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
     async def async_will_remove_from_hass(self) -> None:
         """Clean up timers when removed from hass."""
         self._cancel_retry_timer()
+        self._clear_arrival_prewarm()
+        self._cancel_sleep_wakeup_timer()
         if self._manual_timeout_cb is not None:
             self._manual_timeout_cb()
             self._manual_timeout_cb = None

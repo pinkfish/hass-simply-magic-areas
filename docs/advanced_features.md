@@ -16,12 +16,16 @@ The Climate Groups feature unifies multiple heating and cooling units located in
 | Setting | Parameter Key | Default | Description |
 | :--- | :--- | :--- | :--- |
 | **Turn On State** | `turn_on_state` | `extended` | The area state at which climate systems turn on or resume comfort temperatures (`occupied` or `extended`). |
+| **Run Overhead Fans During HVAC** | `hvac_run_overhead_fans` | `true` | Automatically runs overhead/ceiling fans at a slow speed when the area's or linked HVAC is actively heating or cooling to distribute conditioned air. |
+| **HVAC Overhead Fan Speed (%)** | `hvac_overhead_fan_speed` | `25` | Speed percentage (`1–100%`) used for overhead fans during active HVAC cycles. |
+| **Linked Climate Entity** | `linked_climate_entity` | `None` | Optional central/shared `climate.*` entity linked to this area for climate group control and overhead fan circulation. |
 
 ### Key Capabilities
 - **Averaged Ambient Temperature**: Automatically computes the mean temperature across all thermometers and climate devices in the room.
 - **Synchronized Controls**: Changes to target temperature, HVAC mode (`heat`, `cool`, `auto`, `off`), fan mode, or swing mode are broadcast synchronously across all child units.
+- **HVAC Linked Climate & Slow-Speed Overhead Fan Circulation**: When the local, linked (`linked_climate_entity`), or house-wide HVAC is actively running (`heating`, `cooling`, `drying`, `fan`, `preheating`), overhead/ceiling fans in the area automatically run at a slow speed (`25%` default) to mix stratified air without creating drafts, while bathroom and toilet exhaust fans are automatically excluded so conditioned air is never vented outdoors.
 - **Autonomous Occupancy Setbacks**:
-  - When the room becomes `occupied`, climate systems adjust to comfort setpoints.
+  - When the room becomes `occupied`, climate systems adjust to comfort setpoints and restore the last active `HVACMode` (`cool`, `heat`, or `heat_cool`).
   - When the room clears (`clear` state) or transitions to `sleep`, climate systems drop into eco/setback mode or turn off, maximizing household energy efficiency.
 
 ---

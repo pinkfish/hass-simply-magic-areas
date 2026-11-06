@@ -83,6 +83,7 @@ They are **adaptive by default**—no manual tuning is required for everyday ope
   * `drying_rate_k`: Fitted exponential evacuation rate ($1/\text{s}$).
   * `estimated_dry_ts`: Unix timestamp when room moisture will reach target baseline.
   * `historical_humidity_baseline`: Learned resting ambient humidity for the room.
+  * `hvac_circulation_on`: `true` when overhead fans are running at slow speed (`25%` default, configurable via `hvac_overhead_fan_speed`) to distribute air while a linked or house-wide `climate.*` entity is actively heating or cooling (`hvac_run_overhead_fans`, default `true`).
 
 ---
 
@@ -128,7 +129,7 @@ To make setup straightforward, configuration documentation is organized into mod
 | Modular Guide | Focus Areas & Covered Configuration Parameters |
 | :--- | :--- |
 | 📘 **[Basic Area Configuration Guide](docs/basic_area_configuration.md)** | Core area types (`interior`, `exterior`, `meta`), clearance timeouts, master actuator toggles, basic dimming levels, photometric floors, MQTT room tracking, and Meta-Area policy inheritance. |
-| 💡 **[Lighting, Presence & Exterior Guide](docs/lighting_and_presence.md)** | Advanced presence sensor filtering (`include`/`exclude`), sensorless room night/bright dimming, smart switch default turn-on dim pre-staging, Bayesian ML brightness preference learner, mmWave radar fan blade filter, exterior dusk-to-dawn lighting, and per-profile entity assignments. |
+| 💡 **[Lighting, Presence & Exterior Guide](docs/lighting_and_presence.md)** | Advanced presence sensor filtering (`include`/`exclude`), sensorless room night/bright dimming, smart switch default turn-on dim pre-staging, front-room arrival pre-warming, extended-mode 50% warning dim, all-away departure sweep, Bayesian ML brightness preference learner, mmWave radar fan blade filter, exterior dusk-to-dawn lighting, and per-profile entity assignments. |
 | 💧 **[Ventilation & Shower Humidity Guide](docs/ventilation_and_humidity.md)** | Nighttime acoustic fan suppression, zero-config baseline resolution, differential shower humidity triggers, drying slope sustain invariant, and adaptive historical shower signature learning. |
 | 🛠️ **[Advanced Features, Aggregates & System Control Guide](docs/advanced_features.md)** | Climate groups and occupancy setbacks, Area-Aware Media Player (AAMP targeted TTS routing), sensor aggregates, cover/media groups, health/distress monitors, and system control master switches. |
 

@@ -29,12 +29,17 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.simply_magic_areas.base.area_state_sensor import AreaStateSensor
 from custom_components.simply_magic_areas.base.magic import StateConfigData
+from custom_components.simply_magic_areas.climate import AreaClimateGroup
 from custom_components.simply_magic_areas.config.area_state import (
     AreaState,
     LightingProfile,
 )
 from custom_components.simply_magic_areas.const import (
+    ATTR_ARRIVAL_PREWARM_ACTIVE,
+    ATTR_ARRIVAL_PREWARM_REASON,
     ATTR_MANUAL_CONTROL,
+    ATTR_SLEEP_WAKEUP_BOOST,
+    ATTR_STATE,
     CONF_CLEAR_TIMEOUT,
     CONF_EXTENDED_TIMEOUT,
     CONF_ON_STATES,
@@ -43,6 +48,7 @@ from custom_components.simply_magic_areas.const import (
 )
 from custom_components.simply_magic_areas.fan import AreaFanGroup
 from custom_components.simply_magic_areas.light import AreaLightGroup
+from custom_components.simply_magic_areas.media_player import AreaMediaPlayerGroup
 from custom_components.simply_magic_areas.ml.mmwave_filter import MMWaveFanFilter
 
 
@@ -977,3 +983,607 @@ async def test_sensor_room_manual_switch_on_off_and_dim_level_control(
     await hass.async_block_till_done()
     assert len(turn_on_calls) == 0
     light_group._cancel_retry_timer()
+
+
+async def test_front_room_arrival_prewarm_and_handoff(hass: HomeAssistant) -> None:
+    """Test that front room / entry lights pre-warm when arriving home at night and hand off cleanly on occupancy."""
+    from unittest.mock import MagicMock
+
+    hass.states.async_set("sun.sun", "below_horizon", {"elevation": -10.0})
+    hass.states.async_set("sensor.simply_magic_areas_state_interior", AreaState.AREA_STATE_CLEAR)
+
+    area = MagicMock()
+    area.hass = hass
+    area.name = "Front Room"
+    area.slug = "front_room"
+    area.id = "front_room"
+    area.state = AreaState.AREA_STATE_CLEAR
+    area.lighting_profile = LightingProfile.STANDARD
+    area.is_meta.return_value = False
+    area.is_exterior.return_value = False
+    area.is_control_enabled.return_value = True
+    area.has_configured_presence_sensors.return_value = True
+    area.has_configured_state.side_effect = (
+        lambda st: st == AreaState.AREA_STATE_OCCUPIED
+    )
+    area.state_config.side_effect = lambda st: (
+        StateConfigData(
+            name="occupied",
+            entity=None,
+            entity_state_on=STATE_ON,
+            dim_level=100,
+            for_state=AreaState.AREA_STATE_OCCUPIED,
+            icon="mdi:lightbulb",
+            control_entity="switch.simply_magic_areas_light_control_front_room",
+            lights=["light.front_room_light"],
+        )
+        if st == AreaState.AREA_STATE_OCCUPIED
+        else None
+    )
+    area.config = {}
+    area.feature_config.return_value = {}
+    area.get_effective_illuminance.return_value = 0.0
+    area.entities = {
+        LIGHT_DOMAIN: [{ATTR_ENTITY_ID: "light.front_room_light"}],
+    }
+    area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: (
+            f"{domain}.simply_magic_areas_{name}_{area_name or 'front_room'}"
+        )
+    )
+
+    hass.states.async_set("light.front_room_light", STATE_OFF)
+    light_group = AreaLightGroup(area, ["light.front_room_light"])
+    light_group.hass = hass
+    light_group._attr_name = "Front Room Lights"
+    light_group.entity_id = "light.simply_magic_areas_light_front_room"
+    light_group.schedule_update_ha_state = MagicMock()
+    light_group.async_update_group_state = MagicMock()
+
+    assert light_group._is_entry_area() is True
+
+    turn_on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
+    turn_off_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
+
+    # 1. Proximity sensor reports resident approaching home (800m away, towards) -> pre-warms front room light!
+    light_group._proximity_state_change(
+        MagicMock(
+            data={
+                "entity_id": "proximity.home",
+                "old_state": MagicMock(
+                    state="2000", attributes={"dir_of_travel": "towards"}
+                ),
+                "new_state": MagicMock(
+                    state="800", attributes={"dir_of_travel": "towards"}
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == 255
+    assert (
+        light_group.extra_state_attributes.get(ATTR_ARRIVAL_PREWARM_ACTIVE)
+        is True
+    )
+    assert (
+        light_group.extra_state_attributes.get(ATTR_ARRIVAL_PREWARM_REASON)
+        == "proximity_approaching"
+    )
+    light_group._cancel_retry_timer()
+
+    # 2. While arrival pre-warm is active, clear state does NOT turn the front room light off
+    hass.states.async_set(
+        "light.front_room_light", STATE_ON, {ATTR_BRIGHTNESS: 255}
+    )
+    light_group._attr_is_on = True
+    light_group._turn_off_light()
+    await hass.async_block_till_done()
+    assert len(turn_off_calls) == 0
+
+    # 3. Resident walks into the front room (CLEAR -> OCCUPIED) -> pre-warm hands off to normal occupancy
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    light_group._area_state_change(
+        MagicMock(
+            event_type="state_changed",
+            data={
+                "old_state": MagicMock(state=AreaState.AREA_STATE_CLEAR),
+                "new_state": MagicMock(state=AreaState.AREA_STATE_OCCUPIED),
+            },
+        )
+    )
+    await hass.async_block_till_done()
+    assert (
+        light_group.extra_state_attributes.get(ATTR_ARRIVAL_PREWARM_ACTIVE)
+        is None
+    )
+    light_group._cancel_retry_timer()
+
+
+async def test_extended_mode_warning_dim_before_clear(
+    hass: HomeAssistant,
+) -> None:
+    """Test that entering extended mode gently dims lights to 50% as a warning instead of plunging into darkness."""
+    from unittest.mock import MagicMock
+
+    area = MagicMock()
+    area.hass = hass
+    area.name = "Office"
+    area.slug = "office"
+    area.id = "office"
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    area.lighting_profile = LightingProfile.STANDARD
+    area.is_meta.return_value = False
+    area.is_exterior.return_value = False
+    area.is_control_enabled.return_value = True
+    area.has_configured_presence_sensors.return_value = True
+    area.has_configured_state.side_effect = lambda st: st in (
+        AreaState.AREA_STATE_OCCUPIED,
+        AreaState.AREA_STATE_EXTENDED,
+    )
+    area.state_config.side_effect = lambda st: (
+        StateConfigData(
+            name="occupied",
+            entity=None,
+            entity_state_on=STATE_ON,
+            dim_level=100,
+            for_state=AreaState.AREA_STATE_OCCUPIED,
+            icon="mdi:lightbulb",
+            control_entity="switch.simply_magic_areas_light_control_office",
+            lights=["light.office_light"],
+        )
+        if st == AreaState.AREA_STATE_OCCUPIED
+        else StateConfigData(
+            name="extended",
+            entity=None,
+            entity_state_on=STATE_ON,
+            dim_level=0,
+            for_state=AreaState.AREA_STATE_EXTENDED,
+            icon="mdi:lightbulb",
+            control_entity="switch.simply_magic_areas_light_control_office",
+            lights=["light.office_light"],
+        )
+    )
+    area.config = {}
+    area.feature_config.return_value = {}
+    area.get_effective_illuminance.return_value = 0.0
+    area.entities = {
+        LIGHT_DOMAIN: [{ATTR_ENTITY_ID: "light.office_light"}],
+    }
+    area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: (
+            f"{domain}.simply_magic_areas_{name}_{area_name or 'office'}"
+        )
+    )
+
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_office",
+        AreaState.AREA_STATE_OCCUPIED,
+        {"presence_sensors": ["binary_sensor.office_motion"]},
+    )
+    hass.states.async_set("light.office_light", STATE_ON, {ATTR_BRIGHTNESS: 255})
+
+    light_group = AreaLightGroup(area, ["light.office_light"])
+    light_group.hass = hass
+    light_group._attr_name = "Office Lights"
+    light_group.entity_id = "light.simply_magic_areas_light_office"
+    light_group._attr_is_on = True
+    light_group.schedule_update_ha_state = MagicMock()
+    light_group.async_update_group_state = MagicMock()
+
+    turn_on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
+    turn_off_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
+
+    # 1. Transition OCCUPIED -> EXTENDED: light dims to 50% (127) instead of turning off!
+    area.state = AreaState.AREA_STATE_EXTENDED
+    light_group._area_state_change(
+        MagicMock(
+            event_type="state_changed",
+            data={
+                "old_state": MagicMock(state=AreaState.AREA_STATE_OCCUPIED),
+                "new_state": MagicMock(state=AreaState.AREA_STATE_EXTENDED),
+            },
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(turn_off_calls) == 0
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == int(50 * 255 / 100)
+    light_group._cancel_retry_timer()
+
+    # 2. Transition EXTENDED -> CLEAR: light now turns completely OFF
+    area.state = AreaState.AREA_STATE_CLEAR
+    light_group._area_state_change(
+        MagicMock(
+            event_type="state_changed",
+            data={
+                "old_state": MagicMock(state=AreaState.AREA_STATE_EXTENDED),
+                "new_state": MagicMock(state=AreaState.AREA_STATE_CLEAR),
+            },
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(turn_off_calls) == 1
+    light_group._cancel_retry_timer()
+
+
+async def test_all_away_departure_sweep_and_living_area_sleep_wakeup(
+    hass: HomeAssistant,
+) -> None:
+    """Test all-away departure sweep across sensorless/manual rooms and sustained sleep wake-up in living areas."""
+    from unittest.mock import MagicMock
+
+    hass.states.async_set("person.alice", "not_home")
+    hass.states.async_set("person.bob", "not_home")
+
+    area = MagicMock()
+    area.hass = hass
+    area.name = "Kitchen"
+    area.slug = "kitchen"
+    area.id = "kitchen"
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    area.lighting_profile = LightingProfile.SLEEP
+    area.is_meta.return_value = False
+    area.is_exterior.return_value = False
+    area.is_control_enabled.return_value = True
+    area.has_configured_presence_sensors.return_value = False
+    area.has_configured_state.side_effect = (
+        lambda st: st == AreaState.AREA_STATE_OCCUPIED
+    )
+    area.state_config.side_effect = lambda st: (
+        StateConfigData(
+            name="occupied",
+            entity=None,
+            entity_state_on=STATE_ON,
+            dim_level=100,
+            for_state=AreaState.AREA_STATE_OCCUPIED,
+            icon="mdi:lightbulb",
+            control_entity="switch.simply_magic_areas_light_control_kitchen",
+            lights=["light.kitchen_light"],
+        )
+        if st == AreaState.AREA_STATE_OCCUPIED
+        else None
+    )
+    area.config = {}
+    area.feature_config.return_value = {"sleep_state_dim": 30}
+    area.get_effective_illuminance.return_value = 0.0
+    area.entities = {
+        LIGHT_DOMAIN: [{ATTR_ENTITY_ID: "light.kitchen_light"}],
+    }
+    area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: (
+            f"{domain}.simply_magic_areas_{name}_{area_name or 'kitchen'}"
+        )
+    )
+
+    hass.states.async_set("light.kitchen_light", STATE_ON, {ATTR_BRIGHTNESS: 76})
+
+    light_group = AreaLightGroup(area, ["light.kitchen_light"])
+    light_group.hass = hass
+    light_group._attr_name = "Kitchen Lights"
+    light_group.entity_id = "light.simply_magic_areas_light_kitchen"
+    light_group._attr_is_on = True
+    light_group.schedule_update_ha_state = MagicMock()
+    light_group.async_update_group_state = MagicMock()
+
+    turn_on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
+    turn_off_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
+
+    # 1. Sustained occupancy in Kitchen during SLEEP mode promotes brightness to 100% (255)
+    assert light_group._is_living_area() is True
+    light_group._sleep_wakeup_timer_expired()
+    await hass.async_block_till_done()
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == 255
+    assert (
+        light_group.extra_state_attributes.get(ATTR_SLEEP_WAKEUP_BOOST) is True
+    )
+    light_group._cancel_retry_timer()
+
+    # 2. All-away departure sweep: when last person transitions home -> not_home,
+    #    even a sensorless room with manual_control=True is swept OFF!
+    area.state = AreaState.AREA_STATE_CLEAR
+    light_group._set_controlled_by_this_entity(False)
+    assert light_group.extra_state_attributes.get(ATTR_MANUAL_CONTROL) is True
+
+    light_group._person_state_change(
+        MagicMock(
+            data={
+                "entity_id": "person.bob",
+                "old_state": MagicMock(state="home"),
+                "new_state": MagicMock(state="not_home"),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert light_group.extra_state_attributes.get(ATTR_MANUAL_CONTROL) is None
+    assert len(turn_off_calls) == 1
+    light_group._cancel_retry_timer()
+
+
+async def test_climate_and_media_player_ignore_attribute_updates_and_restore_hvac_mode(
+    hass: HomeAssistant,
+) -> None:
+    """Test that AreaClimateGroup restores last active HVACMode and both climate and media player ignore attribute-only updates."""
+    from unittest.mock import MagicMock
+
+    from homeassistant.components.climate import (
+        ATTR_HVAC_MODE,
+        SERVICE_SET_HVAC_MODE,
+        HVACAction,
+        HVACMode,
+    )
+    from homeassistant.components.climate import (
+        DOMAIN as CLIMATE_DOMAIN,
+    )
+    from homeassistant.components.media_player import (
+        DOMAIN as MEDIA_PLAYER_DOMAIN,
+    )
+
+    area = MagicMock()
+    area.hass = hass
+    area.name = "Living Room"
+    area.slug = "living_room"
+    area.id = "living_room"
+    area.is_meta.return_value = False
+    area.is_control_enabled.return_value = True
+    area.feature_config.return_value = {
+        "turn_on_state": AreaState.AREA_STATE_OCCUPIED
+    }
+    area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: (
+            f"{domain}.simply_magic_areas_{name}_{area_name or 'living_room'}"
+        )
+    )
+
+    climate_group = AreaClimateGroup(area, ["climate.living_room_thermostat"])
+    climate_group.hass = hass
+    climate_group._attr_name = "Living Room Climate"
+    climate_group.entity_id = "climate.simply_magic_areas_climate_living_room"
+    climate_group._attr_hvac_modes = [
+        HVACMode.OFF,
+        HVACMode.HEAT_COOL,
+        HVACMode.HEAT,
+        HVACMode.COOL,
+    ]
+    climate_group._attr_hvac_mode = HVACMode.COOL
+    climate_group._attr_hvac_action = HVACAction.COOLING
+
+    hvac_calls = async_mock_service(hass, CLIMATE_DOMAIN, SERVICE_SET_HVAC_MODE)
+
+    # 1. Attribute-only update on AreaStateSensor (same state "clear" with ATTR_STATE in attributes) is ignored
+    climate_group._area_state_changed(
+        MagicMock(
+            data={
+                "old_state": MagicMock(
+                    state=AreaState.AREA_STATE_CLEAR,
+                    attributes={ATTR_STATE: AreaState.AREA_STATE_CLEAR},
+                ),
+                "new_state": MagicMock(
+                    state=AreaState.AREA_STATE_CLEAR,
+                    attributes={ATTR_STATE: AreaState.AREA_STATE_CLEAR, "lux": 50},
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(hvac_calls) == 0
+
+    # 2. Transition OCCUPIED -> CLEAR saves HVACMode.COOL and turns off
+    climate_group._area_state_changed(
+        MagicMock(
+            data={
+                "old_state": MagicMock(
+                    state=AreaState.AREA_STATE_OCCUPIED,
+                    attributes={ATTR_STATE: AreaState.AREA_STATE_OCCUPIED},
+                ),
+                "new_state": MagicMock(
+                    state=AreaState.AREA_STATE_CLEAR,
+                    attributes={ATTR_STATE: AreaState.AREA_STATE_CLEAR},
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(hvac_calls) == 1
+    assert hvac_calls[-1].data[ATTR_HVAC_MODE] == HVACMode.OFF
+    assert climate_group._last_active_hvac_mode == HVACMode.COOL
+
+    # 3. Transition CLEAR -> OCCUPIED restores HVACMode.COOL (not HEAT_COOL!)
+    hvac_calls.clear()
+    climate_group._attr_hvac_mode = HVACMode.OFF
+    climate_group._attr_hvac_action = HVACAction.OFF
+    climate_group._area_state_changed(
+        MagicMock(
+            data={
+                "old_state": MagicMock(
+                    state=AreaState.AREA_STATE_CLEAR,
+                    attributes={ATTR_STATE: AreaState.AREA_STATE_CLEAR},
+                ),
+                "new_state": MagicMock(
+                    state=AreaState.AREA_STATE_OCCUPIED,
+                    attributes={ATTR_STATE: AreaState.AREA_STATE_OCCUPIED},
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(hvac_calls) == 1
+    assert hvac_calls[-1].data[ATTR_HVAC_MODE] == HVACMode.COOL
+
+    # 4. Media player group ignores attribute-only updates on AreaStateSensor
+    mp_group = AreaMediaPlayerGroup(area, ["media_player.living_room_tv"])
+    mp_group.hass = hass
+    mp_group.entity_id = "media_player.simply_magic_areas_media_player_living_room"
+    mp_off_calls = async_mock_service(hass, MEDIA_PLAYER_DOMAIN, "turn_off")
+
+    mp_group._area_state_changed(
+        MagicMock(
+            data={
+                "old_state": MagicMock(
+                    state=AreaState.AREA_STATE_CLEAR,
+                    attributes={ATTR_STATE: AreaState.AREA_STATE_CLEAR},
+                ),
+                "new_state": MagicMock(
+                    state=AreaState.AREA_STATE_CLEAR,
+                    attributes={ATTR_STATE: AreaState.AREA_STATE_CLEAR, "lux": 20},
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(mp_off_calls) == 0
+
+
+async def test_hvac_overhead_fan_slow_circulation_and_exhaust_exclusion(
+    hass: HomeAssistant,
+) -> None:
+    """Verify overhead fans run at slow speed (25% default) when HVAC runs, while exhaust fans do not."""
+    from unittest.mock import MagicMock
+
+    from homeassistant.components.fan import ATTR_PERCENTAGE
+    from homeassistant.const import SERVICE_TURN_OFF
+
+    from custom_components.simply_magic_areas.const import (
+        ATTR_HVAC_CIRCULATION_ON,
+        ATTR_HVAC_CIRCULATION_SPEED,
+        ATTR_LINKED_CLIMATE_ENTITIES,
+        CONF_HVAC_OVERHEAD_FAN_SPEED,
+        CONF_HVAC_RUN_OVERHEAD_FANS,
+        CONF_LINKED_CLIMATE_ENTITY,
+    )
+
+    fan_on_calls = async_mock_service(hass, FAN_DOMAIN, SERVICE_TURN_ON)
+    fan_off_calls = async_mock_service(hass, FAN_DOMAIN, SERVICE_TURN_OFF)
+
+    # 1. Living Room with ceiling fan linked to climate.hallway_thermostat (defaults to ON at 25%)
+    hass.states.async_set(
+        "fan.living_room_ceiling_fan",
+        STATE_OFF,
+        {"friendly_name": "Living Room Ceiling Fan"},
+    )
+    hass.states.async_set(
+        "climate.hallway_thermostat",
+        "cool",
+        {"hvac_action": "idle", "current_temperature": 72, "temperature": 72},
+    )
+
+    living_area = MagicMock()
+    living_area.hass = hass
+    living_area.name = "Living Room"
+    living_area.slug = "living_room"
+    living_area.id = "living_room"
+    living_area.state = AreaState.AREA_STATE_OCCUPIED
+    living_area.is_meta.return_value = False
+    living_area.is_exterior.return_value = False
+    living_area.is_interior.return_value = True
+    living_area.is_control_enabled.return_value = True
+    living_area.has_feature.return_value = False
+    living_area.config = {}
+    living_area.feature_config.return_value = {
+        CONF_LINKED_CLIMATE_ENTITY: "climate.hallway_thermostat",
+    }
+    living_area.entities = {
+        FAN_DOMAIN: [{"entity_id": "fan.living_room_ceiling_fan"}],
+    }
+    living_area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: f"{domain}.simply_magic_areas_{name}_{area_name or 'living_room'}"
+    )
+
+    living_fan_group = AreaFanGroup(living_area, ["fan.living_room_ceiling_fan"])
+    living_fan_group.hass = hass
+    living_fan_group._attr_name = "Living Room Fans"
+    living_fan_group.entity_id = "fan.simply_magic_areas_fan_living_room"
+    living_fan_group.schedule_update_ha_state = MagicMock()
+
+    # Initially HVAC is idle -> overhead fan stays off
+    assert living_fan_group._evaluate_hvac_fan_circulation() is False
+    assert len(fan_on_calls) == 0
+
+    # HVAC starts cooling -> overhead fan turns on at slow 25% speed
+    hass.states.async_set(
+        "climate.hallway_thermostat",
+        "cool",
+        {"hvac_action": "cooling", "current_temperature": 75, "temperature": 72},
+    )
+    assert living_fan_group._evaluate_hvac_fan_circulation() is True
+    await hass.async_block_till_done()
+    assert len(fan_on_calls) == 1
+    assert fan_on_calls[-1].data[ATTR_ENTITY_ID] == "fan.simply_magic_areas_fan_living_room"
+    assert fan_on_calls[-1].data[ATTR_PERCENTAGE] == 25
+    assert living_fan_group._attr_extra_state_attributes[ATTR_HVAC_CIRCULATION_ON] is True
+    assert living_fan_group._attr_extra_state_attributes[ATTR_HVAC_CIRCULATION_SPEED] == 25
+    assert living_fan_group._attr_extra_state_attributes[ATTR_LINKED_CLIMATE_ENTITIES] == [
+        "climate.hallway_thermostat"
+    ]
+
+    # When HVAC returns to idle -> overhead fan turns off and cleans up attributes
+    hass.states.async_set("fan.living_room_ceiling_fan", STATE_ON)
+    hass.states.async_set(
+        "climate.hallway_thermostat",
+        "cool",
+        {"hvac_action": "idle", "current_temperature": 72, "temperature": 72},
+    )
+    assert living_fan_group._evaluate_hvac_fan_circulation() is False
+    await hass.async_block_till_done()
+    assert len(fan_off_calls) == 1
+    assert ATTR_HVAC_CIRCULATION_ON not in living_fan_group._attr_extra_state_attributes
+
+    # 2. Bathroom exhaust fan is excluded from HVAC circulation
+    fan_on_calls.clear()
+    hass.states.async_set(
+        "fan.bathroom_exhaust_fan",
+        STATE_OFF,
+        {"friendly_name": "Bathroom Exhaust Fan"},
+    )
+    hass.states.async_set(
+        "climate.hallway_thermostat",
+        "heat",
+        {"hvac_action": "heating", "current_temperature": 66, "temperature": 70},
+    )
+    bath_area = MagicMock()
+    bath_area.hass = hass
+    bath_area.name = "Bathroom"
+    bath_area.slug = "bathroom"
+    bath_area.id = "bathroom"
+    bath_area.state = AreaState.AREA_STATE_CLEAR
+    bath_area.is_meta.return_value = False
+    bath_area.is_exterior.return_value = False
+    bath_area.is_interior.return_value = True
+    bath_area.is_control_enabled.return_value = True
+    bath_area.has_feature.return_value = True
+    bath_area.config = {}
+    bath_area.feature_config.return_value = {}
+    bath_area.entities = {
+        FAN_DOMAIN: [{"entity_id": "fan.bathroom_exhaust_fan"}],
+    }
+    bath_area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: f"{domain}.simply_magic_areas_{name}_{area_name or 'bathroom'}"
+    )
+    bath_fan_group = AreaFanGroup(bath_area, ["fan.bathroom_exhaust_fan"])
+    bath_fan_group.hass = hass
+    bath_fan_group._attr_name = "Bathroom Fans"
+    bath_fan_group.entity_id = "fan.simply_magic_areas_fan_bathroom"
+    bath_fan_group.schedule_update_ha_state = MagicMock()
+
+    assert bath_fan_group._evaluate_hvac_fan_circulation() is False
+    await hass.async_block_till_done()
+    assert len(fan_on_calls) == 0
+
+    # 3. Custom speed (35%) and disabling via CONF_HVAC_RUN_OVERHEAD_FANS = False
+    hass.states.async_set("fan.living_room_ceiling_fan", STATE_OFF)
+    living_area.config = {CONF_HVAC_OVERHEAD_FAN_SPEED: 35}
+    living_fan_group._cancel_retry_timer()
+    assert living_fan_group._evaluate_hvac_fan_circulation() is True
+    await hass.async_block_till_done()
+    assert fan_on_calls[-1].data[ATTR_PERCENTAGE] == 35
+
+    hass.states.async_set("fan.living_room_ceiling_fan", STATE_ON)
+    living_area.config = {CONF_HVAC_RUN_OVERHEAD_FANS: False}
+    fan_off_calls.clear()
+    assert living_fan_group._evaluate_hvac_fan_circulation() is False
+    await hass.async_block_till_done()
+    assert len(fan_off_calls) == 1
+    living_fan_group._cancel_retry_timer()
+
+

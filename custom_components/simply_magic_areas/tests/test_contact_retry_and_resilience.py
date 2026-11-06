@@ -1587,3 +1587,181 @@ async def test_hvac_overhead_fan_slow_circulation_and_exhaust_exclusion(
     living_fan_group._cancel_retry_timer()
 
 
+async def test_manual_light_changes_synchronize_all_room_lights_and_dim_level(
+    hass: HomeAssistant,
+) -> None:
+    """Verify manual ON, dim, and OFF changes on one light synchronize all lights in the room."""
+    from unittest.mock import MagicMock
+
+    from homeassistant.const import SERVICE_TURN_OFF
+
+    on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
+    off_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_OFF)
+
+    hass.states.async_set("light.kitchen_main", STATE_OFF)
+    hass.states.async_set("light.kitchen_island", STATE_OFF)
+
+    area = MagicMock()
+    area.hass = hass
+    area.name = "Kitchen"
+    area.slug = "kitchen"
+    area.id = "kitchen"
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    area.lighting_profile = LightingProfile.STANDARD
+    area.is_meta.return_value = False
+    area.is_exterior.return_value = False
+    area.is_interior.return_value = True
+    area.is_control_enabled.return_value = True
+    area.config = {}
+    area.feature_config.return_value = {}
+    area.entities = {
+        LIGHT_DOMAIN: [
+            {"entity_id": "light.kitchen_main"},
+            {"entity_id": "light.kitchen_island"},
+        ],
+        BINARY_SENSOR_DOMAIN: [
+            {
+                "entity_id": "binary_sensor.kitchen_motion",
+                ATTR_DEVICE_CLASS: BinarySensorDeviceClass.MOTION,
+            }
+        ],
+    }
+    area.all_state_configs.return_value = {
+        AreaState.AREA_STATE_OCCUPIED: StateConfigData(
+            name="occupied",
+            entity=None,
+            entity_state_on=STATE_ON,
+            dim_level=100.0,
+            for_state=AreaState.AREA_STATE_OCCUPIED,
+            icon="mdi:lightbulb",
+            control_entity="switch.simply_magic_areas_light_control_kitchen",
+            lights=["light.kitchen_main", "light.kitchen_island"],
+        ),
+        LightingProfile.STANDARD: StateConfigData(
+            name="standard",
+            entity=None,
+            entity_state_on=STATE_ON,
+            dim_level=100.0,
+            for_state=LightingProfile.STANDARD,
+            icon="mdi:lightbulb",
+            control_entity="switch.simply_magic_areas_light_control_kitchen",
+            lights=["light.kitchen_main", "light.kitchen_island"],
+        ),
+    }
+    area.get_effective_illuminance.return_value = 0.0
+    area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: f"{domain}.simply_magic_areas_{name}_{area_name or 'kitchen'}"
+    )
+
+    lg = AreaLightGroup(area, ["light.kitchen_main", "light.kitchen_island"])
+    lg.hass = hass
+    lg._attr_name = "Kitchen Lights"
+    lg.entity_id = "light.simply_magic_areas_light_kitchen"
+    lg.schedule_update_ha_state = MagicMock()
+    lg.async_update_group_state = MagicMock()
+
+    # 1. User manually turns ON light.kitchen_main at brightness 180 while light.kitchen_island is OFF
+    hass.states.async_set("light.kitchen_main", STATE_ON, {ATTR_BRIGHTNESS: 180})
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.kitchen_main",
+                "old_state": MagicMock(state=STATE_OFF, attributes={}),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 180}
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(on_calls) == 1
+    assert on_calls[-1].data[ATTR_ENTITY_ID] == "light.simply_magic_areas_light_kitchen"
+    assert on_calls[-1].data[ATTR_BRIGHTNESS] == 180
+    assert lg._attr_extra_state_attributes.get(ATTR_MANUAL_CONTROL) is True
+
+    # Simulate both lights now ON at 180
+    hass.states.async_set("light.kitchen_island", STATE_ON, {ATTR_BRIGHTNESS: 180})
+    lg._command_in_flight_until = 0.0
+    lg.last_update_from_entity = False
+    on_calls.clear()
+
+    # 2. User manually dims light.kitchen_main from 180 to 90 -> light.kitchen_island syncs to 90
+    hass.states.async_set("light.kitchen_main", STATE_ON, {ATTR_BRIGHTNESS: 90})
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.kitchen_main",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 180}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 90}
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(on_calls) == 1
+    assert on_calls[-1].data[ATTR_ENTITY_ID] == "light.simply_magic_areas_light_kitchen"
+    assert on_calls[-1].data[ATTR_BRIGHTNESS] == 90
+    assert lg._manual_brightness_override is True
+
+    # 3. If light.kitchen_island missed the dim command (still at 180), _get_unresponsive_lights catches it
+    assert lg._get_unresponsive_lights(STATE_ON) == ["light.kitchen_island"]
+    on_calls.clear()
+    lg._execute_actuator_retry()
+    await hass.async_block_till_done()
+    assert len(on_calls) == 1
+    assert on_calls[-1].data[ATTR_BRIGHTNESS] == 90
+
+    # Simulate both lights now synced at 90
+    hass.states.async_set("light.kitchen_island", STATE_ON, {ATTR_BRIGHTNESS: 90})
+    assert lg._get_unresponsive_lights(STATE_ON) == []
+    lg._command_in_flight_until = 0.0
+    lg.last_update_from_entity = False
+
+    # 4. User manually turns OFF light.kitchen_main -> light.kitchen_island also turns OFF
+    hass.states.async_set("light.kitchen_main", STATE_OFF)
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.kitchen_main",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 90}
+                ),
+                "new_state": MagicMock(state=STATE_OFF, attributes={}),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(off_calls) == 1
+    assert (
+        off_calls[-1].data[ATTR_ENTITY_ID] == "light.simply_magic_areas_light_kitchen"
+    )
+    lg._cancel_retry_timer()
+
+    # 5. Verify sync is strictly scoped to a single room (never across rooms, house groups, or meta-areas)
+    hass.states.async_set(
+        "light.all_house_lights",
+        STATE_OFF,
+        {ATTR_ENTITY_ID: ["light.kitchen_main", "light.bedroom_main"]},
+    )
+    hass.states.async_set("light.bedroom_main", STATE_OFF)
+    lg._all_lights = [
+        "light.kitchen_main",
+        "light.kitchen_island",
+        "light.all_house_lights",
+        "light.simply_magic_areas_light_bedroom",
+    ]
+    assert lg._get_local_room_lights() == [
+        "light.kitchen_main",
+        "light.kitchen_island",
+    ]
+
+    # Meta-area never syncs across rooms
+    area.is_meta.return_value = True
+    assert lg._get_local_room_lights() == []
+
+
+
+

@@ -102,6 +102,7 @@ For areas classified as `type: exterior` (Driveways, Patios, Porches, Gardens, a
 - **Gentle 50% Warning Dim in Extended Mode (`extended_warning_dim: 50`)**: When an occupied room enters `extended` mode, active lights gently dim to 50% of their active profile brightness as a visual warning before turning completely OFF at `clear`.
 - **All-Away Departure Sweep (`all_away_sweep: true`)**: When all tracked `person.*` entities leave home, any forgotten lights or lingering `manual_control` overrides in unoccupied or sensorless interior rooms are automatically turned OFF.
 - **Sustained Activity Wake-Up in Living Areas (`sleep_wakeup_delay: 300s`)**: If a living area (`kitchen`, `office`, `living_room`, `study`, `dining_room`, `family_room`) remains continuously occupied for 5 minutes while `sleep` mode is active, its lights automatically promote from `sleep` dim (`30%`) to `standard` (`100%`) without disturbing bedrooms.
+- **Multi-Light Room Manual Synchronization**: In rooms with multiple lights, manually turning any individual switch ON, OFF, or dimming it automatically synchronizes all other lights in the room to the exact same ON/OFF state and dim level, verified by sliding backoff retries.
 
 ---
 

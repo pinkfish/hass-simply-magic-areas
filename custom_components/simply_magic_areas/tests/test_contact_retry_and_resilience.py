@@ -332,22 +332,28 @@ async def test_light_zwave_delayed_report_and_extended_reentry_and_sliding_backo
 
     light_group._cancel_retry_timer()
 
-    # 2. Test manual override holds across EXTENDED -> OCCUPIED until CLEAR, then CLEAR -> OCCUPIED resets it
+    # 2. Test manual-off override clears immediately when entering EXTENDED (unoccupied) and turns back ON when OCCUPIED
     light_group._set_controlled_by_this_entity(False)
     light_group._attr_is_on = False
     state_sensor_id = "sensor.simply_magic_areas_state_kitchen"
     hass.states.async_set(state_sensor_id, AreaState.AREA_STATE_EXTENDED)
     await hass.async_block_till_done()
+    assert light_group._is_controlled_by_this_entity() is True
 
     turn_on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
     hass.states.async_set(state_sensor_id, AreaState.AREA_STATE_OCCUPIED)
     await hass.async_block_till_done()
-    assert light_group._is_controlled_by_this_entity() is False
-    assert len(turn_on_calls) == 0
+    assert light_group._is_controlled_by_this_entity() is True
+    assert len(turn_on_calls) >= 1
+    light_group._cancel_retry_timer()
 
-    # Once area clears and re-enters OCCUPIED, manual override resets and turns light ON
+    # Also verify manual-off -> CLEAR -> OCCUPIED resets and turns light ON
+    turn_on_calls.clear()
+    light_group._set_controlled_by_this_entity(False)
+    light_group._attr_is_on = False
     hass.states.async_set(state_sensor_id, AreaState.AREA_STATE_CLEAR)
     await hass.async_block_till_done()
+    assert light_group._is_controlled_by_this_entity() is True
     hass.states.async_set(state_sensor_id, AreaState.AREA_STATE_OCCUPIED)
     await hass.async_block_till_done()
 
@@ -1761,6 +1767,72 @@ async def test_manual_light_changes_synchronize_all_room_lights_and_dim_level(
     # Meta-area never syncs across rooms
     area.is_meta.return_value = True
     assert lg._get_local_room_lights() == []
+
+
+async def test_manual_light_turn_off_clears_quickly_on_unoccupied_and_turns_back_on_when_occupied(
+    hass: HomeAssistant,
+) -> None:
+    """Test manual light turn-off shortens unoccupied clear timeout, clears manual_control on unoccupied, and turns back on when occupied."""
+    from unittest.mock import MagicMock
+
+    from ..base.area_state_sensor import AreaStateSensor
+    from ..const import CONF_CLEAR_TIMEOUT, DEFAULT_MANUAL_OFF_CLEAR_TIMEOUT
+
+    area = MagicMock()
+    area.hass = hass
+    area.name = "Kitchen"
+    area.slug = "kitchen"
+    area.id = "kitchen"
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    area.lighting_profile = LightingProfile.STANDARD
+    area.is_meta.return_value = False
+    area.is_exterior.return_value = False
+    area.is_interior.return_value = True
+    area.is_control_enabled.return_value = True
+    area.config = {CONF_CLEAR_TIMEOUT: 360}
+    area.feature_config.return_value = {}
+    area.entities = {
+        LIGHT_DOMAIN: [{"entity_id": "light.kitchen_main"}],
+        BINARY_SENSOR_DOMAIN: [],
+    }
+    area.all_state_configs.return_value = {}
+    area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: f"{domain}.simply_magic_areas_{name}_{area_name or 'kitchen'}"
+    )
+
+    sensor = AreaStateSensor(area)
+    sensor.hass = hass
+    sensor.entity_id = "sensor.simply_magic_areas_state_kitchen"
+    sensor.schedule_update_ha_state = MagicMock()
+
+    # Normally clear_timeout is 360s
+    assert sensor._get_effective_clear_timeout() == 360
+
+    # When light is manually turned OFF, effective clear_timeout drops to DEFAULT_MANUAL_OFF_CLEAR_TIMEOUT (10s)
+    hass.states.async_set(
+        "light.simply_magic_areas_light_kitchen",
+        STATE_OFF,
+        {ATTR_MANUAL_CONTROL: True},
+    )
+    assert sensor._get_effective_clear_timeout() == DEFAULT_MANUAL_OFF_CLEAR_TIMEOUT
+
+    # Also test AreaLightGroup manual-off clearing quickly when space is already unoccupied (EXTENDED/CLEAR)
+    area.state = AreaState.AREA_STATE_EXTENDED
+    hass.states.async_set("light.kitchen_main", STATE_OFF)
+    lg = AreaLightGroup(area, ["light.kitchen_main"])
+    lg.hass = hass
+    lg._attr_name = "Kitchen Lights"
+    lg.entity_id = "light.simply_magic_areas_light_kitchen"
+    lg.schedule_update_ha_state = MagicMock()
+    lg._set_controlled_by_this_entity(False)
+    lg._attr_is_on = False
+
+    lg._schedule_manual_off_unoccupied_clear_if_needed()
+    assert lg._manual_off_unoccupied_timer_cb is not None
+    lg._manual_off_unoccupied_timer_expired()
+    assert lg._is_controlled_by_this_entity() is True
+    assert lg.extra_state_attributes.get(ATTR_MANUAL_CONTROL) is None
+
 
 
 

@@ -5,6 +5,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
+from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.sensor import (
     DOMAIN as SENSOR_DOMAIN,
 )
@@ -16,6 +17,7 @@ from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
+    STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
@@ -42,6 +44,7 @@ from ..const import (
     ATTR_LAST_ACTIVE_SENSORS,
     ATTR_LAST_OFF_TIME,
     ATTR_LIGHTING_PROFILE,
+    ATTR_MANUAL_CONTROL,
     ATTR_PRESENCE_SENSORS,
     ATTR_RADAR_FAN_OVERRIDE_SENSORS,
     ATTR_STATE,
@@ -74,6 +77,7 @@ from ..const import (
     DEFAULT_HUMIDITY_TREND_DOWN_CUT_OFF,
     DEFAULT_HUMIDITY_TREND_UP_CUT_OFF,
     DEFAULT_HUMIDITY_ZERO_WAIT_TIME,
+    DEFAULT_MANUAL_OFF_CLEAR_TIMEOUT,
     DEFAULT_MMWAVE_FAN_FILTER,
     DEFAULT_MQTT_ROOM_PRESENCE,
     DEFAULT_ON_STATES,
@@ -268,6 +272,20 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             )
         )
 
+        # Track area light group for fast unoccupied transition on manual turn-off
+        if not self.area.is_meta():
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass,
+                    [
+                        self.area.simply_magic_entity_id(
+                            LIGHT_DOMAIN, EntityNames.LIGHT
+                        )
+                    ],
+                    self._light_group_state_change,
+                )
+            )
+
         # Timed self update
         delta = timedelta(
             seconds=self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
@@ -417,7 +435,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             (datetime.now(UTC) - self._last_off_time).total_seconds()
         )
 
-        clear_timeout: int = self._get_clear_timeout()
+        clear_timeout: int = self._get_effective_clear_timeout()
         extended_timeout: int = self._get_extended_timeout() + clear_timeout
         if not occupied_state:
             # If a contact sensor edge-triggered or a sensor changed in extended mode,
@@ -447,11 +465,15 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 return AreaState.AREA_STATE_EXTENDED
 
             # If area was previously occupied: start or continue clear_timeout countdown
-            if (
-                not self._is_on_clear_timeout()
-                and seconds_since_last_change < clear_timeout
-            ):
-                self._set_clear_timeout(clear_timeout - seconds_since_last_change)
+            if seconds_since_last_change < clear_timeout:
+                remaining = clear_timeout - seconds_since_last_change
+                target_ts = self._attr_extra_state_attributes.get(ATTR_CLEAR_TIMEOUT_TS)
+                now_ts = datetime.now(UTC).timestamp()
+                if not self._is_on_clear_timeout() or (
+                    target_ts is not None
+                    and (float(target_ts) - now_ts) > remaining + 1
+                ):
+                    self._set_clear_timeout(remaining)
             if seconds_since_last_change >= clear_timeout:
                 if seconds_since_last_change >= extended_timeout:
                     self._remove_extended_timeout()
@@ -497,7 +519,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 "and no timeout scheduled. Scheduling clear timeout.",
                 self.area.name,
             )
-            clear_timeout = self._get_clear_timeout()
+            clear_timeout = self._get_effective_clear_timeout()
             seconds_since_off = int(
                 (datetime.now(UTC) - self._last_off_time).total_seconds()
             )
@@ -551,6 +573,18 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         )
         self.schedule_update_ha_state()
 
+    def _light_group_state_change(self, event: Event[EventStateChangedData]) -> None:
+        """Re-evaluate area state when light group enters manual-off so unoccupied clear timeout shortens."""
+        new_state = event.data.get("new_state")
+        if new_state is None or new_state.state in INVALID_STATES:
+            return
+        if (
+            new_state.state == STATE_OFF
+            and new_state.attributes.get(ATTR_MANUAL_CONTROL) is True
+            and self.area.state == AreaState.AREA_STATE_OCCUPIED
+        ):
+            self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
+
     def _group_entity_state_change(self, event: Event[EventStateChangedData]) -> None:
         if event.event_type != "state_changed":
             return
@@ -602,6 +636,27 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
     def _get_clear_timeout(self) -> int:
         return int(self.area.config.get(CONF_CLEAR_TIMEOUT, 60))
+
+    def _is_light_manually_off(self) -> bool:
+        """Return True if the area light group is currently OFF under manual override."""
+        if self.area.is_meta():
+            return False
+        light_entity_id = self.area.simply_magic_entity_id(
+            LIGHT_DOMAIN, EntityNames.LIGHT
+        )
+        light_state = self.hass.states.get(light_entity_id)
+        return bool(
+            light_state is not None
+            and light_state.state == STATE_OFF
+            and light_state.attributes.get(ATTR_MANUAL_CONTROL) is True
+        )
+
+    def _get_effective_clear_timeout(self) -> int:
+        """Return clear_timeout, shortened when the user manually turned off the room lights."""
+        base_timeout = self._get_clear_timeout()
+        if self._is_light_manually_off():
+            return min(base_timeout, DEFAULT_MANUAL_OFF_CLEAR_TIMEOUT)
+        return base_timeout
 
     def _set_clear_timeout(self, timeout: int) -> None:
         if self._clear_timeout_callback:

@@ -93,6 +93,7 @@ from .const import (
     DEFAULT_EXTERIOR_LIGHTING_TIMEOUT,
     DEFAULT_EXTERIOR_SUNSET_TRIGGER,
     DEFAULT_LEARN_LIGHTING_PREFERENCES,
+    DEFAULT_MANUAL_OFF_UNOCCUPIED_DELAY,
     DEFAULT_MANUAL_TIMEOUT,
     DEFAULT_MAX_BRIGHTNESS_LEVEL,
     DEFAULT_MIN_BRIGHTNESS_LEVEL,
@@ -240,6 +241,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         delattr(self, "_attr_name")
         self._manual_timeout_cb: CALLBACK_TYPE | None = None
+        self._manual_off_unoccupied_timer_cb: CALLBACK_TYPE | None = None
         self._manual_brightness_override: bool = False
         self._attr_icon: str = "mdi:ceiling-light"
         self._last_turn_off_ts: float = 0.0
@@ -478,18 +480,33 @@ class AreaLightGroup(MagicEntity, LightGroup):
             from_state,
         )
 
-        occupied_states = {
+        active_occupied_states = {
             AreaState.AREA_STATE_OCCUPIED,
             AreaState.AREA_STATE_BRIGHT,
             AreaState.AREA_STATE_SLEEP,
             AreaState.AREA_STATE_ACCENTED,
-            AreaState.AREA_STATE_EXTENDED,
         }
+        occupied_states = active_occupied_states | {AreaState.AREA_STATE_EXTENDED}
+
+        is_manually_off = (
+            not self._is_controlled_by_this_entity() and not self.is_on
+        )
+        reentered_from_extended = (
+            from_state == AreaState.AREA_STATE_EXTENDED
+            and to_state in active_occupied_states
+        )
+        left_occupied_while_manually_off = (
+            is_manually_off
+            and to_state in (AreaState.AREA_STATE_EXTENDED, AreaState.AREA_STATE_CLEAR)
+        )
 
         was_occupied = from_state in occupied_states
         now_occupied = to_state in occupied_states
-        occupancy_changed = (was_occupied != now_occupied) or (
-            from_state == AreaState.AREA_STATE_MANUAL
+        occupancy_changed = (
+            (was_occupied != now_occupied)
+            or (from_state == AreaState.AREA_STATE_MANUAL)
+            or reentered_from_extended
+            or left_occupied_while_manually_off
         )
 
         if to_state == AreaState.AREA_STATE_MANUAL:
@@ -1159,8 +1176,11 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         if new_state.state == STATE_OFF:
             self._sync_room_lights(STATE_OFF, source_entity_id=self.entity_id)
+            self._schedule_manual_off_unoccupied_clear_if_needed()
             self.schedule_update_ha_state()
             return
+
+        self._cancel_manual_off_unoccupied_timer()
 
         # When a switch is manually turned ON in any room (sensor or sensorless),
         # still adjust the dim level if the room is in sleep/accented mode without changing ON/OFF state
@@ -1354,11 +1374,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 if self._manual_timeout_cb is not None:
                     self._manual_timeout_cb()
                     self._manual_timeout_cb = None
+                self._schedule_manual_off_unoccupied_clear_if_needed()
             self._sync_room_lights(STATE_OFF, source_entity_id=entity_id)
             self.schedule_update_ha_state()
             return
 
         # Member light turned ON manually
+        self._cancel_manual_off_unoccupied_timer()
         self._set_controlled_by_this_entity(False)
         if self._manual_timeout_cb is not None:
             self._manual_timeout_cb()
@@ -1962,11 +1984,49 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._attr_extra_state_attributes[ATTR_MANUAL_CONTROL] = True
 
     def _reset_control(self) -> None:
+        self._cancel_manual_off_unoccupied_timer()
         if self._manual_timeout_cb is not None:
             self._manual_timeout_cb()
             self._manual_timeout_cb = None
         self._set_controlled_by_this_entity(True)
         self.schedule_update_ha_state()
+
+    def _cancel_manual_off_unoccupied_timer(self) -> None:
+        """Cancel any pending unoccupied manual-off clear timer."""
+        if self._manual_off_unoccupied_timer_cb is not None:
+            self._manual_off_unoccupied_timer_cb()
+            self._manual_off_unoccupied_timer_cb = None
+
+    def _schedule_manual_off_unoccupied_clear_if_needed(self) -> None:
+        """Quickly clear manual-off status if the space is already marked unoccupied."""
+        self._cancel_manual_off_unoccupied_timer()
+        if self.area.state in (
+            AreaState.AREA_STATE_EXTENDED,
+            AreaState.AREA_STATE_CLEAR,
+        ):
+            self._manual_off_unoccupied_timer_cb = async_call_later(
+                self.hass,
+                DEFAULT_MANUAL_OFF_UNOCCUPIED_DELAY,
+                self._manual_off_unoccupied_timer_expired,
+            )
+
+    def _manual_off_unoccupied_timer_expired(
+        self, _now: datetime | None = None
+    ) -> None:
+        """Clear manual-off override once the brief unoccupied settle delay expires."""
+        self._manual_off_unoccupied_timer_cb = None
+        if (
+            not self._is_controlled_by_this_entity()
+            and not self.is_on
+            and self.area.state
+            in (AreaState.AREA_STATE_EXTENDED, AreaState.AREA_STATE_CLEAR)
+        ):
+            _LOGGER.info(
+                "%s: Space is unoccupied (%s) after manual turn-off; clearing manual override",
+                self.name,
+                self.area.state,
+            )
+            self._reset_control()
 
     #### Exterior Nighttime Lighting Control
     def _is_nighttime(self) -> bool:
@@ -2579,6 +2639,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._cancel_retry_timer()
         self._clear_arrival_prewarm()
         self._cancel_sleep_wakeup_timer()
+        self._cancel_manual_off_unoccupied_timer()
         if self._manual_timeout_cb is not None:
             self._manual_timeout_cb()
             self._manual_timeout_cb = None

@@ -116,3 +116,21 @@ Simply Magic Areas automatically provides a master automation switch for every a
   - Leaves physical control entirely in user hands without automation interference.
   - Perfect for parties, house cleaning, room painting, or maintenance.
 - **Restoring Automation**: Flipping the switch back to `on` instantly resumes automated state evaluation.
+
+---
+
+## 😴 Sleep Mode Control Switches (House, Bedrooms & Individual Suites)
+
+Simply Magic Areas automatically creates a dedicated Sleep Mode switch for every concrete room and meta-area so you can easily automate bedtime and wake-up routines from Zigbee/Z-Wave remote buttons, bedside scene controllers, or wall switch double-taps:
+
+**Entity ID**: `switch.simply_magic_areas_sleep_mode_<area>`
+
+### Key Switches for Button & Switch Automations
+- **Main House (`switch.simply_magic_areas_sleep_mode_interior` / `switch.simply_magic_areas_sleep_mode_global`)**: Toggles sleep mode across all main living areas (Kitchen, Living Room, Hallway, etc.) without affecting bedrooms.
+- **All Bedrooms (`switch.simply_magic_areas_sleep_mode_bedrooms`)**: Toggles sleep mode across all bedrooms and en-suite bathrooms without affecting the main house.
+- **Individual Bedroom or Suite (`switch.simply_magic_areas_sleep_mode_<bedroom_slug>`)**: Toggles sleep mode for a specific bedroom (and any tied `child_areas` en-suite rooms).
+
+### Behavior
+- **Switch ON**: Immediately transitions the area or meta-area lighting profile to `sleep`, automatically dims any lights that are currently `on` to `sleep_state_dim` (`30%` default), pre-stages smart wall switches to turn on at the night dim level, and suppresses bedroom overhead auto-on from tossing in bed.
+- **Switch OFF**: Unlatches both manual and automatic night sleep mode for that zone (and locally overrides parent `Bedrooms` meta-area sleep if turned off on a single bedroom) and restores normal `standard` / `bright` lighting.
+- **Automatic Sync**: The switch automatically turns `on` when automatic 10:00 PM night sleep mode activates, and automatically turns `off` when the morning routine or sunrise disables sleep mode.

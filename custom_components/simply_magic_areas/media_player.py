@@ -230,8 +230,12 @@ class AreaAwareMediaPlayer(MagicEntity, MediaPlayerEntity):
                 )
                 continue
 
-            # Ignore not occupied areas
-            if area_binary_sensor_state.state == AreaState.AREA_STATE_CLEAR:
+            # Ignore not occupied or manual areas
+            if (
+                area_binary_sensor_state.state
+                in (AreaState.AREA_STATE_CLEAR, AreaState.AREA_STATE_MANUAL)
+                or not area.is_control_enabled(ControlType.System)
+            ):
                 continue
 
             # Check notification states
@@ -332,6 +336,11 @@ class AreaMediaPlayerGroup(MagicEntity, MediaPlayerGroup):
             self._turn_off()
 
     def _turn_off(self) -> None:
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         call_service_non_blocking(
             self.hass, MEDIA_PLAYER_DOMAIN, SERVICE_TURN_OFF, service_data

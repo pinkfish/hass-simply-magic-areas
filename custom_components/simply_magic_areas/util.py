@@ -1,5 +1,6 @@
 """Utility details for the system."""
 
+import asyncio
 import inspect
 import logging
 import threading
@@ -82,11 +83,15 @@ def call_service_non_blocking(
     domain: str,
     service: str,
     service_data: dict[str, Any] | None = None,
-) -> None:
+) -> Any:
     """Safely dispatch a service call asynchronously without blocking the event loop or crashing on worker threads."""
-    coro = hass.services.async_call(domain, service, service_data)
+
+    async def _run() -> None:
+        await asyncio.sleep(0)
+        await hass.services.async_call(domain, service, service_data)
+
+    coro = _run()
     if hass.loop_thread_id == threading.get_ident():
-        hass.async_create_task(coro)
-    else:
-        hass.create_task(coro)
+        return hass.async_create_task(coro)
+    return hass.create_task(coro)
 

@@ -645,7 +645,8 @@ async def test_sensorless_room_lighting_profiles_and_night_dimming(
     assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == 255
     light_group._cancel_retry_timer()
 
-    # 5. Manual brightness override while ON is respected and prevents profile changes from overwriting brightness
+    # 5. Manual brightness override while ON is respected for non-sleep profile changes (BRIGHT -> STANDARD),
+    #    but entering SLEEP mode always auto-dims currently-ON lights to sleep_state_dim (25%)
     turn_on_calls.clear()
     light_group.last_update_from_entity = False
     light_group._command_in_flight_until = 0.0
@@ -663,13 +664,13 @@ async def test_sensorless_room_lighting_profiles_and_night_dimming(
     )
     assert light_group._is_controlled_by_this_entity() is False
 
-    # Profile change BRIGHT -> SLEEP while in manual brightness override is ignored
-    area.lighting_profile = LightingProfile.SLEEP
+    # Profile change BRIGHT -> STANDARD while in manual brightness override is ignored
+    area.lighting_profile = LightingProfile.STANDARD
     light_group._profile_change(
         MagicMock(
             data={
                 "old_state": MagicMock(state=LightingProfile.BRIGHT),
-                "new_state": MagicMock(state=LightingProfile.SLEEP),
+                "new_state": MagicMock(state=LightingProfile.STANDARD),
             }
         )
     )
@@ -677,12 +678,30 @@ async def test_sensorless_room_lighting_profiles_and_night_dimming(
     assert len(turn_on_calls) == 0
     assert len(turn_off_calls) == 0
 
+    # Entering SLEEP mode (STANDARD -> SLEEP) while light is currently ON always auto-dims to 25%
+    area.lighting_profile = LightingProfile.SLEEP
+    light_group._profile_change(
+        MagicMock(
+            data={
+                "old_state": MagicMock(state=LightingProfile.STANDARD),
+                "new_state": MagicMock(state=LightingProfile.SLEEP),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == int(25 * 255 / 100)
+    assert len(turn_off_calls) == 0
+    light_group._cancel_retry_timer()
+
     # Even direct _turn_off_light(force=True) never turns off a sensorless room's light
     light_group._turn_off_light(force=True)
     await hass.async_block_till_done()
     assert len(turn_off_calls) == 0
 
     # 6. Turning light OFF externally in a sensorless room resets manual_control so future profile changes work
+    light_group.last_update_from_entity = False
+    light_group._command_in_flight_until = 0.0
     light_group._update_group_state(
         MagicMock(
             data={
@@ -1599,10 +1618,9 @@ async def test_manual_light_changes_synchronize_all_room_lights_and_dim_level(
     """Verify manual ON, dim, and OFF changes on one light synchronize all lights in the room."""
     from unittest.mock import MagicMock
 
-    from homeassistant.const import SERVICE_TURN_OFF
 
     on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
-    off_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_OFF)
+    off_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
 
     hass.states.async_set("light.kitchen_main", STATE_OFF)
     hass.states.async_set("light.kitchen_island", STATE_OFF)
@@ -1832,6 +1850,1242 @@ async def test_manual_light_turn_off_clears_quickly_on_unoccupied_and_turns_back
     lg._manual_off_unoccupied_timer_expired()
     assert lg._is_controlled_by_this_entity() is True
     assert lg.extra_state_attributes.get(ATTR_MANUAL_CONTROL) is None
+
+
+async def test_house_occupancy_independent_of_bedrooms_and_ensuites(
+    hass: HomeAssistant,
+) -> None:
+    """Test that house occupancy (Interior/Global) tracks main areas independently of bedrooms and ensuites."""
+    from unittest.mock import MagicMock
+
+    from ..base.area_state_sensor import AreaStateSensor
+    from ..base.magic import MagicArea, MagicMetaArea
+    from ..const import (
+        AREA_TYPE_BEDROOM,
+        AREA_TYPE_INTERIOR,
+        AREA_TYPE_META,
+        CONF_ID,
+        CONF_NAME,
+        CONF_TYPE,
+        DATA_AREA_OBJECT,
+        META_AREA_GLOBAL,
+        META_AREA_INTERIOR,
+        MODULE_DATA,
+    )
+
+    def _make_area_stub(
+        name: str, slug: str, area_type: str, state: AreaState
+    ) -> MagicArea:
+        area = MagicArea.__new__(MagicArea)
+        area.hass = hass
+        area.name = name
+        area.slug = slug
+        area.id = slug
+        area.state = state
+        area.config = {CONF_NAME: name, CONF_ID: slug, CONF_TYPE: area_type}
+        area.entities = {
+            LIGHT_DOMAIN: [{ATTR_ENTITY_ID: f"light.{slug}"}],
+        }
+        area.initialized = True
+        return area
+
+    kitchen = _make_area_stub(
+        "Kitchen", "kitchen", AREA_TYPE_INTERIOR, AreaState.AREA_STATE_CLEAR
+    )
+    living_room = _make_area_stub(
+        "Living Room", "living_room", AREA_TYPE_INTERIOR, AreaState.AREA_STATE_CLEAR
+    )
+    master_bedroom = _make_area_stub(
+        "Master Bedroom",
+        "master_bedroom",
+        AREA_TYPE_BEDROOM,
+        AreaState.AREA_STATE_OCCUPIED,
+    )
+    ensuite = _make_area_stub(
+        "Master Ensuite", "master_ensuite", AREA_TYPE_INTERIOR, AreaState.AREA_STATE_OCCUPIED
+    )
+
+    assert kitchen.is_main_house_area() is True
+    assert living_room.is_main_house_area() is True
+    assert master_bedroom.is_bedroom_or_ensuite() is True
+    assert master_bedroom.is_main_house_area() is False
+    assert ensuite.is_bedroom_or_ensuite() is True
+    assert ensuite.is_main_house_area() is False
+
+    hass.data[MODULE_DATA] = {
+        "entry_kitchen": {DATA_AREA_OBJECT: kitchen},
+        "entry_living": {DATA_AREA_OBJECT: living_room},
+        "entry_bedroom": {DATA_AREA_OBJECT: master_bedroom},
+        "entry_ensuite": {DATA_AREA_OBJECT: ensuite},
+    }
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_kitchen", AreaState.AREA_STATE_CLEAR
+    )
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_living_room", AreaState.AREA_STATE_CLEAR
+    )
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_master_bedroom", AreaState.AREA_STATE_OCCUPIED
+    )
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_master_ensuite", AreaState.AREA_STATE_OCCUPIED
+    )
+    hass.states.async_set("light.master_bedroom", STATE_ON)
+    hass.states.async_set("light.master_ensuite", STATE_ON)
+
+    interior_meta = MagicMetaArea.__new__(MagicMetaArea)
+    interior_meta.hass = hass
+    interior_meta.name = META_AREA_INTERIOR
+    interior_meta.slug = "interior"
+    interior_meta.id = "interior"
+    interior_meta.state = AreaState.AREA_STATE_CLEAR
+    interior_meta.config = {
+        CONF_NAME: META_AREA_INTERIOR,
+        CONF_ID: "interior",
+        CONF_TYPE: AREA_TYPE_META,
+    }
+    interior_meta.entities = {}
+    interior_meta.initialized = True
+
+    global_meta = MagicMetaArea.__new__(MagicMetaArea)
+    global_meta.hass = hass
+    global_meta.name = META_AREA_GLOBAL
+    global_meta.slug = "global"
+    global_meta.id = "global"
+    global_meta.state = AreaState.AREA_STATE_CLEAR
+    global_meta.config = {
+        CONF_NAME: META_AREA_GLOBAL,
+        CONF_ID: "global",
+        CONF_TYPE: AREA_TYPE_META,
+    }
+    global_meta.entities = {}
+    global_meta.initialized = True
+
+    # Interior and Global meta-areas only include main house areas (kitchen, living_room),
+    # excluding master_bedroom and master_ensuite.
+    assert set(interior_meta.get_child_areas()) == {"kitchen", "living_room"}
+    assert set(global_meta.get_child_areas()) == {"kitchen", "living_room"}
+    assert interior_meta.get_active_areas() == []
+    assert global_meta.get_active_areas() == []
+
+    # Even with movement/occupancy in master_bedroom and master_ensuite, house state sensor is CLEAR
+    interior_sensor = AreaStateSensor(interior_meta)
+    interior_sensor.hass = hass
+    interior_sensor.entity_id = "sensor.simply_magic_areas_state_interior"
+    interior_sensor.schedule_update_ha_state = MagicMock()
+    interior_sensor._load_presence_sensors()
+    assert interior_sensor.get_current_area_state() == AreaState.AREA_STATE_CLEAR
+
+    # When movement occurs in the Kitchen (main area), the house becomes OCCUPIED
+    kitchen.state = AreaState.AREA_STATE_OCCUPIED
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_kitchen", AreaState.AREA_STATE_OCCUPIED
+    )
+    assert interior_meta.get_active_areas() == ["kitchen"]
+    assert interior_sensor.get_current_area_state() == AreaState.AREA_STATE_OCCUPIED
+
+
+async def test_bedroom_meta_area_ties_multiple_rooms_and_unoccupied_when_lights_off(
+    hass: HomeAssistant,
+) -> None:
+    """Test that a bedroom meta-area ties multiple rooms together and becomes unoccupied when all lights are off."""
+    from unittest.mock import MagicMock
+
+    from ..base.area_state_sensor import AreaStateSensor
+    from ..base.magic import MagicArea, MagicMetaArea
+    from ..const import (
+        AREA_TYPE_BEDROOM,
+        AREA_TYPE_INTERIOR,
+        AREA_TYPE_META,
+        CONF_CHILD_AREAS,
+        CONF_ID,
+        CONF_NAME,
+        CONF_TYPE,
+        DATA_AREA_OBJECT,
+        META_AREA_BEDROOMS,
+        MODULE_DATA,
+    )
+
+    master_bedroom = MagicArea.__new__(MagicArea)
+    master_bedroom.hass = hass
+    master_bedroom.name = "Master Bedroom"
+    master_bedroom.slug = "master_bedroom"
+    master_bedroom.id = "master_bedroom"
+    master_bedroom.state = AreaState.AREA_STATE_OCCUPIED
+    master_bedroom.config = {
+        CONF_NAME: "Master Bedroom",
+        CONF_ID: "master_bedroom",
+        CONF_TYPE: AREA_TYPE_BEDROOM,
+    }
+    master_bedroom.entities = {
+        LIGHT_DOMAIN: [{ATTR_ENTITY_ID: "light.master_bedroom_ceiling"}],
+    }
+    master_bedroom.initialized = True
+
+    ensuite = MagicArea.__new__(MagicArea)
+    ensuite.hass = hass
+    ensuite.name = "Ensuite"
+    ensuite.slug = "ensuite"
+    ensuite.id = "ensuite"
+    ensuite.state = AreaState.AREA_STATE_OCCUPIED
+    ensuite.config = {
+        CONF_NAME: "Ensuite",
+        CONF_ID: "ensuite",
+        CONF_TYPE: AREA_TYPE_INTERIOR,
+    }
+    ensuite.entities = {
+        LIGHT_DOMAIN: [{ATTR_ENTITY_ID: "light.ensuite_vanity"}],
+    }
+    ensuite.initialized = True
+
+    hass.data[MODULE_DATA] = {
+        "entry_bedroom": {DATA_AREA_OBJECT: master_bedroom},
+        "entry_ensuite": {DATA_AREA_OBJECT: ensuite},
+    }
+
+    bedrooms_meta = MagicMetaArea.__new__(MagicMetaArea)
+    bedrooms_meta.hass = hass
+    bedrooms_meta.name = META_AREA_BEDROOMS
+    bedrooms_meta.slug = "bedrooms"
+    bedrooms_meta.id = "bedrooms"
+    bedrooms_meta.state = AreaState.AREA_STATE_OCCUPIED
+    bedrooms_meta.config = {
+        CONF_NAME: META_AREA_BEDROOMS,
+        CONF_ID: "bedrooms",
+        CONF_TYPE: AREA_TYPE_META,
+        CONF_CHILD_AREAS: ["master_bedroom", "ensuite"],
+    }
+    bedrooms_meta.entities = {
+        LIGHT_DOMAIN: [
+            {ATTR_ENTITY_ID: "light.master_bedroom_ceiling"},
+            {ATTR_ENTITY_ID: "light.ensuite_vanity"},
+        ]
+    }
+    bedrooms_meta.initialized = True
+
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_master_bedroom", AreaState.AREA_STATE_OCCUPIED
+    )
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_ensuite", AreaState.AREA_STATE_OCCUPIED
+    )
+    hass.states.async_set("light.master_bedroom_ceiling", STATE_ON)
+    hass.states.async_set("light.ensuite_vanity", STATE_OFF)
+
+    bedroom_sensor = AreaStateSensor(bedrooms_meta)
+    bedroom_sensor.hass = hass
+    bedroom_sensor.entity_id = "sensor.simply_magic_areas_state_bedrooms"
+    bedroom_sensor.schedule_update_ha_state = MagicMock()
+    bedroom_sensor._load_presence_sensors()
+
+    # While at least one light in the tied bedroom rooms is ON, the bedroom meta-area is OCCUPIED
+    assert set(bedrooms_meta.get_child_areas()) == {"master_bedroom", "ensuite"}
+    assert set(bedrooms_meta.get_active_areas()) == {"master_bedroom", "ensuite"}
+    assert bedroom_sensor.get_current_area_state() == AreaState.AREA_STATE_OCCUPIED
+
+    # When all lights across the tied bedroom rooms turn OFF, the bedroom meta-area is immediately UNOCCUPIED (CLEAR)
+    hass.states.async_set("light.master_bedroom_ceiling", STATE_OFF)
+    hass.states.async_set("light.ensuite_vanity", STATE_OFF)
+    assert bedrooms_meta.get_active_areas() == []
+    assert bedroom_sensor.get_current_area_state() == AreaState.AREA_STATE_CLEAR
+
+
+async def test_auto_sleep_mode_after_10pm_when_house_or_room_unoccupied(
+    hass: HomeAssistant,
+) -> None:
+    """Test that Sleep mode triggers when the house or room is unoccupied at night after 10pm and dims lights on re-entry."""
+    from unittest.mock import MagicMock
+
+    from ..base.area_lighting_profile_sensor import AreaLightingProfileSensor
+
+    hass.states.async_set(
+        "sun.sun", "below_horizon", {"elevation": -15.0, "local_hour": 20}
+    )
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_interior", AreaState.AREA_STATE_OCCUPIED
+    )
+
+    area = MagicMock()
+    area.hass = hass
+    area.name = "Hallway"
+    area.slug = "hallway"
+    area.id = "hallway"
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    area.lighting_profile = LightingProfile.STANDARD
+    area.is_meta.return_value = False
+    area.is_exterior.return_value = False
+    area.is_bedroom_or_ensuite.return_value = False
+    area.is_bedroom_meta.return_value = False
+    area.is_main_house_area.return_value = True
+    area.is_control_enabled.return_value = True
+    area.config = {}
+    area.feature_config.return_value = {"sleep_state_dim": 25, "occupied_state_dim": 100}
+    area.all_state_configs.return_value = {}
+    area.get_parent_meta_areas.return_value = []
+    area.get_effective_illuminance.return_value = 0.0
+    area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: f"{domain}.simply_magic_areas_{name}_{area_name or 'hallway'}"
+    )
+
+    profile_sensor = AreaLightingProfileSensor(area)
+    profile_sensor.hass = hass
+    profile_sensor.entity_id = "sensor.simply_magic_areas_lighting_profile_hallway"
+    profile_sensor.schedule_update_ha_state = MagicMock()
+
+    # 1. At 8:00 PM (20:00), even if unoccupied, profile is STANDARD (not after 10pm yet)
+    area.state = AreaState.AREA_STATE_CLEAR
+    assert profile_sensor._calculate_lighting_profile() == LightingProfile.STANDARD
+
+    # 2. At 10:00 PM (22:00) while room and house are OCCUPIED, profile remains STANDARD
+    hass.states.async_set(
+        "sun.sun", "below_horizon", {"elevation": -25.0, "local_hour": 22}
+    )
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_hallway", AreaState.AREA_STATE_OCCUPIED
+    )
+    assert profile_sensor._calculate_lighting_profile() == LightingProfile.STANDARD
+
+    # 3. At 10:00 PM (22:00) when the room or house becomes UNOCCUPIED (CLEAR), Sleep mode triggers!
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_interior", AreaState.AREA_STATE_CLEAR
+    )
+    assert profile_sensor._calculate_lighting_profile() == LightingProfile.SLEEP
+    area.lighting_profile = LightingProfile.SLEEP
+
+    # 4. When someone walks into the room at 11:00 PM (23:00), Sleep mode stays latched and resolves to sleep_state_dim (25%)
+    hass.states.async_set(
+        "sun.sun", "below_horizon", {"elevation": -30.0, "local_hour": 23}
+    )
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_hallway", AreaState.AREA_STATE_OCCUPIED
+    )
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_interior", AreaState.AREA_STATE_OCCUPIED
+    )
+    assert profile_sensor._calculate_lighting_profile() == LightingProfile.SLEEP
+
+    area.has_configured_presence_sensors.return_value = True
+    area.has_configured_state.side_effect = (
+        lambda st: st == AreaState.AREA_STATE_OCCUPIED
+    )
+    area.state_config.side_effect = lambda st: (
+        StateConfigData(
+            name="occupied",
+            entity=None,
+            entity_state_on=STATE_ON,
+            dim_level=100,
+            for_state=AreaState.AREA_STATE_OCCUPIED,
+            icon="mdi:lightbulb",
+            control_entity="switch.simply_magic_areas_light_control_hallway",
+            lights=["light.hallway_main"],
+        )
+        if st == AreaState.AREA_STATE_OCCUPIED
+        else None
+    )
+    area.entities = {LIGHT_DOMAIN: [{ATTR_ENTITY_ID: "light.hallway_main"}]}
+    lg = AreaLightGroup(area, ["light.hallway_main"])
+    lg.hass = hass
+    active_conf = lg._get_active_profile_config()
+    assert active_conf is not None
+    assert active_conf.dim_level == 25
+
+    # 5. In the morning (08:00, above_horizon), Sleep mode resets back to STANDARD
+    hass.states.async_set(
+        "sun.sun", "above_horizon", {"elevation": 15.0, "local_hour": 8}
+    )
+    assert profile_sensor._calculate_lighting_profile() == LightingProfile.STANDARD
+
+    # 6. In a BEDROOM, Sleep mode after 10pm is ONLY set after the bedroom light is turned ON and then OFF
+    hass.states.async_set(
+        "sun.sun", "below_horizon", {"elevation": -25.0, "local_hour": 22}
+    )
+    bed_area = MagicMock()
+    bed_area.hass = hass
+    bed_area.name = "Master Bedroom"
+    bed_area.slug = "master_bedroom"
+    bed_area.id = "master_bedroom"
+    bed_area.state = AreaState.AREA_STATE_CLEAR
+    bed_area.lighting_profile = LightingProfile.STANDARD
+    bed_area.is_meta.return_value = False
+    bed_area.is_exterior.return_value = False
+    bed_area.is_bedroom_or_ensuite.return_value = True
+    bed_area.is_bedroom_meta.return_value = False
+    bed_area.is_main_house_area.return_value = False
+    bed_area.is_control_enabled.return_value = True
+    bed_area.config = {}
+    bed_area.feature_config.return_value = {"sleep_state_dim": 20}
+    bed_area.all_state_configs.return_value = {}
+    bed_area.get_parent_meta_areas.return_value = []
+    bed_area.get_effective_illuminance.return_value = 0.0
+    bed_area.entities = {LIGHT_DOMAIN: [{ATTR_ENTITY_ID: "light.master_bedroom_main"}]}
+    bed_area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: f"{domain}.simply_magic_areas_{name}_{area_name or 'master_bedroom'}"
+    )
+
+    hass.states.async_set("light.master_bedroom_main", STATE_OFF)
+    hass.states.async_set(
+        "light.simply_magic_areas_light_master_bedroom", STATE_OFF
+    )
+
+    bed_profile_sensor = AreaLightingProfileSensor(bed_area)
+    bed_profile_sensor.hass = hass
+    bed_profile_sensor.entity_id = (
+        "sensor.simply_magic_areas_lighting_profile_master_bedroom"
+    )
+    bed_profile_sensor.schedule_update_ha_state = MagicMock()
+
+    # At 10:00 PM when bedroom light has NOT been turned ON yet, bedroom remains STANDARD (not SLEEP)
+    assert bed_profile_sensor._calculate_lighting_profile() == LightingProfile.STANDARD
+
+    # Occupant enters bedroom and turns the light ON -> still STANDARD
+    hass.states.async_set("light.master_bedroom_main", STATE_ON)
+    hass.states.async_set(
+        "light.simply_magic_areas_light_master_bedroom", STATE_ON
+    )
+    assert bed_profile_sensor._calculate_lighting_profile() == LightingProfile.STANDARD
+
+    # Occupant gets in bed and turns the bedroom light OFF -> now SLEEP mode is set!
+    hass.states.async_set("light.master_bedroom_main", STATE_OFF)
+    hass.states.async_set(
+        "light.simply_magic_areas_light_master_bedroom", STATE_OFF
+    )
+    assert bed_profile_sensor._calculate_lighting_profile() == LightingProfile.SLEEP
+
+    # Morning routine disables sleep mode immediately even before 7am
+    bed_profile_sensor.disable_morning_sleep()
+    assert bed_profile_sensor._calculate_lighting_profile() == LightingProfile.STANDARD
+
+
+async def test_manual_sleep_mode_switches_and_flags_for_house_and_bedrooms(
+    hass: HomeAssistant,
+) -> None:
+    """Test manual sleep mode switches/flags for the house (Interior/Global) and bedrooms/bedroom areas independently."""
+    from unittest.mock import MagicMock
+
+    from ..base.area_lighting_profile_sensor import AreaLightingProfileSensor
+    from ..base.magic import MagicArea, MagicMetaArea
+    from ..const import (
+        AREA_TYPE_BEDROOM,
+        AREA_TYPE_INTERIOR,
+        AREA_TYPE_META,
+        CONF_CHILD_AREAS,
+        CONF_ID,
+        CONF_NAME,
+        CONF_TYPE,
+        DATA_AREA_OBJECT,
+        META_AREA_BEDROOMS,
+        META_AREA_INTERIOR,
+        MODULE_DATA,
+    )
+    from ..switch import AreaSleepModeSwitch
+
+    def _build_area(
+        name: str,
+        slug: str,
+        area_type: str,
+        is_meta: bool = False,
+        extra_conf: dict | None = None,
+    ) -> MagicArea:
+        cls = MagicMetaArea if is_meta else MagicArea
+        area = cls.__new__(cls)
+        area.hass = hass
+        area.name = name
+        area.slug = slug
+        area.id = slug
+        area.icon = "mdi:room"
+        area.state = AreaState.AREA_STATE_OCCUPIED
+        area.lighting_profile = LightingProfile.STANDARD
+        area.sleep_mode_enabled = False
+        area.config = {
+            CONF_NAME: name,
+            CONF_ID: slug,
+            CONF_TYPE: area_type,
+            **(extra_conf or {}),
+        }
+        area.entities = {LIGHT_DOMAIN: [{ATTR_ENTITY_ID: f"light.{slug}"}]}
+        area._state_config = {}
+        area.initialized = True
+        return area
+
+    living_room = _build_area("Living Room", "living_room", AREA_TYPE_INTERIOR)
+    kitchen = _build_area("Kitchen", "kitchen", AREA_TYPE_INTERIOR)
+    master_bedroom = _build_area(
+        "Master Bedroom",
+        "master_bedroom",
+        AREA_TYPE_BEDROOM,
+        extra_conf={CONF_CHILD_AREAS: ["master_bedroom", "master_ensuite"]},
+    )
+    master_ensuite = _build_area(
+        "Master Ensuite", "master_ensuite", AREA_TYPE_INTERIOR
+    )
+    guest_bedroom = _build_area(
+        "Guest Bedroom", "guest_bedroom", AREA_TYPE_BEDROOM
+    )
+    interior_meta = _build_area(
+        META_AREA_INTERIOR, "interior", AREA_TYPE_META, is_meta=True
+    )
+    bedrooms_meta = _build_area(
+        META_AREA_BEDROOMS, "bedrooms", AREA_TYPE_META, is_meta=True
+    )
+
+    hass.data[MODULE_DATA] = {
+        "entry_living": {DATA_AREA_OBJECT: living_room},
+        "entry_kitchen": {DATA_AREA_OBJECT: kitchen},
+        "entry_master": {DATA_AREA_OBJECT: master_bedroom},
+        "entry_ensuite": {DATA_AREA_OBJECT: master_ensuite},
+        "entry_guest": {DATA_AREA_OBJECT: guest_bedroom},
+        "entry_interior": {DATA_AREA_OBJECT: interior_meta},
+        "entry_bedrooms": {DATA_AREA_OBJECT: bedrooms_meta},
+    }
+
+    sensors: dict[str, AreaLightingProfileSensor] = {}
+    switches: dict[str, AreaSleepModeSwitch] = {}
+    for area_obj in (
+        living_room,
+        kitchen,
+        master_bedroom,
+        master_ensuite,
+        guest_bedroom,
+        interior_meta,
+        bedrooms_meta,
+    ):
+        sw = AreaSleepModeSwitch(area_obj)
+        sw.hass = hass
+        sw.entity_id = f"switch.simply_magic_areas_sleep_mode_{area_obj.slug}"
+        sw.schedule_update_ha_state = MagicMock(
+            side_effect=lambda s=sw: hass.states.async_set(
+                s.entity_id, STATE_ON if s.is_on else STATE_OFF
+            )
+        )
+        area_obj._sleep_mode_switch = sw  # type: ignore[attr-defined]
+        hass.states.async_set(sw.entity_id, STATE_OFF)
+        switches[area_obj.slug] = sw
+
+        ps = AreaLightingProfileSensor(area_obj)
+        ps.hass = hass
+        ps.entity_id = (
+            f"sensor.simply_magic_areas_lighting_profile_{area_obj.slug}"
+        )
+        ps.schedule_update_ha_state = MagicMock(
+            side_effect=lambda p=ps: hass.states.async_set(
+                p.entity_id, p.native_value, p.extra_state_attributes
+            )
+        )
+        area_obj._lighting_profile_sensor = ps  # type: ignore[attr-defined]
+        await ps._setup_listeners()
+        sensors[area_obj.slug] = ps
+
+    # 1. Turn ON House Sleep Mode via switch.simply_magic_areas_sleep_mode_interior (e.g. from a remote button)
+    await switches["interior"].async_turn_on()
+    await hass.async_block_till_done()
+
+    assert interior_meta.lighting_profile == LightingProfile.SLEEP
+    assert living_room.lighting_profile == LightingProfile.SLEEP
+    assert kitchen.lighting_profile == LightingProfile.SLEEP
+    # Bedrooms remain independent (STANDARD) when house sleep mode is turned ON
+    assert master_bedroom.lighting_profile == LightingProfile.STANDARD
+    assert master_ensuite.lighting_profile == LightingProfile.STANDARD
+    assert guest_bedroom.lighting_profile == LightingProfile.STANDARD
+
+    # 2. Turn OFF House Sleep Mode -> Living Room and Kitchen return to STANDARD
+    await switches["interior"].async_turn_off()
+    await hass.async_block_till_done()
+
+    assert interior_meta.lighting_profile == LightingProfile.STANDARD
+    assert living_room.lighting_profile == LightingProfile.STANDARD
+    assert kitchen.lighting_profile == LightingProfile.STANDARD
+
+    # 3. Turn ON Master Bedroom Sleep Mode via switch.simply_magic_areas_sleep_mode_master_bedroom
+    # Master Bedroom and its tied child room (Master Ensuite) enter SLEEP mode; Guest Bedroom & House stay STANDARD
+    await switches["master_bedroom"].async_turn_on()
+    await hass.async_block_till_done()
+
+    assert master_bedroom.lighting_profile == LightingProfile.SLEEP
+    assert master_ensuite.lighting_profile == LightingProfile.SLEEP
+    assert guest_bedroom.lighting_profile == LightingProfile.STANDARD
+    assert living_room.lighting_profile == LightingProfile.STANDARD
+
+    # Turn OFF Master Bedroom Sleep Mode -> Master Bedroom and Master Ensuite return to STANDARD
+    await switches["master_bedroom"].async_turn_off()
+    await hass.async_block_till_done()
+
+    assert master_bedroom.lighting_profile == LightingProfile.STANDARD
+    assert master_ensuite.lighting_profile == LightingProfile.STANDARD
+
+    # 4. Turn ON Bedrooms Meta-Area Sleep Mode via switch.simply_magic_areas_sleep_mode_bedrooms
+    # All bedrooms & ensuites enter SLEEP mode while main house stays STANDARD
+    await switches["bedrooms"].async_turn_on()
+    await hass.async_block_till_done()
+
+    assert bedrooms_meta.lighting_profile == LightingProfile.SLEEP
+    assert master_bedroom.lighting_profile == LightingProfile.SLEEP
+    assert master_ensuite.lighting_profile == LightingProfile.SLEEP
+    assert guest_bedroom.lighting_profile == LightingProfile.SLEEP
+    assert living_room.lighting_profile == LightingProfile.STANDARD
+    assert kitchen.lighting_profile == LightingProfile.STANDARD
+
+    # 5. Morning routine disables manual sleep mode and resets the sleep mode switches to OFF
+    sensors["master_bedroom"].disable_morning_sleep()
+    assert master_bedroom.lighting_profile == LightingProfile.STANDARD
+    assert switches["master_bedroom"].is_on is False
+
+
+async def test_no_light_flashing_or_flip_flop_on_sync_dimmer_ramp_and_lux_feedback(
+    hass: HomeAssistant,
+) -> None:
+    """Verify lights commit to a single value and never flash/flip-flop across multi-light sync, dimmer ramps, manual-off extended transitions, or self-illuminated lux spikes."""
+    from unittest.mock import MagicMock
+
+    from ..base.area_lighting_profile_sensor import AreaLightingProfileSensor
+
+    on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
+    off_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
+
+    hass.states.async_set("light.room_light_1", STATE_ON, {ATTR_BRIGHTNESS: 255})
+    hass.states.async_set("light.room_light_2", STATE_ON, {ATTR_BRIGHTNESS: 255})
+
+    area = MagicMock()
+    area.hass = hass
+    area.name = "Family Room"
+    area.slug = "family_room"
+    area.id = "family_room"
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    area.lighting_profile = LightingProfile.STANDARD
+    area.is_meta.return_value = False
+    area.is_exterior.return_value = False
+    area.is_interior.return_value = True
+    area.is_bedroom_or_ensuite.return_value = False
+    area.is_bedroom_meta.return_value = False
+    area.is_main_house_area.return_value = True
+    area.is_control_enabled.return_value = True
+    area.has_configured_presence_sensors.return_value = True
+    area.has_configured_state.return_value = True
+    area.config = {}
+    area.feature_config.return_value = {}
+    area.entities = {
+        LIGHT_DOMAIN: [
+            {ATTR_ENTITY_ID: "light.room_light_1"},
+            {ATTR_ENTITY_ID: "light.room_light_2"},
+        ],
+        BINARY_SENSOR_DOMAIN: [
+            {
+                ATTR_ENTITY_ID: "binary_sensor.family_room_motion",
+                ATTR_DEVICE_CLASS: BinarySensorDeviceClass.MOTION,
+            }
+        ],
+    }
+    area.state_config.side_effect = lambda st: (
+        StateConfigData(
+            name="occupied",
+            entity=None,
+            entity_state_on=STATE_ON,
+            dim_level=100,
+            for_state=AreaState.AREA_STATE_OCCUPIED,
+            icon="mdi:lightbulb",
+            control_entity="switch.simply_magic_areas_light_control_family_room",
+            lights=["light.room_light_1", "light.room_light_2"],
+        )
+        if st == AreaState.AREA_STATE_OCCUPIED
+        else StateConfigData(
+            name="extended",
+            entity=None,
+            entity_state_on=STATE_ON,
+            dim_level=0,
+            for_state=AreaState.AREA_STATE_EXTENDED,
+            icon="mdi:lightbulb",
+            control_entity="switch.simply_magic_areas_light_control_family_room",
+            lights=["light.room_light_1", "light.room_light_2"],
+        )
+    )
+    area.all_state_configs.return_value = {}
+    area.get_parent_meta_areas.return_value = []
+    area.get_effective_illuminance.return_value = 5.0
+    area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: (
+            f"{domain}.simply_magic_areas_{name}_{area_name or 'family_room'}"
+        )
+    )
+
+    lg = AreaLightGroup(area, ["light.room_light_1", "light.room_light_2"])
+    lg.hass = hass
+    lg._attr_name = "Family Room Lights"
+    lg.entity_id = "light.simply_magic_areas_light_family_room"
+    lg._attr_is_on = True
+    lg.schedule_update_ha_state = MagicMock()
+    lg.async_update_group_state = MagicMock()
+
+    # 1. Multi-light turn-off commitment: light 1 turns OFF while light 2 is still ON (ramping down).
+    #    Even when LightGroup recomputes group state as ON (because light 2 hasn't finished turning off yet)
+    #    and light 2 reports intermediate dimmer ramp values (180 -> 90 -> OFF), NO turn_on call is ever fired!
+    hass.states.async_set("light.room_light_1", STATE_OFF)
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_1",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 255}
+                ),
+                "new_state": MagicMock(state=STATE_OFF, attributes={}),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(off_calls) == 1
+    assert len(on_calls) == 0
+
+    # Simulate LightGroup transiently reporting STATE_ON (because light 2 is still ramping down at 180)
+    lg._update_group_state(
+        MagicMock(
+            data={
+                "old_state": MagicMock(state=STATE_OFF, attributes={}),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 180}
+                ),
+            }
+        )
+    )
+    # Simulate light 2 reporting intermediate ramp-down brightness 180 -> 90 -> OFF
+    hass.states.async_set("light.room_light_2", STATE_ON, {ATTR_BRIGHTNESS: 90})
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_2",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 180}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 90}
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(on_calls) == 0
+
+    # 2. Manual-off followed by OCCUPIED -> EXTENDED transition while light 2 is still ramping down:
+    #    Must NOT trigger the 50% extended warning dim to turn the lights back ON!
+    area.state = AreaState.AREA_STATE_EXTENDED
+    lg._area_state_change(
+        MagicMock(
+            event_type="state_changed",
+            data={
+                "old_state": MagicMock(state=AreaState.AREA_STATE_OCCUPIED),
+                "new_state": MagicMock(state=AreaState.AREA_STATE_EXTENDED),
+            },
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(on_calls) == 0
+    lg._cancel_retry_timer()
+
+    # 3. Self-illuminated indoor lux sensor immunity:
+    #    When room lights are ON and illuminate the room's lux sensor above learned daylight (e.g. 150 lx),
+    #    AreaLightingProfileSensor must NOT flip from STANDARD to BRIGHT (which would turn the lights off).
+    hass.states.async_set("light.room_light_1", STATE_ON, {ATTR_BRIGHTNESS: 255})
+    hass.states.async_set("light.room_light_2", STATE_ON, {ATTR_BRIGHTNESS: 255})
+    hass.states.async_set(
+        "light.simply_magic_areas_light_family_room",
+        STATE_ON,
+        {ATTR_BRIGHTNESS: 255},
+    )
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    area.lighting_profile = LightingProfile.STANDARD
+    area.historical_daylight_lux = 80.0
+    area.get_effective_illuminance.return_value = 150.0  # Self-illuminated by room lights!
+
+    profile_sensor = AreaLightingProfileSensor(area)
+    profile_sensor.hass = hass
+    profile_sensor.entity_id = (
+        "sensor.simply_magic_areas_lighting_profile_family_room"
+    )
+    profile_sensor.schedule_update_ha_state = MagicMock()
+    profile_sensor._historical_daylight_lux = 80.0
+
+    assert profile_sensor._is_bright_condition_met() is False
+    assert profile_sensor._calculate_lighting_profile() == LightingProfile.STANDARD
+
+    # 4. Smart light bulb disambiguation from manual override:
+    #    (a) In a multi-light room under automatic control (Sleep mode dim=76), LightGroup's virtual
+    #        average-brightness recalculation on self.entity_id (even after command grace expires)
+    #        must NEVER set manual_control = True or re-turn-on bulbs.
+    lg._reset_control()
+    lg._expected_state = STATE_ON
+    lg._expected_brightness = 76
+    lg._command_in_flight_until = 0.0
+    lg._sync_settle_until = 0.0
+    lg._last_member_manual_ts = 0.0
+    on_calls.clear()
+    off_calls.clear()
+
+    lg._update_group_state(
+        MagicMock(
+            data={
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 76}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 165}
+                ),
+            }
+        )
+    )
+    assert lg._is_controlled_by_this_entity() is True
+    assert len(on_calls) == 0
+
+    #    (b) Slow smart bulb finally reporting the expected state (STATE_ON) 4s after automation
+    #        turn-on (after 2.5s command grace expires) must NEVER trigger manual_control = True.
+    lg._last_turn_on_ts = datetime.now(UTC).timestamp() - 4.0
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_2",
+                "old_state": MagicMock(state=STATE_OFF, attributes={}),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 76}
+                ),
+            }
+        )
+    )
+    assert lg._is_controlled_by_this_entity() is True
+    lg._last_turn_on_ts = 0.0
+
+    #    (c) Smart bulb booting from unavailable -> STATE_ON at 100% (255) when switched power is
+    #        restored in Sleep mode (_expected_brightness=76) must NOT trigger manual_control = True,
+    #        and must schedule retry to dim the newly-booted bulb to 76.
+    hass.states.async_set("light.room_light_2", STATE_ON, {ATTR_BRIGHTNESS: 255})
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_2",
+                "old_state": MagicMock(state=STATE_UNAVAILABLE, attributes={}),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 255}
+                ),
+            }
+        )
+    )
+    assert lg._is_controlled_by_this_entity() is True
+    assert lg._retry_timer_cb is not None
+    lg._cancel_retry_timer()
+
+    # 5. Settling & smoothing of source dimmer ramps and hardware PWM brightness jitter:
+    #    (a) Small hardware brightness jitter (<= 8 units, e.g. 76 -> 72) is smoothed/ignored
+    lg._reset_control()
+    lg._expected_state = STATE_ON
+    lg._expected_brightness = 76
+    lg._command_in_flight_until = 0.0
+    lg._sync_settle_until = 0.0
+    on_calls.clear()
+    off_calls.clear()
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_1",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 76}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 72}
+                ),
+            }
+        )
+    )
+    assert lg._is_controlled_by_this_entity() is True
+    assert len(on_calls) == 0
+
+    #    (b) Source dimmer turning ON and ramping 30 -> 140 -> 255 coalesces intermediate steps
+    #        into the settle timer and flushes the final settled brightness (255) once settled
+    hass.states.async_set("light.room_light_1", STATE_ON, {ATTR_BRIGHTNESS: 30})
+    hass.states.async_set("light.room_light_2", STATE_OFF)
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_1",
+                "old_state": MagicMock(state=STATE_OFF, attributes={}),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 30}
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(on_calls) == 1
+    assert on_calls[-1].data[ATTR_BRIGHTNESS] == 30
+
+    # Source dimmer continues ramping 30 -> 140 -> 255 within settle window:
+    # coalesced without spamming service calls until settle timer flushes!
+    on_calls.clear()
+    hass.states.async_set("light.room_light_1", STATE_ON, {ATTR_BRIGHTNESS: 140})
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_1",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 30}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 140}
+                ),
+            }
+        )
+    )
+    hass.states.async_set("light.room_light_1", STATE_ON, {ATTR_BRIGHTNESS: 255})
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_1",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 140}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 255}
+                ),
+            }
+        )
+    )
+    assert len(on_calls) == 0
+    assert lg._settle_timer_cb is not None
+    assert lg._expected_brightness == 255
+
+    # When the dimmer finishes settling, _flush_settled_room_lights sends a single sync to 255
+    lg._cancel_settle_timer()
+    lg._flush_settled_room_lights()
+    await hass.async_block_till_done()
+    assert len(on_calls) == 1
+    assert on_calls[-1].data[ATTR_BRIGHTNESS] == 255
+
+    #    (c) Source dimmer ramping down 255 -> 180 -> STATE_OFF immediately supersedes the
+    #        initial 180 brightness report and turns the room OFF cleanly
+    on_calls.clear()
+    off_calls.clear()
+    hass.states.async_set("light.room_light_2", STATE_ON, {ATTR_BRIGHTNESS: 255})
+    hass.states.async_set("light.room_light_1", STATE_ON, {ATTR_BRIGHTNESS: 180})
+    lg._command_in_flight_until = 0.0
+    lg._sync_settle_until = 0.0
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_1",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 255}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 180}
+                ),
+            }
+        )
+    )
+    # Now light_1 finishes ramping down to OFF while in_sync_settle:
+    hass.states.async_set("light.room_light_1", STATE_OFF)
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_1",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 180}
+                ),
+                "new_state": MagicMock(state=STATE_OFF, attributes={}),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(off_calls) == 1
+    assert lg._expected_state == STATE_OFF
+    lg._cancel_retry_timer()
+
+    # 6. Multi-light desired-state tracking & anti-feedback-loop over time:
+    #    (a) Even after command grace and sync settle expire, a second bulb slowly ramping
+    #        toward _expected_brightness (255 -> 180 -> 110 -> 76) NEVER triggers a manual
+    #        override feedback loop or alters _expected_brightness.
+    on_calls.clear()
+    off_calls.clear()
+    lg._expected_state = STATE_ON
+    lg._expected_brightness = 76
+    lg._command_in_flight_until = 0.0
+    lg._sync_settle_until = 0.0
+    lg._automation_transition_until = 0.0
+    hass.states.async_set("light.room_light_1", STATE_ON, {ATTR_BRIGHTNESS: 76})
+    hass.states.async_set("light.room_light_2", STATE_ON, {ATTR_BRIGHTNESS: 180})
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_2",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 255}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 180}
+                ),
+            }
+        )
+    )
+    hass.states.async_set("light.room_light_2", STATE_ON, {ATTR_BRIGHTNESS: 110})
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_2",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 180}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 110}
+                ),
+            }
+        )
+    )
+    assert len(on_calls) == 0
+    assert lg._expected_brightness == 76
+
+    #    (b) Out-of-phase command echo: turn_off at t-4s superseded by turn_on at t-3s.
+    #        When a slow bulb reports STATE_OFF at t=0 (after 2.5s command grace), it is caught
+    #        as a superseded echo, does NOT set manual_control, and schedules retry for STATE_ON.
+    lg._reset_control()
+    now_ts = datetime.now(UTC).timestamp()
+    lg._expected_state = STATE_ON
+    lg._expected_brightness = 255
+    lg._last_turn_off_ts = now_ts - 4.0
+    lg._last_turn_on_ts = now_ts - 3.0
+    lg._command_in_flight_until = 0.0
+    lg._sync_settle_until = 0.0
+    hass.states.async_set("light.room_light_2", STATE_OFF)
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_2",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 255}
+                ),
+                "new_state": MagicMock(state=STATE_OFF, attributes={}),
+            }
+        )
+    )
+    assert lg._is_controlled_by_this_entity() is True
+    assert lg._expected_state == STATE_ON
+    assert lg._retry_timer_cb is not None
+    lg._cancel_retry_timer()
+
+
+async def test_system_control_off_immediately_halts_all_light_changes_and_timers(
+    hass: HomeAssistant,
+) -> None:
+    """Verify turning off system_control immediately cancels timers and blocks all light changes."""
+    from unittest.mock import MagicMock
+
+    from custom_components.simply_magic_areas.switch import AreaSystemControlSwitch
+
+    area = MagicMock()
+    area.hass = hass
+    area.name = "Family Room"
+    area.slug = "family_room"
+    area.id = "family_room"
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    area.lighting_profile = LightingProfile.STANDARD
+    area.system_control_enabled = True
+    area.is_meta.return_value = False
+    area.is_exterior.return_value = False
+    area.is_control_enabled.side_effect = (
+        lambda ct: area.system_control_enabled
+    )
+    area.has_configured_state.return_value = True
+    area.state_config.return_value = StateConfigData(
+        name="occupied",
+        entity=None,
+        entity_state_on=STATE_ON,
+        dim_level=100,
+        for_state=AreaState.AREA_STATE_OCCUPIED,
+        icon="mdi:lightbulb",
+        control_entity="switch.simply_magic_areas_light_control_family_room",
+        lights=["light.room_light_1", "light.room_light_2"],
+    )
+    area.config = {}
+    area.feature_config.return_value = {"sleep_state_dim": 30}
+    area.get_effective_illuminance.return_value = 0.0
+    area.entities = {
+        LIGHT_DOMAIN: [
+            {ATTR_ENTITY_ID: "light.room_light_1"},
+            {ATTR_ENTITY_ID: "light.room_light_2"},
+        ],
+    }
+    area.simply_magic_entity_id.side_effect = (
+        lambda domain, name, area_name=None: (
+            f"{domain}.simply_magic_areas_{name}_{area_name or 'family_room'}"
+        )
+    )
+
+    hass.states.async_set(
+        "sensor.simply_magic_areas_state_family_room",
+        AreaState.AREA_STATE_OCCUPIED,
+        {"presence_sensors": ["binary_sensor.family_motion"]},
+    )
+    hass.states.async_set(
+        "sensor.simply_magic_areas_lighting_profile_family_room",
+        LightingProfile.STANDARD,
+    )
+    hass.states.async_set("light.room_light_1", STATE_ON, {ATTR_BRIGHTNESS: 255})
+    hass.states.async_set("light.room_light_2", STATE_OFF)
+
+    lg = AreaLightGroup(area, ["light.room_light_1", "light.room_light_2"])
+    lg.hass = hass
+    lg._attr_name = "Family Room Lights"
+    lg.entity_id = "light.simply_magic_areas_light_family_room"
+    lg.schedule_update_ha_state = MagicMock()
+    lg.async_update_group_state = MagicMock()
+    area._light_group = lg
+
+    sys_sw = AreaSystemControlSwitch(area)
+    sys_sw.hass = hass
+    sys_sw.entity_id = "switch.simply_magic_areas_system_control_family_room"
+    sys_sw.schedule_update_ha_state = MagicMock()
+    area._system_control_switch = sys_sw
+
+    def _set_sys_control(enabled: bool) -> None:
+        area.system_control_enabled = enabled
+        if not enabled:
+            lg.stop_all_active_control()
+            area.state = AreaState.AREA_STATE_MANUAL
+
+    area.set_system_control.side_effect = _set_sys_control
+
+    on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
+    off_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
+
+    # 1. Verify single-flight command coalescing & deduplication:
+    #    Rapid back-to-back commands before the event loop flushes must cancel superseded
+    #    tasks rather than stacking up a queue of changes.
+    lg._dispatch_light_command(
+        SERVICE_TURN_ON,
+        {ATTR_ENTITY_ID: lg.entity_id, ATTR_BRIGHTNESS: 255},
+    )
+    first_task = lg._active_service_task
+    assert first_task is not None and not first_task.done()
+
+    # Duplicate command while in flight is ignored (same task stays active)
+    lg._dispatch_light_command(
+        SERVICE_TURN_ON,
+        {ATTR_ENTITY_ID: lg.entity_id, ATTR_BRIGHTNESS: 255},
+    )
+    assert lg._active_service_task is first_task
+
+    # Superseding command (dim to 76) cancels the first task before it can execute
+    lg._dispatch_light_command(
+        SERVICE_TURN_ON,
+        {ATTR_ENTITY_ID: lg.entity_id, ATTR_BRIGHTNESS: 76},
+    )
+    second_task = lg._active_service_task
+    assert second_task is not first_task
+    await hass.async_block_till_done()
+    assert first_task.cancelled()
+    assert len(on_calls) == 1
+    assert on_calls[-1].data[ATTR_BRIGHTNESS] == 76
+    on_calls.clear()
+
+    # 2. Queue a command and arm retry/settle timers, then immediately turn OFF system_control:
+    #    The queued command task and all timers must be cancelled before executing!
+    lg._dispatch_light_command(
+        SERVICE_TURN_ON,
+        {ATTR_ENTITY_ID: lg.entity_id, ATTR_BRIGHTNESS: 200},
+    )
+    queued_task = lg._active_service_task
+    assert queued_task is not None and not queued_task.done()
+
+    lg._schedule_actuator_retry(STATE_ON, 255)
+    lg._schedule_light_settle("light.room_light_1")
+    assert lg._retry_timer_cb is not None
+    assert lg._settle_timer_cb is not None
+
+    # Turn OFF system control switch
+    await sys_sw.async_turn_off()
+    await hass.async_block_till_done()
+
+    # Queued task and timers must be immediately cancelled (0 service calls executed!)
+    assert queued_task.cancelled()
+    assert lg._active_service_task is None
+    assert len(on_calls) == 0
+    assert lg._retry_timer_cb is None
+    assert lg._settle_timer_cb is None
+    assert area.system_control_enabled is False
+    assert area.state == AreaState.AREA_STATE_MANUAL
+
+    # Member light state changes, group brightness changes, profile changes, and area state changes
+    # must NOT issue any light commands while system control is OFF
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.room_light_1",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 255}
+                ),
+                "new_state": MagicMock(state=STATE_OFF, attributes={}),
+            }
+        )
+    )
+    lg._update_group_state(
+        MagicMock(
+            data={
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 255}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 120}
+                ),
+            }
+        )
+    )
+    lg._profile_change(
+        MagicMock(
+            data={
+                "old_state": MagicMock(state=LightingProfile.STANDARD),
+                "new_state": MagicMock(state=LightingProfile.SLEEP),
+            }
+        )
+    )
+    lg._execute_actuator_retry()
+    lg._flush_settled_room_lights()
+    await hass.async_block_till_done()
+
+    assert len(on_calls) == 0
+    assert len(off_calls) == 0
+
+    # Verify AreaLightingProfileSensor and AreaFanGroup also do nothing automatically while system_control is OFF
+    from custom_components.simply_magic_areas.base.area_lighting_profile_sensor import (
+        AreaLightingProfileSensor,
+    )
+    from custom_components.simply_magic_areas.fan import AreaFanGroup
+
+    ps = AreaLightingProfileSensor(area)
+    ps.hass = hass
+    ps.entity_id = "sensor.simply_magic_areas_lighting_profile_family_room"
+    ps.schedule_update_ha_state = MagicMock()
+    ps._attr_native_value = LightingProfile.STANDARD
+    ps._context_state_change(
+        MagicMock(
+            data={
+                "entity_id": "sun.sun",
+                "old_state": MagicMock(state="above_horizon"),
+                "new_state": MagicMock(
+                    state="below_horizon", attributes={"local_hour": 23}
+                ),
+            }
+        )
+    )
+    assert ps._attr_native_value == LightingProfile.STANDARD
+
+    fan_on_calls = async_mock_service(hass, "fan", SERVICE_TURN_ON)
+    fg = AreaFanGroup(area, ["fan.family_fan"])
+    fg.hass = hass
+    fg.entity_id = "fan.simply_magic_areas_fan_family_room"
+    fg.schedule_update_ha_state = MagicMock()
+    fg._start_watchdog_timer()
+    assert fg._watchdog_unsub is not None
+    fg._humidity_fan_control()
+    assert fg._watchdog_unsub is None
+    assert len(fan_on_calls) == 0
+
+
+
+
 
 
 

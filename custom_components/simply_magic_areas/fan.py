@@ -40,6 +40,7 @@ from homeassistant.core import (
     EventStateChangedData,
     HomeAssistant,
     State,
+    callback,
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity_registry import async_get as async_get_er
@@ -207,6 +208,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self._retry_attempt: int = 0
         self._expected_state: str | None = None
         self._command_in_flight_until: float = 0.0
+        self._active_service_task: Any = None
         self._last_shower_concluded_ts: float | None = None
         self._max_runtime_lockout_until: float | None = None
 
@@ -266,6 +268,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
     async def async_added_to_hass(self) -> None:
         """Run when this is added into hass."""
+        self.area._fan_group = self  # type: ignore[attr-defined]
         # Get last state
         last_state = await self.async_get_last_state()
 
@@ -381,6 +384,33 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 self._area_state_change,
             )
         )
+        sys_control_ids: list[str] = [
+            self.area.simply_magic_entity_id(
+                SWITCH_DOMAIN, EntityNames.SYSTEM_CONTROL
+            )
+        ]
+        if getattr(self.area, "slug", None):
+            slug_sw_id = self.area.simply_magic_entity_id(
+                SWITCH_DOMAIN,
+                EntityNames.SYSTEM_CONTROL,
+                area_name=self.area.slug,
+            )
+            if slug_sw_id not in sys_control_ids:
+                sys_control_ids.append(slug_sw_id)
+        sw_obj = getattr(self.area, "_system_control_switch", None)
+        if (
+            sw_obj is not None
+            and getattr(sw_obj, "entity_id", None)
+            and sw_obj.entity_id not in sys_control_ids
+        ):
+            sys_control_ids.append(sw_obj.entity_id)
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass,
+                sys_control_ids,
+                self._system_control_change,
+            )
+        )
         # If the trend entities exist, listen to them
         trend_statistics = self.area.simply_magic_entity_id(
             SENSOR_DOMAIN,
@@ -480,9 +510,58 @@ class AreaFanGroup(MagicEntity, FanGroup):
             )
         )
 
+    def _cancel_active_service_task(self) -> None:
+        """Cancel any in-flight or queued fan service call task so commands never stack up."""
+        task = getattr(self, "_active_service_task", None)
+        if task is not None:
+            if hasattr(task, "done") and not task.done():
+                task.cancel()
+            self._active_service_task = None
+
+    def _dispatch_fan_command(
+        self, service: str, service_data: dict[str, Any]
+    ) -> None:
+        """Dispatch a fan command with single-flight task cancellation."""
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            self._cancel_active_service_task()
+            return
+        self._cancel_active_service_task()
+        self._active_service_task = call_service_non_blocking(
+            self.hass, FAN_DOMAIN, service, service_data
+        )
+
+    def stop_all_active_control(self) -> None:
+        """Immediately cancel all active fan automation, retry, watchdog, and manual timers."""
+        self._cancel_active_service_task()
+        self._cancel_retry_timer()
+        self._stop_watchdog_timer()
+        if self._manual_timeout_cb is not None:
+            self._manual_timeout_cb()
+            self._manual_timeout_cb = None
+        self._command_in_flight_until = 0.0
+        self.last_update_from_entity = False
+
+    @callback
+    def _system_control_change(self, event: Event[EventStateChangedData]) -> None:
+        """Handle changes to the area system control switch."""
+        new_state = event.data.get("new_state")
+        if new_state is None or new_state.state in INVALID_STATES:
+            return
+        if new_state.state.lower() != STATE_ON:
+            self.area.system_control_enabled = False
+            self.stop_all_active_control()
+        else:
+            self.area.system_control_enabled = True
+
     ### State Change Handling
+    @callback
     def _area_state_change(self, event: Event[EventStateChangedData]) -> None:
         if event.data["old_state"] is None or event.data["new_state"] is None:
+            return
+        if event.data["old_state"].state == event.data["new_state"].state:
             return
 
         from_state = (
@@ -532,7 +611,11 @@ class AreaFanGroup(MagicEntity, FanGroup):
         )
 
         # Manual control, ignore all changes
-        if to_state == AreaState.AREA_STATE_MANUAL:
+        if (
+            to_state == AreaState.AREA_STATE_MANUAL
+            or not self.area.is_control_enabled(ControlType.System)
+        ):
+            self.stop_all_active_control()
             return
 
         if occupancy_changed:
@@ -721,9 +804,15 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         return False
 
+    @callback
     def _sleep_state_change(self, event: Event[EventStateChangedData]) -> None:
         """Handle changes to sleep entities or reference area states."""
         if event.data.get("new_state") is None:
+            return
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
             return
 
         if (
@@ -754,6 +843,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         elif not self._is_fan_suppressed_in_sleep():
             self._evaluate_hvac_fan_circulation()
 
+    @callback
     def _trend_state_change(self, event: Event[EventStateChangedData]):
         if event.data["old_state"] is None or event.data["new_state"] is None:
             return
@@ -768,6 +858,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if to_state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             self._humidity_fan_control()
 
+    @callback
     def _temperature_state_change(self, event: Event[EventStateChangedData]) -> None:
         if event.data["new_state"] is None:
             return
@@ -897,6 +988,12 @@ class AreaFanGroup(MagicEntity, FanGroup):
         return None
 
     def _humidity_fan_control(self) -> None:
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            self._stop_watchdog_timer()
+            return
         if not self._is_controlled_by_this_entity():
             _LOGGER.debug(
                 "%s: Fan group in manual override; ignoring humidity control",
@@ -1387,6 +1484,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
         self.schedule_update_ha_state()
 
+    @callback
     def _update_group_state(self, event: Event[EventStateChangedData]) -> None:
         old_state = event.data.get("old_state")
         new_state = event.data.get("new_state")
@@ -1406,6 +1504,14 @@ class AreaFanGroup(MagicEntity, FanGroup):
                 self._manual_timeout_cb = async_call_later(
                     self.hass, manual_timeout, self._reset_manual_timeout
                 )
+            return
+
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            self._attr_is_on = new_state.state == STATE_ON
+            self.last_update_from_entity = False
             return
 
         # Skip non ON/OFF state changes or attribute-only updates
@@ -1448,6 +1554,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self._manual_timeout_cb = None
         self.schedule_update_ha_state()
 
+    @callback
     def _reset_manual_timeout(self, dt: datetime | None = None) -> None:
         if self._manual_timeout_cb is not None:
             self._manual_timeout_cb = None
@@ -1455,8 +1562,14 @@ class AreaFanGroup(MagicEntity, FanGroup):
         self.schedule_update_ha_state()
 
     ####  Fan Handling
+    @callback
     def _handle_climate_event(self, event: Event[EventStateChangedData]) -> None:
         """Handle state or hvac_action updates on climate.* entities."""
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
         entity_id = event.data.get("entity_id", "")
         if not entity_id.startswith(f"{CLIMATE_DOMAIN}."):
             return
@@ -1738,7 +1851,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             ATTR_ENTITY_ID: target_entity,
             ATTR_PERCENTAGE: speed_pct,
         }
-        call_service_non_blocking(self.hass, FAN_DOMAIN, SERVICE_TURN_ON, service_data)
+        self._dispatch_fan_command(SERVICE_TURN_ON, service_data)
         self._schedule_actuator_retry(STATE_ON)
 
     def _get_available_member_states(self) -> list[tuple[str, State]]:
@@ -1799,10 +1912,14 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self._execute_actuator_retry,
         )
 
+    @callback
     def _execute_actuator_retry(self, _now: datetime | None = None) -> None:
         """Check if available member fans reached expected state; retry with backoff if not."""
         self._retry_timer_cb = None
-        if not self.area.is_control_enabled(ControlType.System):
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
             return
         if not self._is_controlled_by_this_entity():
             return
@@ -1829,14 +1946,10 @@ class AreaFanGroup(MagicEntity, FanGroup):
         service_data = {ATTR_ENTITY_ID: self.entity_id}
         if target_state == STATE_ON:
             self._attr_is_on = True
-            call_service_non_blocking(
-                self.hass, FAN_DOMAIN, SERVICE_TURN_ON, service_data
-            )
+            self._dispatch_fan_command(SERVICE_TURN_ON, service_data)
         else:
             self._attr_is_on = False
-            call_service_non_blocking(
-                self.hass, FAN_DOMAIN, SERVICE_TURN_OFF, service_data
-            )
+            self._dispatch_fan_command(SERVICE_TURN_OFF, service_data)
 
         if self._retry_attempt < len(DEFAULT_ACTUATOR_RETRY_DELAYS):
             next_delay = DEFAULT_ACTUATOR_RETRY_DELAYS[self._retry_attempt]
@@ -1848,6 +1961,11 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
     def _turn_on_fan(self) -> None:
         """Turn on the fan group."""
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
         if self.is_on and not self._has_any_working_fan_off():
             _LOGGER.debug("%s: Fan already on", self.name)
             return
@@ -1868,11 +1986,16 @@ class AreaFanGroup(MagicEntity, FanGroup):
         service_data = {
             ATTR_ENTITY_ID: self.entity_id,
         }
-        call_service_non_blocking(self.hass, FAN_DOMAIN, SERVICE_TURN_ON, service_data)
+        self._dispatch_fan_command(SERVICE_TURN_ON, service_data)
         self._schedule_actuator_retry(STATE_ON)
 
     def _turn_off_fan(self) -> None:
         """Turn off the fan group."""
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
         if not self.is_on and not self._has_any_working_fan_on():
             _LOGGER.debug("%s: Fan already off", self.name)
             return
@@ -1891,9 +2014,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
         if not self._attr_extra_state_attributes.get(ATTR_HUMIDITY_ON, False):
             self._stop_watchdog_timer()
         service_data = {ATTR_ENTITY_ID: self.entity_id}
-        call_service_non_blocking(
-            self.hass, FAN_DOMAIN, SERVICE_TURN_OFF, service_data
-        )
+        self._dispatch_fan_command(SERVICE_TURN_OFF, service_data)
         self._schedule_actuator_retry(STATE_OFF)
 
     def _start_watchdog_timer(self) -> None:
@@ -1909,6 +2030,7 @@ class AreaFanGroup(MagicEntity, FanGroup):
             self._watchdog_unsub()
             self._watchdog_unsub = None
 
+    @callback
     def _watchdog_tick(self, _now: datetime | None = None) -> None:
         """Periodic watchdog evaluation to guarantee timeouts when sensors flatline."""
         _LOGGER.debug("%s: Watchdog evaluating fan humidity control", self.name)
@@ -1916,11 +2038,9 @@ class AreaFanGroup(MagicEntity, FanGroup):
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up timers when removed from hass."""
-        self._cancel_retry_timer()
-        self._stop_watchdog_timer()
-        if self._manual_timeout_cb is not None:
-            self._manual_timeout_cb()
-            self._manual_timeout_cb = None
+        if getattr(self.area, "_fan_group", None) is self:
+            self.area._fan_group = None  # type: ignore[attr-defined]
+        self.stop_all_active_control()
         await super().async_will_remove_from_hass()
 
     #### Control Release

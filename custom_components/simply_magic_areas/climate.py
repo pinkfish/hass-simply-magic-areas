@@ -507,6 +507,11 @@ class AreaClimateGroup(MagicEntity, ClimateGroup):
 
     def _turn_off(self):
         if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
+        if (
             self._attr_hvac_mode is not None
             and self._attr_hvac_mode != HVACMode.OFF
         ):
@@ -520,6 +525,11 @@ class AreaClimateGroup(MagicEntity, ClimateGroup):
         )
 
     def _turn_on(self):
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
         candidate_modes: list[HVACMode] = []
         if (
             getattr(self, "_last_active_hvac_mode", None) is not None

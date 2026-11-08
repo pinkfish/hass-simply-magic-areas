@@ -194,6 +194,9 @@
     "switch": {
       "system_control": {
         "name": "{area_name} System Control (Simply Magic Areas)"
+      },
+      "sleep_mode": {
+        "name": "{area_name} Sleep Mode (Simply Magic Areas)"
       }
     }
   }

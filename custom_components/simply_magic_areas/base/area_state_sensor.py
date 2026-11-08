@@ -1,6 +1,7 @@
 """Select control for magic areas, tracks the state as an enum."""
 
 import logging
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -49,6 +50,7 @@ from ..const import (
     ATTR_RADAR_FAN_OVERRIDE_SENSORS,
     ATTR_STATE,
     ATTR_TYPE,
+    CONF_CHILD_AREAS,
     CONF_CLEAR_TIMEOUT,
     CONF_EXTENDED_TIMEOUT,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
@@ -68,8 +70,10 @@ from ..const import (
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
     CONF_REFERENCE_HUMIDITY_SENSOR,
     CONF_TYPE,
+    CONF_UNOCCUPIED_WHEN_LIGHTS_OFF,
     CONF_UPDATE_INTERVAL,
     CONTACT_SENSOR_DEVICE_CLASSES,
+    DATA_AREA_OBJECT,
     DEFAULT_HUMIDITY_DEADBAND,
     DEFAULT_HUMIDITY_DELTA_SHUTOFF,
     DEFAULT_HUMIDITY_DELTA_THRESHOLD,
@@ -83,8 +87,10 @@ from ..const import (
     DEFAULT_ON_STATES,
     DEFAULT_PRESENCE_DEVICE_PLATFORMS,
     DEFAULT_PRESENCE_DEVICE_SENSOR_CLASS,
+    DEFAULT_UNOCCUPIED_WHEN_LIGHTS_OFF,
     DEFAULT_UPDATE_INTERVAL,
     INVALID_STATES,
+    MODULE_DATA,
 )
 from ..ml.mmwave_filter import MMWaveFanFilter
 from .entities import MagicEntity
@@ -117,6 +123,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self._attr_device_class = SensorDeviceClass.ENUM
 
         self._last_off_time: datetime = datetime.now(UTC) - timedelta(days=2)  # type: ignore
+        self._last_manual_off_time: datetime | None = None
         self._clear_timeout_callback: Callable[[], None] | None = None
         self._extended_timeout_callback: Callable[[], None] | None = None
         self._sensors: list[str] = []
@@ -130,6 +137,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
     async def async_added_to_hass(self) -> None:
         """Call to add the system to hass."""
         _LOGGER.info("%s: added to hass", self.area.name)
+        self.area._state_sensor = self
         await super().async_added_to_hass()
         await self._restore_state()
         await self._load_attributes()
@@ -213,7 +221,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                     except (ValueError, TypeError):
                         pass
 
-        self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
+        self._trigger_update_state()
 
     async def _setup_listeners(self) -> None:
         _LOGGER.debug("%s: Called '_setup_listeners'", self.name)  # type: ignore
@@ -247,14 +255,30 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             )
 
         # Track system control switch
+        sys_control_ids: list[str] = [
+            self.area.simply_magic_entity_id(
+                SWITCH_DOMAIN, EntityNames.SYSTEM_CONTROL
+            )
+        ]
+        if getattr(self.area, "slug", None):
+            slug_sw_id = self.area.simply_magic_entity_id(
+                SWITCH_DOMAIN,
+                EntityNames.SYSTEM_CONTROL,
+                area_name=self.area.slug,
+            )
+            if slug_sw_id not in sys_control_ids:
+                sys_control_ids.append(slug_sw_id)
+        sw_obj = getattr(self.area, "_system_control_switch", None)
+        if (
+            sw_obj is not None
+            and getattr(sw_obj, "entity_id", None)
+            and sw_obj.entity_id not in sys_control_ids
+        ):
+            sys_control_ids.append(sw_obj.entity_id)
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass,
-                [
-                    self.area.simply_magic_entity_id(
-                        SWITCH_DOMAIN, EntityNames.SYSTEM_CONTROL
-                    )
-                ],
+                sys_control_ids,
                 self._group_entity_state_change,
             )
         )
@@ -272,16 +296,19 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             )
         )
 
-        # Track area light group for fast unoccupied transition on manual turn-off
+        # Track area light group and child lights for manual turn-off or bedroom lights-off unoccupied detection
+        tracked_lights = self._get_area_and_child_light_entities()
         if not self.area.is_meta():
+            area_light_group = self.area.simply_magic_entity_id(
+                LIGHT_DOMAIN, EntityNames.LIGHT
+            )
+            if area_light_group not in tracked_lights:
+                tracked_lights.append(area_light_group)
+        if tracked_lights:
             self.async_on_remove(
                 async_track_state_change_event(
                     self.hass,
-                    [
-                        self.area.simply_magic_entity_id(
-                            LIGHT_DOMAIN, EntityNames.LIGHT
-                        )
-                    ],
+                    tracked_lights,
                     self._light_group_state_change,
                 )
             )
@@ -295,6 +322,80 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self.async_on_remove(
             async_track_time_interval(self.hass, self._update_state, delta)
         )
+
+    def _is_lights_off_unoccupied_enabled(self) -> bool:
+        """Return True if this area should be marked unoccupied whenever all its lights are off."""
+        if CONF_UNOCCUPIED_WHEN_LIGHTS_OFF in self.area.config:
+            return bool(self.area.config.get(CONF_UNOCCUPIED_WHEN_LIGHTS_OFF))
+        if self.area.is_bedroom_meta() or (
+            self.area.is_meta() and bool(self.area.config.get(CONF_CHILD_AREAS))
+        ):
+            return DEFAULT_UNOCCUPIED_WHEN_LIGHTS_OFF
+        return False
+
+    def _get_area_and_child_light_entities(self) -> list[str]:
+        """Collect light entities across this area and any tied child areas."""
+        cached = getattr(self, "_cached_area_and_child_lights", None)
+        if cached is not None:
+            return list(cached)
+        light_ids: list[str] = []
+        for ent in self.area.entities.get(LIGHT_DOMAIN, []):
+            ent_id = ent.get(ATTR_ENTITY_ID) if isinstance(ent, dict) else None
+            if ent_id and ent_id not in light_ids:
+                light_ids.append(ent_id)
+
+        child_slugs: list[str] = []
+        if self.area.is_meta():
+            child_slugs.extend(self.area.get_child_areas())
+        else:
+            configured_children = self.area.config.get(CONF_CHILD_AREAS, [])
+            if isinstance(configured_children, list):
+                child_slugs.extend(str(c) for c in configured_children if c)
+
+        for child_slug in child_slugs:
+            child_light_group = self.area.simply_magic_entity_id(
+                LIGHT_DOMAIN, EntityNames.LIGHT, area_name=child_slug
+            )
+            if child_light_group not in light_ids:
+                light_ids.append(child_light_group)
+            for entry_data in self.hass.data.get(MODULE_DATA, {}).values():
+                if not isinstance(entry_data, dict):
+                    continue
+                child_area = entry_data.get(DATA_AREA_OBJECT)
+                if child_area is not None and (
+                    child_area.slug == child_slug
+                    or child_area.id == child_slug
+                    or child_area.name.lower() == child_slug.lower()
+                ):
+                    for ent in child_area.entities.get(LIGHT_DOMAIN, []):
+                        ent_id = (
+                            ent.get(ATTR_ENTITY_ID) if isinstance(ent, dict) else None
+                        )
+                        if ent_id and ent_id not in light_ids:
+                            light_ids.append(ent_id)
+        if light_ids:
+            self._cached_area_and_child_lights = list(light_ids)
+        return light_ids
+
+    def _are_all_area_lights_off(self) -> bool:
+        """Return True if at least one light state is tracked and all tracked lights are OFF."""
+        light_ids = self._get_area_and_child_light_entities()
+        if not self.area.is_meta():
+            area_light_group = self.area.simply_magic_entity_id(
+                LIGHT_DOMAIN, EntityNames.LIGHT
+            )
+            if area_light_group not in light_ids:
+                light_ids.append(area_light_group)
+
+        valid_states = [
+            self.hass.states.get(eid)
+            for eid in light_ids
+            if self.hass.states.get(eid) is not None
+            and self.hass.states.get(eid).state not in INVALID_STATES  # type: ignore[union-attr]
+        ]
+        if not valid_states:
+            return False
+        return all(st.state == STATE_OFF for st in valid_states if st is not None)
 
     def _is_contact_sensor(
         self, sensor_id: str, entity_state: State | None = None
@@ -320,9 +421,25 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             # MetaAreas track their children
             child_areas: list[str] = self.area.get_child_areas()
             for child_area in child_areas:
-                entity_id = f"{SENSOR_DOMAIN}.simply_magic_area_state_{child_area}"
-                self._sensors.append(entity_id)
+                canonical_id = self.area.simply_magic_entity_id(
+                    SENSOR_DOMAIN, EntityNames.STATE, area_name=child_area
+                )
+                legacy_id = f"{SENSOR_DOMAIN}.simply_magic_area_state_{child_area}"
+                for eid in (canonical_id, legacy_id):
+                    if eid not in self._sensors:
+                        self._sensors.append(eid)
             return
+
+        configured_children = self.area.config.get(CONF_CHILD_AREAS, [])
+        if isinstance(configured_children, list):
+            for child_area in configured_children:
+                if not child_area:
+                    continue
+                canonical_id = self.area.simply_magic_entity_id(
+                    SENSOR_DOMAIN, EntityNames.STATE, area_name=str(child_area)
+                )
+                if canonical_id not in self._sensors:
+                    self._sensors.append(canonical_id)
 
         adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
         valid_presence_platforms = adv_conf.get(
@@ -424,15 +541,39 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         """Get the current state for the area based on the various entities and controls."""
         # If it is in manual mode, set the state to manual.
         if not self.area.is_control_enabled(ControlType.System):
+            self._contact_triggered = False
+            self._sensor_changed_in_extended = False
+            self._remove_clear_timeout()
+            self._remove_extended_timeout()
             return AreaState.AREA_STATE_MANUAL
+
+        # Bedroom meta-areas / multi-room bedroom areas are considered unoccupied when all lights are off
+        if self._is_lights_off_unoccupied_enabled() and self._are_all_area_lights_off():
+            self._contact_triggered = False
+            self._sensor_changed_in_extended = False
+            self._remove_clear_timeout()
+            self._remove_extended_timeout()
+            if self.area.is_meta():
+                self._attr_extra_state_attributes[ATTR_ACTIVE_AREAS] = set()
+            self._attr_extra_state_attributes["active_sensors"] = []
+            return AreaState.AREA_STATE_CLEAR
 
         # Get Main occupancy state
         occupied_state = self._get_sensors_state()
+        self._last_occupied_sensor_state = occupied_state
 
         _LOGGER.debug("Sensor state %s", occupied_state)  # type: ignore
 
+        last_off_ref = self._last_off_time
+        if (
+            self._is_light_manually_off()
+            and getattr(self, "_last_manual_off_time", None) is not None
+            and self._last_manual_off_time > last_off_ref
+        ):
+            last_off_ref = self._last_manual_off_time
+
         seconds_since_last_change: int = int(
-            (datetime.now(UTC) - self._last_off_time).total_seconds()
+            (datetime.now(UTC) - last_off_ref).total_seconds()
         )
 
         clear_timeout: int = self._get_effective_clear_timeout()
@@ -497,8 +638,31 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         # Pure occupancy state
         return AreaState.AREA_STATE_OCCUPIED
 
+    def _write_or_schedule_ha_state(self) -> None:
+        """Write state immediately when on the event loop, or schedule thread-safely."""
+        if (
+            self.hass is not None
+            and self.entity_id
+            and getattr(self, "platform", None) is not None
+            and self.hass.loop_thread_id == threading.get_ident()
+        ):
+            self.async_write_ha_state()
+            return
+        self.schedule_update_ha_state()
+
+    def _trigger_update_state(self) -> None:
+        """Execute _update_state immediately on the event loop or thread-safely from a worker thread."""
+        if self.hass.loop_thread_id == threading.get_ident():
+            self._update_state(datetime.now(UTC))
+        else:
+            self.hass.loop.call_soon_threadsafe(
+                self._update_state, datetime.now(UTC)
+            )
+
     @callback
-    def _validate_state_consistency(self) -> None:
+    def _validate_state_consistency(
+        self, has_active_sensors: bool | None = None
+    ) -> None:
         """Validate area state consistency and schedule clear timeout if needed.
 
         Catches edge cases where:
@@ -508,7 +672,8 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         if self.area.state in (AreaState.AREA_STATE_CLEAR, AreaState.AREA_STATE_MANUAL):
             return
 
-        has_active_sensors = self._get_sensors_state()
+        if has_active_sensors is None:
+            has_active_sensors = self._get_sensors_state()
         has_timeout_pending = (
             self._is_on_clear_timeout() or self._is_on_extended_timeout()
         )
@@ -527,18 +692,21 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 self.area.state = AreaState.AREA_STATE_CLEAR
                 self._attr_native_value = AreaState.AREA_STATE_CLEAR
                 self._update_attributes()
-                self.schedule_update_ha_state()
+                self._write_or_schedule_ha_state()
             else:
                 self._set_clear_timeout(clear_timeout - seconds_since_off)
 
     @callback
     def _update_state(self, extra: datetime | None = None) -> None:
         last_state = self.area.state
+        self._last_occupied_sensor_state = None
         new_state = self.get_current_area_state()
 
         if last_state == new_state:
             self._update_attributes()
-            self._validate_state_consistency()
+            self._validate_state_consistency(
+                has_active_sensors=self._last_occupied_sensor_state
+            )
             return
 
         # Calculate what's new
@@ -554,7 +722,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         self._attr_native_value = new_state
 
         self._update_attributes()
-        self.schedule_update_ha_state()
+        self._write_or_schedule_ha_state()
 
         _LOGGER.debug(
             "Reporting state change for %s (new state: %s/last state: %s)",
@@ -563,8 +731,11 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             last_state,
         )
 
-        self._validate_state_consistency()
+        self._validate_state_consistency(
+            has_active_sensors=self._last_occupied_sensor_state
+        )
 
+    @callback
     def _lighting_profile_changed(self, event: Event[EventStateChangedData]) -> None:
         if event.data.get("new_state") is None:
             return
@@ -573,18 +744,24 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         )
         self.schedule_update_ha_state()
 
+    @callback
     def _light_group_state_change(self, event: Event[EventStateChangedData]) -> None:
-        """Re-evaluate area state when light group enters manual-off so unoccupied clear timeout shortens."""
+        """Re-evaluate area state when light group enters manual-off or bedroom lights turn off/on."""
         new_state = event.data.get("new_state")
         if new_state is None or new_state.state in INVALID_STATES:
+            return
+        if self._is_lights_off_unoccupied_enabled():
+            self._trigger_update_state()
             return
         if (
             new_state.state == STATE_OFF
             and new_state.attributes.get(ATTR_MANUAL_CONTROL) is True
             and self.area.state == AreaState.AREA_STATE_OCCUPIED
         ):
-            self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
+            self._last_manual_off_time = datetime.now(UTC)
+            self._trigger_update_state()
 
+    @callback
     def _group_entity_state_change(self, event: Event[EventStateChangedData]) -> None:
         if event.event_type != "state_changed":
             return
@@ -630,7 +807,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self._remove_extended_timeout()
             self._remove_clear_timeout()
 
-        self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
+        self._trigger_update_state()
 
     ###       Clearing
 
@@ -755,8 +932,9 @@ class AreaStateSensor(MagicEntity, SensorEntity):
                 to_state,
             )
             return
-        self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
+        self._trigger_update_state()
 
+    @callback
     def _sensor_state_change(self, event: Event[EventStateChangedData]) -> None:
         """Actions when the sensor state has changed."""
         if event.data["new_state"] is None:
@@ -773,11 +951,28 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
         old_state = event.data.get("old_state")
         old_state_val = old_state.state if old_state is not None else None
-        valid_on_states = (
-            self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
-                CONF_ON_STATES, DEFAULT_ON_STATES
+        meta_occupied_states = [
+            STATE_ON,
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_BRIGHT,
+            AreaState.AREA_STATE_SLEEP,
+            AreaState.AREA_STATE_ACCENTED,
+        ]
+        is_state_sensor = entity_id.startswith(
+            (
+                f"{SENSOR_DOMAIN}.simply_magic_areas_state_",
+                f"{SENSOR_DOMAIN}.simply_magic_area_state_",
             )
-            or [STATE_ON]
+        )
+        valid_on_states = (
+            meta_occupied_states
+            if (self.area.is_meta() or is_state_sensor)
+            else (
+                self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                    CONF_ON_STATES, DEFAULT_ON_STATES
+                )
+                or [STATE_ON]
+            )
         )
 
         if to_state in INVALID_STATES:
@@ -797,9 +992,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             ):
                 if self.area.state == AreaState.AREA_STATE_OCCUPIED:
                     self._last_off_time = datetime.now(UTC)
-                self.hass.loop.call_soon_threadsafe(
-                    self._update_state, datetime.now(UTC)
-                )
+                self._trigger_update_state()
             return
 
         # Contact sensors (door, window, opening, garage_door) act strictly as edge-triggers
@@ -823,7 +1016,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self._attr_extra_state_attributes[ATTR_LAST_ACTIVE_SENSORS] = [entity_id]
             self._remove_clear_timeout()
             self._remove_extended_timeout()
-            self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
+            self._trigger_update_state()
             return
 
         if (
@@ -857,12 +1050,19 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self._remove_clear_timeout()
             self._remove_extended_timeout()
 
-        self.hass.loop.call_soon_threadsafe(self._update_state, datetime.now(UTC))
+        self._trigger_update_state()
 
     def _get_sensors_state(self) -> bool:
         """Get the current state of the sensor."""
+        meta_occupied_states = [
+            STATE_ON,
+            AreaState.AREA_STATE_OCCUPIED,
+            AreaState.AREA_STATE_BRIGHT,
+            AreaState.AREA_STATE_SLEEP,
+            AreaState.AREA_STATE_ACCENTED,
+        ]
         valid_states = (
-            [STATE_ON]
+            meta_occupied_states
             if self.area.is_meta()
             else self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
                 CONF_ON_STATES, DEFAULT_ON_STATES
@@ -924,7 +1124,17 @@ class AreaStateSensor(MagicEntity, SensorEntity):
 
                 available_continuous_sensors.append(sensor)
 
-                if entity.state in valid_states:
+                is_area_state_sensor = sensor.startswith(
+                    (
+                        f"{SENSOR_DOMAIN}.simply_magic_areas_state_",
+                        f"{SENSOR_DOMAIN}.simply_magic_area_state_",
+                    )
+                )
+                sensor_valid_states = (
+                    meta_occupied_states if is_area_state_sensor else valid_states
+                )
+
+                if entity.state in sensor_valid_states:
                     if enable_mmwave_filter and self._mmwave_filter:
                         is_fan, has_human, has_signals = (
                             self._mmwave_filter.evaluate_radar_signals(

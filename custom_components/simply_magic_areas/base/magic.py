@@ -17,6 +17,7 @@ from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_UNIT_OF_MEASUREMENT,
     LIGHT_LUX,
+    STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
@@ -36,12 +37,15 @@ from ..config.area_state import AreaState, LightingProfile
 from ..config.entity_names import EntityNames
 from ..const import (
     ALL_LIGHT_ENTITIES,
+    AREA_TYPE_BEDROOM,
     AREA_TYPE_EXTERIOR,
     AREA_TYPE_INTERIOR,
     AREA_TYPE_META,
     ATTR_PRESENCE_SENSORS,
+    BEDROOM_AREA_KEYWORDS,
     BINARY_SENSOR_DOMAIN,
     CONF_BRIGHT_LUX_THRESHOLD,
+    CONF_CHILD_AREAS,
     CONF_ENABLED_FEATURES,
     CONF_EXCLUDE_ENTITIES,
     CONF_FAN_CONTROL,
@@ -56,7 +60,9 @@ from ..const import (
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
     CONF_REFERENCE_BRIGHT_AREA,
     CONF_REFERENCE_ILLUMINANCE_SENSOR,
+    CONF_SLEEP_MODE,
     CONF_TYPE,
+    CONF_UNOCCUPIED_WHEN_LIGHTS_OFF,
     CONTACT_SENSOR_DEVICE_CLASSES,
     DATA_AREA_OBJECT,
     DEFAULT_BRIGHT_LUX_THRESHOLD,
@@ -65,6 +71,8 @@ from ..const import (
     DEFAULT_MQTT_ROOM_PRESENCE,
     DEFAULT_PRESENCE_DEVICE_PLATFORMS,
     DEFAULT_PRESENCE_DEVICE_SENSOR_CLASS,
+    DEFAULT_SLEEP_MODE,
+    DEFAULT_UNOCCUPIED_WHEN_LIGHTS_OFF,
     DOMAIN,
     EVENT_MAGICAREAS_AREA_READY,
     EVENT_MAGICAREAS_READY,
@@ -72,6 +80,7 @@ from ..const import (
     MAGIC_AREAS_COMPONENTS,
     MAGIC_AREAS_COMPONENTS_META,
     MAGIC_DEVICE_ID_PREFIX,
+    META_AREA_BEDROOMS,
     META_AREA_EXTERIOR,
     META_AREA_GLOBAL,
     META_AREA_INTERIOR,
@@ -192,6 +201,14 @@ class MagicArea(object):  # noqa: UP004
         self.last_changed: int = datetime.now(UTC)  # type: ignore
         self.state: AreaState = AreaState.AREA_STATE_CLEAR
         self.lighting_profile: LightingProfile = LightingProfile.STANDARD
+        self.sleep_mode_enabled: bool = bool(
+            self.config.get(CONF_SLEEP_MODE, DEFAULT_SLEEP_MODE)
+        )
+        self.system_control_enabled: bool = True
+        self._system_control_switch: Any = None
+        self._state_sensor: Any = None
+        self._light_group: Any = None
+        self._fan_group: Any = None
         self._state_config: dict[AreaState | LightingProfile | str, StateConfigData] = {}
 
         self.loaded_platforms: list[str] = []
@@ -299,11 +316,172 @@ class MagicArea(object):  # noqa: UP004
 
     def is_interior(self) -> bool:
         """If this is an interior area."""
-        return self.area_type == AREA_TYPE_INTERIOR
+        return self.area_type in (AREA_TYPE_INTERIOR, AREA_TYPE_BEDROOM)
 
     def is_exterior(self) -> bool:
         """If this is an exterior area."""
         return self.area_type == AREA_TYPE_EXTERIOR
+
+    def is_bedroom_meta(self) -> bool:
+        """Return True if this is a bedroom meta-area."""
+        if not self.is_meta():
+            return False
+        slug = (self.slug or "").lower()
+        area_id = (self.id or "").lower()
+        return (
+            area_id in (META_AREA_BEDROOMS.lower(), "bedroom")
+            or "bedroom" in slug
+            or bool(self.config.get(CONF_CHILD_AREAS))
+        )
+
+    def is_bedroom_or_ensuite(self) -> bool:
+        """Return True if this room is a bedroom or ensuite (tracked independently of main house occupancy)."""
+        if self.is_meta():
+            return self.is_bedroom_meta()
+        if self.is_exterior():
+            return False
+        if self.area_type == AREA_TYPE_BEDROOM:
+            return True
+        slug = (self.slug or "").lower()
+        name = (self.name or "").lower().replace(" ", "_")
+        area_id = (self.id or "").lower()
+        combined = f"{slug} {name} {area_id}"
+        if any(kw in combined for kw in BEDROOM_AREA_KEYWORDS):
+            return True
+        if self.hass and MODULE_DATA in self.hass.data:
+            for entry_info in self.hass.data[MODULE_DATA].values():
+                other = entry_info.get(DATA_AREA_OBJECT)
+                if other and other.is_meta() and other.is_bedroom_meta():
+                    configured_children = other.config.get(CONF_CHILD_AREAS) or []
+                    if any(
+                        str(c).lower() in (slug, name, area_id)
+                        for c in configured_children
+                    ):
+                        return True
+        return False
+
+    def is_main_house_area(self) -> bool:
+        """Return True if this room is a main interior house area (excluding bedrooms and ensuites)."""
+        return (
+            not self.is_meta()
+            and self.is_interior()
+            and not self.is_bedroom_or_ensuite()
+        )
+
+    def set_sleep_mode(self, enabled: bool, propagate: bool = True) -> None:
+        """Manually enable or disable sleep mode for this area (and child areas if applicable)."""
+        enabled_bool = bool(enabled)
+        self.sleep_mode_enabled = enabled_bool
+        if isinstance(self.config, dict):
+            self.config[CONF_SLEEP_MODE] = enabled_bool
+
+        sleep_switch = getattr(self, "_sleep_mode_switch", None)
+        if sleep_switch is not None and hasattr(sleep_switch, "set_synced_state"):
+            sleep_switch.set_synced_state(enabled_bool)
+
+        profile_sensor = getattr(self, "_lighting_profile_sensor", None)
+        if profile_sensor is not None and hasattr(
+            profile_sensor, "set_manual_sleep_mode"
+        ):
+            profile_sensor.set_manual_sleep_mode(enabled_bool)
+
+        if not propagate or not self.hass or MODULE_DATA not in self.hass.data:
+            return
+
+        configured_children = {
+            str(c).lower() for c in (self.config.get(CONF_CHILD_AREAS) or []) if c
+        }
+        if self.is_meta():
+            configured_children.update(str(c).lower() for c in self.get_child_areas())
+
+        my_keys = {
+            str(self.slug or "").lower(),
+            str(self.id or "").lower(),
+            str(self.name or "").lower(),
+        }
+
+        for entry_info in self.hass.data[MODULE_DATA].values():
+            if not isinstance(entry_info, dict):
+                continue
+            other = entry_info.get(DATA_AREA_OBJECT)
+            if other is None or other is self:
+                continue
+
+            other_keys = {
+                str(getattr(other, "slug", "") or "").lower(),
+                str(getattr(other, "id", "") or "").lower(),
+                str(getattr(other, "name", "") or "").lower(),
+            }
+            other_ref = str(
+                other.config.get(CONF_REFERENCE_BRIGHT_AREA)
+                or other.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
+                    CONF_REFERENCE_BRIGHT_AREA
+                )
+                or ""
+            ).lower()
+
+            should_propagate = False
+            if self.is_meta():
+                if self.is_bedroom_meta():
+                    should_propagate = (
+                        bool(other_keys & configured_children)
+                        if self.config.get(CONF_CHILD_AREAS)
+                        else other.is_bedroom_or_ensuite()
+                    )
+                elif self.id.lower() in (
+                    META_AREA_INTERIOR.lower(),
+                    META_AREA_GLOBAL.lower(),
+                ):
+                    should_propagate = other.is_main_house_area()
+            elif (configured_children and (other_keys & configured_children)) or (
+                other_ref and other_ref in my_keys
+            ):
+                should_propagate = True
+
+            if should_propagate and hasattr(other, "set_sleep_mode"):
+                other.set_sleep_mode(enabled_bool, propagate=False)
+
+    def set_house_sleep_mode(self, enabled: bool) -> None:
+        """Manually enable or disable sleep mode for the main house (excluding bedrooms)."""
+        enabled_bool = bool(enabled)
+        if not self.hass or MODULE_DATA not in self.hass.data:
+            if self.is_main_house_area() or (
+                self.is_meta()
+                and self.id.lower()
+                in (META_AREA_INTERIOR.lower(), META_AREA_GLOBAL.lower())
+            ):
+                self.set_sleep_mode(enabled_bool, propagate=False)
+            return
+
+        for entry_info in self.hass.data[MODULE_DATA].values():
+            if not isinstance(entry_info, dict):
+                continue
+            other = entry_info.get(DATA_AREA_OBJECT)
+            if other is None:
+                continue
+            if other.is_main_house_area() or (
+                other.is_meta()
+                and other.id.lower()
+                in (META_AREA_INTERIOR.lower(), META_AREA_GLOBAL.lower())
+            ):
+                other.set_sleep_mode(enabled_bool, propagate=False)
+
+    def set_bedrooms_sleep_mode(self, enabled: bool) -> None:
+        """Manually enable or disable sleep mode for all bedrooms and bedroom meta-areas."""
+        enabled_bool = bool(enabled)
+        if not self.hass or MODULE_DATA not in self.hass.data:
+            if self.is_bedroom_or_ensuite() or self.is_bedroom_meta():
+                self.set_sleep_mode(enabled_bool, propagate=False)
+            return
+
+        for entry_info in self.hass.data[MODULE_DATA].values():
+            if not isinstance(entry_info, dict):
+                continue
+            other = entry_info.get(DATA_AREA_OBJECT)
+            if other is None:
+                continue
+            if other.is_bedroom_or_ensuite() or other.is_bedroom_meta():
+                other.set_sleep_mode(enabled_bool, propagate=False)
 
     def _is_magic_area_entity(self, entity: RegistryEntry) -> bool:
         """Return if entity belongs to this integration instance."""
@@ -591,20 +769,113 @@ class MagicArea(object):  # noqa: UP004
                     lg.enable_state
                 ]
 
+    def set_system_control(self, enabled: bool, propagate: bool = True) -> None:
+        """Enable or disable automated system control for this area (and child areas if meta)."""
+        enabled_bool = bool(enabled)
+        self.system_control_enabled = enabled_bool
+
+        sys_switch = getattr(self, "_system_control_switch", None)
+        if sys_switch is not None and hasattr(sys_switch, "set_synced_state"):
+            sys_switch.set_synced_state(enabled_bool)
+
+        light_group = getattr(self, "_light_group", None)
+        if (
+            not enabled_bool
+            and light_group is not None
+            and hasattr(light_group, "stop_all_active_control")
+        ):
+            light_group.stop_all_active_control()
+
+        fan_group = getattr(self, "_fan_group", None)
+        if not enabled_bool and fan_group is not None:
+            if hasattr(fan_group, "stop_all_active_control"):
+                fan_group.stop_all_active_control()
+            elif hasattr(fan_group, "_cancel_retry_timer"):
+                fan_group._cancel_retry_timer()
+
+        state_sensor = getattr(self, "_state_sensor", None)
+        if state_sensor is not None and hasattr(state_sensor, "_update_state"):
+            state_sensor._update_state(datetime.now(UTC))
+
+        profile_sensor = getattr(self, "_lighting_profile_sensor", None)
+        if (
+            enabled_bool
+            and profile_sensor is not None
+            and hasattr(profile_sensor, "refresh_profile")
+        ):
+            profile_sensor.refresh_profile()
+
+        if propagate and self.is_meta() and self.hass and MODULE_DATA in self.hass.data:
+            area_id_lower = (self.id or "").lower()
+            for entry_info in self.hass.data[MODULE_DATA].values():
+                if not isinstance(entry_info, dict):
+                    continue
+                other = entry_info.get(DATA_AREA_OBJECT)
+                if other is None or other is self or other.is_meta():
+                    continue
+                applies = False
+                if area_id_lower == META_AREA_GLOBAL.lower():
+                    applies = True
+                elif area_id_lower == META_AREA_EXTERIOR.lower():
+                    applies = other.is_exterior()
+                elif area_id_lower == META_AREA_INTERIOR.lower():
+                    applies = other.is_interior()
+                elif self.is_bedroom_meta():
+                    applies = other.is_bedroom_or_ensuite()
+                if applies and hasattr(other, "set_system_control"):
+                    other.set_system_control(enabled_bool, propagate=False)
+
     def is_control_enabled(self, control_type: ControlType) -> bool:
         """If the area has controled turned on for simply magic areas."""
-        entity_id = ""
         if control_type == ControlType.Fan:
             return self.config.get(CONF_FAN_CONTROL, DEFAULT_FAN_CONTROL)
         if control_type == ControlType.Light:
             return self.config.get(CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL)
 
-        entity_id = self.simply_magic_entity_id(
+        if not self.is_meta():
+            parent_meta_names = [META_AREA_GLOBAL]
+            if self.is_exterior():
+                parent_meta_names.append(META_AREA_EXTERIOR)
+            else:
+                parent_meta_names.append(META_AREA_INTERIOR)
+                if self.is_bedroom_or_ensuite():
+                    parent_meta_names.append(META_AREA_BEDROOMS)
+            for meta_name in parent_meta_names:
+                meta_sw_id = self.simply_magic_entity_id(
+                    SWITCH_DOMAIN, EntityNames.SYSTEM_CONTROL, area_name=meta_name
+                )
+                meta_sw = self.hass.states.get(meta_sw_id)
+                if meta_sw is not None and meta_sw.state.lower() == STATE_OFF:
+                    return False
+
+        candidate_ids: list[str] = []
+        sw = getattr(self, "_system_control_switch", None)
+        if sw is not None and getattr(sw, "entity_id", None):
+            candidate_ids.append(sw.entity_id)
+        default_id = self.simply_magic_entity_id(
             SWITCH_DOMAIN, EntityNames.SYSTEM_CONTROL
         )
-        switch_entity = self.hass.states.get(entity_id)
-        if switch_entity:
-            return switch_entity.state.lower() == STATE_ON  # type: ignore
+        if default_id not in candidate_ids:
+            candidate_ids.append(default_id)
+        if getattr(self, "slug", None):
+            slug_id = self.simply_magic_entity_id(
+                SWITCH_DOMAIN, EntityNames.SYSTEM_CONTROL, area_name=self.slug
+            )
+            if slug_id not in candidate_ids:
+                candidate_ids.append(slug_id)
+
+        for entity_id in candidate_ids:
+            switch_entity = self.hass.states.get(entity_id)
+            if switch_entity is not None and switch_entity.state not in (
+                STATE_UNKNOWN,
+                STATE_UNAVAILABLE,
+            ):
+                return switch_entity.state.lower() == STATE_ON  # type: ignore
+
+        if sw is not None and getattr(sw, "_attr_is_on", None) is not None:
+            return bool(sw._attr_is_on)
+        if getattr(self, "system_control_enabled", None) is not None:
+            return bool(self.system_control_enabled)
         return True
 
     def simply_magic_entity_id(
@@ -711,6 +982,10 @@ class MagicArea(object):  # noqa: UP004
             return []
 
         parents = []
+        if self.is_bedroom_or_ensuite():
+            bedroom_meta = self._get_meta_area_by_id(META_AREA_BEDROOMS.lower())
+            if bedroom_meta:
+                parents.append(bedroom_meta)
         # Direct parent: Interior or Exterior
         parent_id = (
             META_AREA_EXTERIOR.lower()
@@ -718,7 +993,7 @@ class MagicArea(object):  # noqa: UP004
             else META_AREA_INTERIOR.lower()
         )
         parent_meta = self._get_meta_area_by_id(parent_id)
-        if parent_meta:
+        if parent_meta and parent_meta not in parents:
             parents.append(parent_meta)
 
         # Root parent: Global
@@ -756,6 +1031,8 @@ class MagicArea(object):  # noqa: UP004
             # 2. Fallback to config_entries in case parent meta-area instance is not in MODULE_DATA yet
             parent_ids = []
             if not self.is_meta():
+                if self.is_bedroom_or_ensuite():
+                    parent_ids.append(META_AREA_BEDROOMS.lower())
                 parent_ids.append(
                     META_AREA_EXTERIOR.lower()
                     if self.is_exterior()
@@ -807,9 +1084,54 @@ class MagicMetaArea(MagicArea):
 
         return True
 
+    def _are_all_meta_lights_off(self, child_slugs: list[str]) -> bool:
+        """Return True if at least one light exists across the child areas and all are currently OFF."""
+        if not self.hass:
+            return False
+        light_ids: list[str] = []
+        for ent in self.entities.get(LIGHT_DOMAIN, []):
+            ent_id = ent.get(ATTR_ENTITY_ID)
+            if isinstance(ent_id, str) and ent_id not in light_ids:
+                light_ids.append(ent_id)
+        if MODULE_DATA in self.hass.data:
+            for area_info in self.hass.data[MODULE_DATA].values():
+                child_area = area_info.get(DATA_AREA_OBJECT)
+                if child_area and child_area.slug in child_slugs:
+                    lg_id = child_area.simply_magic_entity_id(
+                        LIGHT_DOMAIN, EntityNames.LIGHT
+                    )
+                    if lg_id not in light_ids:
+                        light_ids.append(lg_id)
+                    for ent in child_area.entities.get(LIGHT_DOMAIN, []):
+                        ent_id = ent.get(ATTR_ENTITY_ID)
+                        if isinstance(ent_id, str) and ent_id not in light_ids:
+                            light_ids.append(ent_id)
+        for slug in child_slugs:
+            lg_id = self.simply_magic_entity_id(
+                LIGHT_DOMAIN, EntityNames.LIGHT, area_name=slug
+            )
+            if lg_id not in light_ids:
+                light_ids.append(lg_id)
+
+        valid_states = []
+        for lid in light_ids:
+            st = self.hass.states.get(lid)
+            if st is not None and st.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                valid_states.append(st.state)
+        return bool(valid_states) and all(s == STATE_OFF for s in valid_states)
+
     def get_active_areas(self) -> list[str]:
         """Get the currently active areas."""
         areas = self.get_child_areas()
+        if (
+            self.is_bedroom_meta()
+            and self.config.get(
+                CONF_UNOCCUPIED_WHEN_LIGHTS_OFF, DEFAULT_UNOCCUPIED_WHEN_LIGHTS_OFF
+            )
+            and self._are_all_meta_lights_off(areas)
+        ):
+            return []
+
         active_areas: list[str] = []
 
         if MODULE_DATA in self.hass.data:
@@ -826,15 +1148,45 @@ class MagicMetaArea(MagicArea):
 
     def get_child_areas(self) -> list[str]:
         """Get the child areas."""
-        data = self.hass.data[MODULE_DATA]
+        data = self.hass.data.get(MODULE_DATA, {})
+        configured_children = self.config.get(CONF_CHILD_AREAS)
+        if configured_children and isinstance(configured_children, (list, tuple, set)):
+            normalized_children = {str(c).lower() for c in configured_children if c}
+            matched_areas: list[str] = []
+            for area_info in data.values():
+                area = area_info.get(DATA_AREA_OBJECT)
+                if (
+                    area
+                    and not area.is_meta()
+                    and (
+                        area.slug.lower() in normalized_children
+                        or area.id.lower() in normalized_children
+                        or area.name.lower() in normalized_children
+                    )
+                ):
+                    matched_areas.append(area.slug)
+            if matched_areas:
+                return matched_areas
+            return [slugify(str(c)) for c in configured_children if c]
+
         areas: list[str] = []
 
         for area_info in data.values():
             area = area_info[DATA_AREA_OBJECT]
-            if (
-                self.id == META_AREA_GLOBAL.lower()  # type: ignore
-                or area.config.get(CONF_TYPE) == self.id
-            ) and not area.is_meta():
+            if area.is_meta():
+                continue
+            if self.is_bedroom_meta():
+                if area.is_bedroom_or_ensuite():
+                    areas.append(area.slug)
+            elif self.id == META_AREA_INTERIOR.lower():  # type: ignore
+                # House interior occupancy tracks main areas independently of bedrooms and ensuites
+                if area.is_main_house_area():
+                    areas.append(area.slug)
+            elif self.id == META_AREA_GLOBAL.lower():  # type: ignore
+                # House global occupancy tracks main/exterior areas independently of bedrooms and ensuites
+                if not area.is_bedroom_or_ensuite():
+                    areas.append(area.slug)
+            elif area.config.get(CONF_TYPE) == self.id:
                 areas.append(area.slug)
 
         return areas
@@ -860,14 +1212,21 @@ class MagicMetaArea(MagicArea):
 
     async def _load_entities(self) -> None:
         entity_list: list[str] = []
+        child_slugs = set(self.get_child_areas())
 
         data = self.hass.data[MODULE_DATA]
         for area_info in data.values():
             area = area_info[DATA_AREA_OBJECT]
-            if (
-                self.id == META_AREA_GLOBAL.lower()  # type: ignore
+            if not area.is_meta() and (
+                area.slug in child_slugs
+                or self.id == META_AREA_GLOBAL.lower()  # type: ignore
                 or area.config.get(CONF_TYPE) == self.id
             ):
+                if (
+                    self.id in (META_AREA_INTERIOR.lower(), META_AREA_GLOBAL.lower())
+                    and area.is_bedroom_or_ensuite()
+                ):
+                    continue
                 for entities in area.entities.values():
                     for entity in entities:
                         if not isinstance(entity["entity_id"], str):

@@ -72,6 +72,7 @@ ATTR_ARRIVAL_PREWARM_ACTIVE = "arrival_prewarm_active"
 ATTR_ARRIVAL_PREWARM_TS = "arrival_prewarm_ts"
 ATTR_ARRIVAL_PREWARM_REASON = "arrival_prewarm_reason"
 ATTR_SLEEP_WAKEUP_BOOST = "sleep_wakeup_boost"
+ATTR_SLEEP_MODE = "sleep_mode"
 ATTR_HVAC_CIRCULATION_ON = "hvac_circulation_on"
 ATTR_HVAC_CIRCULATION_SPEED = "hvac_circulation_speed"
 ATTR_LINKED_CLIMATE_ENTITIES = "linked_climate_entities"
@@ -80,6 +81,7 @@ DEFAULT_LIGHTING_PROFILE = LightingProfile.STANDARD
 
 # Icons
 ICON_SYSTEM_CONTROL = "mdi:head-cog"
+ICON_SLEEP_MODE = "mdi:sleep"
 
 # MagicAreas Components
 MAGIC_AREAS_COMPONENTS = [
@@ -94,6 +96,7 @@ MAGIC_AREAS_COMPONENTS = [
 ]
 
 MAGIC_AREAS_COMPONENTS_META = [
+    SWITCH_DOMAIN,
     BINARY_SENSOR_DOMAIN,
     COVER_DOMAIN,
     SENSOR_DOMAIN,
@@ -108,12 +111,19 @@ MAGIC_DEVICE_ID_PREFIX = "simply_magic_areas_"
 META_AREA_GLOBAL = "Global"
 META_AREA_INTERIOR = "Interior"
 META_AREA_EXTERIOR = "Exterior"
-META_AREAS = [META_AREA_GLOBAL, META_AREA_INTERIOR, META_AREA_EXTERIOR]
+META_AREA_BEDROOMS = "Bedrooms"
+META_AREAS = [
+    META_AREA_GLOBAL,
+    META_AREA_INTERIOR,
+    META_AREA_EXTERIOR,
+    META_AREA_BEDROOMS,
+]
 
 # Area Types
 AREA_TYPE_META = "meta"
 AREA_TYPE_INTERIOR = "interior"
 AREA_TYPE_EXTERIOR = "exterior"
+AREA_TYPE_BEDROOM = "bedroom"
 
 AVAILABLE_ON_STATES = [STATE_ON, STATE_HOME, STATE_PLAYING, STATE_OPEN]
 
@@ -127,6 +137,8 @@ CONTACT_SENSOR_DEVICE_CLASSES = {
 }
 
 DEFAULT_ACTUATOR_RETRY_DELAYS: tuple[float, ...] = (3.5, 7.0, 15.0)
+DEFAULT_LIGHT_SETTLE_TIME: float = 0.25
+DEFAULT_BRIGHTNESS_SMOOTHING_DEADBAND: int = 8
 
 ENTRY_AREA_KEYWORDS: tuple[str, ...] = (
     "front_room",
@@ -153,6 +165,35 @@ LIVING_AREA_KEYWORDS: tuple[str, ...] = (
     "den",
     "workshop",
 )
+
+BEDROOM_AREA_KEYWORDS: tuple[str, ...] = (
+    "bedroom",
+    "master_bedroom",
+    "primary_bedroom",
+    "guest_bedroom",
+    "kids_bedroom",
+    "nursery",
+    "bunk_room",
+    "ensuite",
+    "en_suite",
+    "master_bath",
+    "master_bathroom",
+    "primary_bath",
+    "primary_bathroom",
+)
+
+CONF_CHILD_AREAS = "child_areas"
+CONF_UNOCCUPIED_WHEN_LIGHTS_OFF, DEFAULT_UNOCCUPIED_WHEN_LIGHTS_OFF = (
+    "unoccupied_when_lights_off",
+    True,
+)
+CONF_AUTO_NIGHT_SLEEP, DEFAULT_AUTO_NIGHT_SLEEP = ("auto_night_sleep", True)
+CONF_AUTO_SLEEP_AFTER_HOUR, DEFAULT_AUTO_SLEEP_AFTER_HOUR = (
+    "auto_sleep_after_hour",
+    22,
+)
+CONF_AUTO_SLEEP_END_HOUR, DEFAULT_AUTO_SLEEP_END_HOUR = ("auto_sleep_end_hour", 7)
+CONF_SLEEP_MODE, DEFAULT_SLEEP_MODE = ("sleep_mode", False)
 
 CONF_ARRIVAL_PREWARM, DEFAULT_ARRIVAL_PREWARM = ("arrival_prewarm", True)
 CONF_ARRIVAL_PREWARM_TIMEOUT, DEFAULT_ARRIVAL_PREWARM_TIMEOUT = (
@@ -704,7 +745,17 @@ FEATURES_SCHEMA: vol.Schema = vol.Schema(
 REGULAR_AREA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_TYPE, default=DEFAULT_TYPE): vol.In(
-            [AREA_TYPE_INTERIOR, AREA_TYPE_EXTERIOR]
+            [AREA_TYPE_INTERIOR, AREA_TYPE_EXTERIOR, AREA_TYPE_BEDROOM]
+        ),
+        vol.Optional(CONF_CHILD_AREAS): cv.ensure_list,
+        vol.Optional(CONF_UNOCCUPIED_WHEN_LIGHTS_OFF): cv.boolean,
+        vol.Optional(CONF_SLEEP_MODE): cv.boolean,
+        vol.Optional(CONF_AUTO_NIGHT_SLEEP): cv.boolean,
+        vol.Optional(CONF_AUTO_SLEEP_AFTER_HOUR): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=23)
+        ),
+        vol.Optional(CONF_AUTO_SLEEP_END_HOUR): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=23)
         ),
         vol.Optional(CONF_ENABLED_FEATURES, default={}): FEATURES_SCHEMA,
         vol.Optional(
@@ -740,6 +791,16 @@ REGULAR_AREA_SCHEMA = vol.Schema(
 META_AREA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_TYPE, default=AREA_TYPE_META): AREA_TYPE_META,
+        vol.Optional(CONF_CHILD_AREAS): cv.ensure_list,
+        vol.Optional(CONF_UNOCCUPIED_WHEN_LIGHTS_OFF): cv.boolean,
+        vol.Optional(CONF_SLEEP_MODE): cv.boolean,
+        vol.Optional(CONF_AUTO_NIGHT_SLEEP): cv.boolean,
+        vol.Optional(CONF_AUTO_SLEEP_AFTER_HOUR): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=23)
+        ),
+        vol.Optional(CONF_AUTO_SLEEP_END_HOUR): vol.All(
+            vol.Coerce(int), vol.Range(min=0, max=23)
+        ),
         vol.Optional(
             CONF_CLEAR_TIMEOUT, default=DEFAULT_CLEAR_TIMEOUT
         ): cv.positive_int,
@@ -766,7 +827,11 @@ _DOMAIN_SCHEMA = vol.Schema({cv.slug: AREA_SCHEMA})
 
 # VALIDATION_TUPLES
 OPTIONS_AREA = [
-    (CONF_TYPE, DEFAULT_TYPE, vol.In([AREA_TYPE_INTERIOR, AREA_TYPE_EXTERIOR])),
+    (
+        CONF_TYPE,
+        DEFAULT_TYPE,
+        vol.In([AREA_TYPE_INTERIOR, AREA_TYPE_EXTERIOR, AREA_TYPE_BEDROOM]),
+    ),
     (CONF_CLEAR_TIMEOUT, DEFAULT_CLEAR_TIMEOUT, int),
     (CONF_EXTENDED_TIMEOUT, DEFAULT_EXTENDED_TIMEOUT, int),
     (CONF_LIGHT_CONTROL, DEFAULT_LIGHT_CONTROL, bool),

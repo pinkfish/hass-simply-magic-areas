@@ -19,6 +19,7 @@ from homeassistant.helpers.entity_registry import (
 
 from .base.magic import MagicArea, MagicMetaArea
 from .const import (
+    AREA_TYPE_BEDROOM,
     AREA_TYPE_EXTERIOR,
     AREA_TYPE_INTERIOR,
     AREA_TYPE_META,
@@ -30,6 +31,7 @@ from .const import (
     DATA_ENTITY_LISTENER,
     DATA_UNDO_UPDATE_LISTENER,
     DOMAIN,
+    META_AREA_BEDROOMS,
     META_AREA_EXTERIOR,
     META_AREA_GLOBAL,
     META_AREA_INTERIOR,
@@ -68,8 +70,12 @@ async def async_setup_entry(
         _LOGGER.debug("Setting up entry for %s", area_name)
 
         meta_ids = [meta_area.lower() for meta_area in META_AREAS]
+        is_meta_entry = config_entry.data.get(CONF_TYPE) == AREA_TYPE_META or (
+            area_id in meta_ids
+            and config_entry.data.get(CONF_TYPE) in (None, AREA_TYPE_META)
+        )
 
-        if area_id not in meta_ids:
+        if not is_meta_entry:
             area_registry = async_get_ar(hass)
             area = area_registry.async_get_area(area_id)
 
@@ -138,11 +144,12 @@ async def async_setup_entry(
 
         # Handle non-meta areas
         if not magic_area.is_meta():
-            meta_area_key = (
-                META_AREA_EXTERIOR.lower()
-                if magic_area.is_exterior()
-                else META_AREA_INTERIOR.lower()
-            )
+            if magic_area.is_exterior():
+                meta_area_key = META_AREA_EXTERIOR.lower()
+            elif magic_area.is_bedroom_or_ensuite():
+                meta_area_key = META_AREA_BEDROOMS.lower()
+            else:
+                meta_area_key = META_AREA_INTERIOR.lower()
 
             if meta_area_key in meta_areas:
                 meta_area_object = meta_areas[meta_area_key]
@@ -208,7 +215,12 @@ async def async_update_options(hass: HomeAssistant, config_entry: ConfigEntry):
                     meta_id == META_AREA_GLOBAL.lower()
                     or (
                         meta_id == META_AREA_INTERIOR.lower()
-                        and entry_type == AREA_TYPE_INTERIOR
+                        and entry_type in (AREA_TYPE_INTERIOR, AREA_TYPE_BEDROOM)
+                        and not entry_is_meta
+                    )
+                    or (
+                        meta_id == META_AREA_BEDROOMS.lower()
+                        and entry_type in (AREA_TYPE_INTERIOR, AREA_TYPE_BEDROOM)
                         and not entry_is_meta
                     )
                     or (

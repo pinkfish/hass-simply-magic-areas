@@ -17,3 +17,4 @@ class EntityNames(StrEnum):
     MEDIA_PLAYER = "media"
     HUMIDITY_STATISTICS = "humidity_statistics"
     LIGHTING_PROFILE = "lighting_profile"
+    SLEEP_MODE = "sleep_mode"

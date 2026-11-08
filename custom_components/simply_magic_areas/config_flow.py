@@ -20,6 +20,7 @@ from .const import (
     ALL_BINARY_SENSOR_DEVICE_CLASSES,
     ALL_LIGHT_ENTITIES,
     ALL_PRESENCE_DEVICE_PLATFORMS,
+    AREA_TYPE_BEDROOM,
     AREA_TYPE_EXTERIOR,
     AREA_TYPE_INTERIOR,
     AREA_TYPE_META,
@@ -428,7 +429,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
 
         all_selectors = {
             CONF_TYPE: self._build_selector_select(
-                sorted([AREA_TYPE_INTERIOR, AREA_TYPE_EXTERIOR])
+                sorted([AREA_TYPE_INTERIOR, AREA_TYPE_EXTERIOR, AREA_TYPE_BEDROOM])
             ),
             CONF_ICON: icon_selector,
             CONF_CLEAR_TIMEOUT: self._build_selector_number(),

@@ -116,6 +116,7 @@
         "title": "Area options",
         "description": "Configure basic options for the area.",
         "data": {
+          "child_areas": "Bedroom group areas (Simply Magic Area devices)",
           "icon": "Icon",
           "clear_timeout": "How long since last presence event should it wait before clearing the area",
           "extended_timeout": "How after occupied the area should be extended",

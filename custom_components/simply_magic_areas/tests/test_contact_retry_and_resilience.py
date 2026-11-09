@@ -3084,10 +3084,150 @@ async def test_system_control_off_immediately_halts_all_light_changes_and_timers
     assert len(fan_on_calls) == 0
 
 
+async def test_bedroom_meta_area_child_areas_config_flow_only_magic_area_devices(
+    hass: HomeAssistant,
+) -> None:
+    """Test that Bedroom Meta-Area child_areas config flow only allows other Simply Magic Area devices."""
+    import pytest
+    from homeassistant.data_entry_flow import FlowResultType, InvalidData
+    from homeassistant.helpers.area_registry import async_get as async_get_ar
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+    from custom_components.simply_magic_areas.base.magic import MagicArea, MagicMetaArea
+    from custom_components.simply_magic_areas.const import (
+        AREA_TYPE_BEDROOM,
+        AREA_TYPE_INTERIOR,
+        AREA_TYPE_META,
+        CONF_CHILD_AREAS,
+        CONF_ID,
+        CONF_NAME,
+        CONF_TYPE,
+        DATA_AREA_OBJECT,
+        DOMAIN,
+        META_AREA_BEDROOMS,
+        META_AREA_INTERIOR,
+        MODULE_DATA,
+    )
 
+    # Create raw Home Assistant areas including an unconfigured 'attic' area
+    ar = async_get_ar(hass)
+    ar.async_get_or_create("Master Bedroom")
+    ar.async_get_or_create("Master Ensuite")
+    ar.async_get_or_create("Kitchen")
+    ar.async_get_or_create("Attic")  # NOT configured as a Simply Magic Area device
 
+    def _make_magic_area(name: str, slug: str, area_type: str) -> MagicArea:
+        a = MagicArea.__new__(MagicArea)
+        a.hass = hass
+        a.name = name
+        a.slug = slug
+        a.id = slug
+        a.state = AreaState.AREA_STATE_CLEAR
+        a.config = {CONF_NAME: name, CONF_ID: slug, CONF_TYPE: area_type}
+        a.entities = {}
+        a.initialized = True
+        return a
 
+    master_bedroom = _make_magic_area(
+        "Master Bedroom", "master_bedroom", AREA_TYPE_BEDROOM
+    )
+    master_ensuite = _make_magic_area(
+        "Master Ensuite", "master_ensuite", AREA_TYPE_INTERIOR
+    )
+    kitchen = _make_magic_area("Kitchen", "kitchen", AREA_TYPE_INTERIOR)
 
+    interior_meta = MagicMetaArea.__new__(MagicMetaArea)
+    interior_meta.hass = hass
+    interior_meta.name = META_AREA_INTERIOR
+    interior_meta.slug = "interior"
+    interior_meta.id = "interior"
+    interior_meta.state = AreaState.AREA_STATE_CLEAR
+    interior_meta.config = {
+        CONF_NAME: META_AREA_INTERIOR,
+        CONF_ID: "interior",
+        CONF_TYPE: AREA_TYPE_META,
+    }
+    interior_meta.entities = {}
+    interior_meta.initialized = True
+
+    bedrooms_entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_NAME: META_AREA_BEDROOMS,
+            CONF_ID: "bedrooms",
+            CONF_TYPE: AREA_TYPE_META,
+        },
+        entry_id="entry_bedrooms_meta",
+    )
+    bedrooms_entry.add_to_hass(hass)
+
+    bedrooms_meta = MagicMetaArea.__new__(MagicMetaArea)
+    bedrooms_meta.hass = hass
+    bedrooms_meta.name = META_AREA_BEDROOMS
+    bedrooms_meta.slug = "bedrooms"
+    bedrooms_meta.id = "bedrooms"
+    bedrooms_meta.hass_config = bedrooms_entry
+    bedrooms_meta.state = AreaState.AREA_STATE_CLEAR
+    bedrooms_meta.config = {
+        CONF_NAME: META_AREA_BEDROOMS,
+        CONF_ID: "bedrooms",
+        CONF_TYPE: AREA_TYPE_META,
+    }
+    bedrooms_meta.entities = {}
+    bedrooms_meta.initialized = True
+
+    hass.data[MODULE_DATA] = {
+        "entry_master_bedroom": {DATA_AREA_OBJECT: master_bedroom},
+        "entry_master_ensuite": {DATA_AREA_OBJECT: master_ensuite},
+        "entry_kitchen": {DATA_AREA_OBJECT: kitchen},
+        "entry_interior_meta": {DATA_AREA_OBJECT: interior_meta},
+        bedrooms_entry.entry_id: {DATA_AREA_OBJECT: bedrooms_meta},
+    }
+
+    # 1. Verify get_other_magic_area_devices only returns other non-meta Simply Magic Area devices
+    other_devices = bedrooms_meta.get_other_magic_area_devices()
+    other_slugs = [d["slug"] for d in other_devices]
+    assert set(other_slugs) == {"master_bedroom", "master_ensuite", "kitchen"}
+    assert "attic" not in other_slugs
+    assert "interior" not in other_slugs
+    assert "bedrooms" not in other_slugs
+
+    # 2. Open OptionsFlow on the Bedrooms Meta-Area
+    result = await hass.config_entries.options.async_init(bedrooms_entry.entry_id)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "area_config"
+
+    # Rejects an area ('attic') that is not a Simply Magic Area device at schema validation
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={CONF_CHILD_AREAS: ["master_bedroom", "attic"]},
+        )
+
+    # Accepts valid Simply Magic Area devices ('master_bedroom', 'master_ensuite')
+    good_result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_CHILD_AREAS: ["master_bedroom", "master_ensuite"]},
+    )
+    assert good_result["type"] == FlowResultType.FORM
+    assert good_result["step_id"] == "select_features"
+
+    final_result = await hass.config_entries.options.async_configure(
+        good_result["flow_id"],
+        user_input={},
+    )
+    assert final_result["type"] == FlowResultType.CREATE_ENTRY
+    assert final_result["data"][CONF_CHILD_AREAS] == [
+        "master_bedroom",
+        "master_ensuite",
+    ]
+
+    # Verify get_child_areas strictly filters to configured Simply Magic Area devices
+    bedrooms_meta.config[CONF_CHILD_AREAS] = [
+        "master_bedroom",
+        "master_ensuite",
+        "attic",
+    ]
+    assert bedrooms_meta.get_child_areas() == ["master_bedroom", "master_ensuite"]
 
 

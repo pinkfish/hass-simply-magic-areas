@@ -26,6 +26,7 @@ from .const import (
     AREA_TYPE_META,
     AVAILABLE_ON_STATES,
     CONF_AGGREGATES_MIN_ENTITIES,
+    CONF_CHILD_AREAS,
     CONF_CLEAR_TIMEOUT,
     CONF_CLIMATE_GROUPS_TURN_ON_STATE,
     CONF_COVER_GROUPS,
@@ -409,27 +410,55 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
 
         if user_input is not None:
             _LOGGER.debug("Validating area base config: %s", user_input)
+            if CONF_CHILD_AREAS in user_input and user_input[CONF_CHILD_AREAS] is not None:
+                raw_children = cv.ensure_list(user_input[CONF_CHILD_AREAS])
+                non_empty_children = [c for c in raw_children if c]
+                resolved_children = (
+                    self.area.resolve_child_magic_area_slugs(non_empty_children)
+                    if hasattr(self.area, "resolve_child_magic_area_slugs")
+                    else non_empty_children
+                )
+                if len(resolved_children) != len(non_empty_children):
+                    errors[CONF_CHILD_AREAS] = "option_error"
+                else:
+                    user_input = {
+                        **user_input,
+                        CONF_CHILD_AREAS: resolved_children,
+                    }
             area_schema = (
                 META_AREA_SCHEMA if self.area.is_meta() else REGULAR_AREA_SCHEMA
             )
-            try:
-                self.area_options = area_schema(user_input)
-            except vol.MultipleInvalid as validation:
-                errors = {error.path[0]: error.msg for error in validation.errors}
-                _LOGGER.debug(
-                    "Found the following errors: %s (((%s)))", errors, user_input
-                )
-            except Exception as e:  # noqa: BLE001
-                _LOGGER.warning("Unexpected error caught: %s", str(e))
-            else:
-                _LOGGER.debug("Saving area base config: %s", self.area_options)
-                return await self.async_step_select_features()
+            if not errors:
+                try:
+                    self.area_options = area_schema(user_input)
+                except vol.MultipleInvalid as validation:
+                    errors = {error.path[0]: error.msg for error in validation.errors}
+                    _LOGGER.debug(
+                        "Found the following errors: %s (((%s)))", errors, user_input
+                    )
+                except Exception as e:  # noqa: BLE001
+                    _LOGGER.warning("Unexpected error caught: %s", str(e))
+                else:
+                    _LOGGER.debug("Saving area base config: %s", self.area_options)
+                    return await self.async_step_select_features()
 
         icon_selector = selector({"icon": {"placeholder": DEFAULT_ICON}})
+        other_magic_devices = (
+            self.area.get_other_magic_area_devices()
+            if hasattr(self.area, "get_other_magic_area_devices")
+            else []
+        )
+        child_area_select_options = [
+            {"value": dev["slug"], "label": dev["name"]}
+            for dev in other_magic_devices
+        ]
 
         all_selectors = {
             CONF_TYPE: self._build_selector_select(
                 sorted([AREA_TYPE_INTERIOR, AREA_TYPE_EXTERIOR, AREA_TYPE_BEDROOM])
+            ),
+            CONF_CHILD_AREAS: self._build_selector_select(
+                child_area_select_options, multiple=True
             ),
             CONF_ICON: icon_selector,
             CONF_CLEAR_TIMEOUT: self._build_selector_number(),
@@ -460,9 +489,27 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
         else:
             for lg in ALL_LIGHT_ENTITIES:
                 if lg.entity_name() in option_keys:
-                    selectors.update(lg.config_flow_selectors(self.all_entities))
+                    selectors[lg.entity_name()] = NullableEntitySelector(
+                        EntitySelectorConfig(
+                            include_entities=self.all_entities, multiple=False
+                        )
+                    )
+                    selectors[lg.state_dim_level()] = selector(lg.number_selector())
 
-        data_schema = self._build_options_schema(options=options, selectors=selectors)
+        saved_options = dict(self.config_entry.options)
+        if (
+            CONF_CHILD_AREAS in saved_options
+            and hasattr(self.area, "resolve_child_magic_area_slugs")
+        ):
+            saved_options[CONF_CHILD_AREAS] = self.area.resolve_child_magic_area_slugs(
+                saved_options.get(CONF_CHILD_AREAS)
+            )
+
+        data_schema = self._build_options_schema(
+            options=options,
+            saved_options=saved_options,
+            selectors=selectors,
+        )
 
         return self.async_show_form(
             step_id="area_config",

@@ -791,7 +791,7 @@ REGULAR_AREA_SCHEMA = vol.Schema(
 META_AREA_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_TYPE, default=AREA_TYPE_META): AREA_TYPE_META,
-        vol.Optional(CONF_CHILD_AREAS): cv.ensure_list,
+        vol.Optional(CONF_CHILD_AREAS, default=[]): cv.ensure_list,
         vol.Optional(CONF_UNOCCUPIED_WHEN_LIGHTS_OFF): cv.boolean,
         vol.Optional(CONF_SLEEP_MODE): cv.boolean,
         vol.Optional(CONF_AUTO_NIGHT_SLEEP): cv.boolean,
@@ -801,6 +801,7 @@ META_AREA_SCHEMA = vol.Schema(
         vol.Optional(CONF_AUTO_SLEEP_END_HOUR): vol.All(
             vol.Coerce(int), vol.Range(min=0, max=23)
         ),
+        vol.Optional(CONF_ENABLED_FEATURES, default={}): FEATURES_SCHEMA,
         vol.Optional(
             CONF_CLEAR_TIMEOUT, default=DEFAULT_CLEAR_TIMEOUT
         ): cv.positive_int,
@@ -867,6 +868,7 @@ OPTIONS_AREA_ADVANCED = [
 ]
 
 OPTIONS_AREA_META = [
+    (CONF_CHILD_AREAS, [], cv.ensure_list),
     (CONF_CLEAR_TIMEOUT, DEFAULT_CLEAR_TIMEOUT, int),
     (CONF_EXTENDED_TIMEOUT, DEFAULT_EXTENDED_TIMEOUT, int),
     (CONF_ICON, DEFAULT_ICON, str),

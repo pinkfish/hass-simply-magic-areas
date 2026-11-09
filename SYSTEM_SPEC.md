@@ -589,7 +589,8 @@ For exterior spaces of the home (both concrete areas classified as `type: exteri
 > [!TIP]
 > **Radical Simplicity:** The basic setup presents only 6–7 essential options for primary spatial control. Secondary and niche options are cleanly moved to Advanced Light Groups. Area icons are automatically managed via Home Assistant's native Area Registry.
 
-- `type`: Area classification (`interior`, `exterior`, `meta`).
+- `type`: Area classification (`interior`, `exterior`, `bedroom`, `meta`).
+- `child_areas` (`OPTIONS_AREA_META`): Multi-select list of child areas for the `Bedrooms` Meta-Area (or custom meta-areas), populated **strictly from other configured non-meta Simply Magic Area devices** (`MagicArea.get_other_magic_area_devices()` / `MagicArea.resolve_child_magic_area_slugs()`). Unconfigured Home Assistant areas or non-Simply-Magic-Area devices are excluded.
 - `clear_timeout`: Seconds of sensor inactivity before transitioning `occupied` -> `extended` (default: `360s` / 6 min).
 - `extended_timeout`: Seconds of sensor inactivity before transitioning `extended` -> `clear` (default: `360s` / 6 min).
 - `light_control`: Master switch for automatic lighting automation for this area (default: `True`).

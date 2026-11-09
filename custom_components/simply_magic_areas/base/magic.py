@@ -56,6 +56,7 @@ from ..const import (
     CONF_INCLUDE_ENTITIES,
     CONF_LIGHT_CONTROL,
     CONF_MQTT_ROOM_PRESENCE,
+    CONF_NAME,
     CONF_PRESENCE_DEVICE_PLATFORMS,
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
     CONF_REFERENCE_BRIGHT_AREA,
@@ -84,6 +85,7 @@ from ..const import (
     META_AREA_EXTERIOR,
     META_AREA_GLOBAL,
     META_AREA_INTERIOR,
+    META_AREAS,
     MODULE_DATA,
 )
 from ..util import is_entity_list
@@ -322,6 +324,151 @@ class MagicArea(object):  # noqa: UP004
         """If this is an exterior area."""
         return self.area_type == AREA_TYPE_EXTERIOR
 
+    def get_other_magic_area_devices(self) -> list[dict[str, Any]]:
+        """Return metadata for all other configured non-meta Simply Magic Area devices."""
+        if not self.hass:
+            return []
+
+        reserved_meta_ids = {m.lower() for m in META_AREAS}
+        my_id = str(getattr(self, "id", "") or "").lower()
+        my_slug = str(getattr(self, "slug", "") or "").lower()
+
+        devices_by_slug: dict[str, dict[str, Any]] = {}
+
+        def _register_candidate(
+            area_id: str,
+            area_name: str,
+            area_slug: str | None = None,
+            entry_id: str | None = None,
+            device_id: str | None = None,
+        ) -> None:
+            norm_id = str(area_id or "").strip()
+            norm_name = str(area_name or norm_id).strip()
+            slug = str(area_slug or slugify(norm_name or norm_id)).lower()
+            if not slug or slug == my_slug or norm_id.lower() == my_id:
+                return
+            if norm_id.lower() in reserved_meta_ids or slug in reserved_meta_ids:
+                return
+
+            rec = devices_by_slug.get(slug)
+            if rec is None:
+                rec = {
+                    "slug": slug,
+                    "id": norm_id or slug,
+                    "name": norm_name or slug,
+                    "device_id": device_id,
+                    "entry_id": entry_id,
+                    "keys": set(),
+                }
+                devices_by_slug[slug] = rec
+            else:
+                if device_id and not rec.get("device_id"):
+                    rec["device_id"] = device_id
+                if entry_id and not rec.get("entry_id"):
+                    rec["entry_id"] = entry_id
+
+            keys: set[str] = rec["keys"]
+            for candidate in (
+                slug,
+                norm_id.lower(),
+                norm_name.lower(),
+                norm_name.lower().replace(" ", "_"),
+                f"{MAGIC_DEVICE_ID_PREFIX}{slug}",
+                f"{MAGIC_DEVICE_ID_PREFIX}{norm_id.lower()}",
+                f"sensor.{MAGIC_DEVICE_ID_PREFIX}state_{slug}",
+                f"light.{MAGIC_DEVICE_ID_PREFIX}light_{slug}",
+                f"switch.{MAGIC_DEVICE_ID_PREFIX}sleep_mode_{slug}",
+                f"switch.{MAGIC_DEVICE_ID_PREFIX}system_control_{slug}",
+                f"binary_sensor.{MAGIC_DEVICE_ID_PREFIX}occupancy_{slug}",
+            ):
+                if candidate:
+                    keys.add(candidate)
+            if device_id:
+                keys.add(str(device_id).lower())
+            if entry_id:
+                keys.add(str(entry_id).lower())
+
+        # 1. Loaded MagicArea objects in MODULE_DATA
+        ma_data = self.hass.data.get(MODULE_DATA, {})
+        if isinstance(ma_data, dict):
+            for entry_key, entry_info in ma_data.items():
+                if not isinstance(entry_info, dict):
+                    continue
+                other = entry_info.get(DATA_AREA_OBJECT)
+                if other is None or other is self or other.is_meta():
+                    continue
+                _register_candidate(
+                    area_id=getattr(other, "id", ""),
+                    area_name=getattr(other, "name", ""),
+                    area_slug=getattr(other, "slug", None),
+                    entry_id=str(
+                        getattr(getattr(other, "hass_config", None), "entry_id", "")
+                        or entry_key
+                    ),
+                )
+
+        # 2. Configured Simply Magic Area ConfigEntries
+        if hasattr(self.hass, "config_entries") and hasattr(
+            self.hass.config_entries, "async_entries"
+        ):
+            for entry in self.hass.config_entries.async_entries(DOMAIN):
+                if entry.data.get(CONF_TYPE) == AREA_TYPE_META:
+                    continue
+                c_id = str(entry.data.get(CONF_ID) or "")
+                c_name = str(entry.data.get(CONF_NAME) or entry.title or c_id)
+                if not c_id and not c_name:
+                    continue
+                _register_candidate(
+                    area_id=c_id or slugify(c_name),
+                    area_name=c_name,
+                    entry_id=entry.entry_id,
+                )
+
+        # 3. Simply Magic Area devices in Home Assistant's Device Registry
+        try:
+            dev_reg = async_get_dr(self.hass)
+            for dev in dev_reg.devices.values():
+                for domain, ident in dev.identifiers:
+                    if domain == DOMAIN and ident.startswith(MAGIC_DEVICE_ID_PREFIX):
+                        raw_area_id = ident[len(MAGIC_DEVICE_ID_PREFIX) :]
+                        dev_name = dev.name_by_user or dev.name or raw_area_id
+                        _register_candidate(
+                            area_id=raw_area_id,
+                            area_name=dev_name,
+                            device_id=dev.id,
+                        )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Device registry lookup skipped: %s", err)
+
+        return sorted(
+            devices_by_slug.values(),
+            key=lambda item: (str(item["name"]).lower(), str(item["slug"])),
+        )
+
+    def resolve_child_magic_area_slugs(self, raw_children: Any = None) -> list[str]:
+        """Resolve a list of child area identifiers strictly against other Simply Magic Area devices."""
+        if raw_children is None:
+            raw_children = self.config.get(CONF_CHILD_AREAS)
+        if not raw_children or not isinstance(raw_children, (list, tuple, set)):
+            return []
+
+        other_devices = self.get_other_magic_area_devices()
+        if not other_devices:
+            return []
+
+        resolved: list[str] = []
+        for raw in raw_children:
+            if not raw:
+                continue
+            token = str(raw).strip().lower()
+            token_slug = slugify(token)
+            for dev in other_devices:
+                if token in dev["keys"] or (token_slug and token_slug in dev["keys"]):
+                    if dev["slug"] not in resolved:
+                        resolved.append(dev["slug"])
+                    break
+        return resolved
+
     def is_bedroom_meta(self) -> bool:
         """Return True if this is a bedroom meta-area."""
         if not self.is_meta():
@@ -345,20 +492,40 @@ class MagicArea(object):  # noqa: UP004
         slug = (self.slug or "").lower()
         name = (self.name or "").lower().replace(" ", "_")
         area_id = (self.id or "").lower()
+        my_tokens = {slug, name, area_id}
+        if self.hass:
+            if MODULE_DATA in self.hass.data:
+                for entry_info in self.hass.data[MODULE_DATA].values():
+                    if not isinstance(entry_info, dict):
+                        continue
+                    other = entry_info.get(DATA_AREA_OBJECT)
+                    if other and other.is_meta() and other.is_bedroom_meta():
+                        configured_children = other.config.get(CONF_CHILD_AREAS) or []
+                        if configured_children:
+                            resolved_slugs = set(other.resolve_child_magic_area_slugs(configured_children))
+                            raw_tokens = {str(c).lower() for c in configured_children if c} | {
+                                slugify(str(c)) for c in configured_children if c
+                            }
+                            if my_tokens & (resolved_slugs | raw_tokens):
+                                return True
+            if hasattr(self.hass, "config_entries") and hasattr(
+                self.hass.config_entries, "async_entries"
+            ):
+                for entry in self.hass.config_entries.async_entries(DOMAIN):
+                    entry_id_val = str(entry.data.get(CONF_ID, "")).lower()
+                    if entry_id_val in (META_AREA_BEDROOMS.lower(), "bedroom"):
+                        merged = dict(entry.data)
+                        if entry.options:
+                            merged.update(entry.options)
+                        configured_children = merged.get(CONF_CHILD_AREAS) or []
+                        if configured_children:
+                            raw_tokens = {str(c).lower() for c in configured_children if c} | {
+                                slugify(str(c)) for c in configured_children if c
+                            }
+                            if my_tokens & raw_tokens:
+                                return True
         combined = f"{slug} {name} {area_id}"
-        if any(kw in combined for kw in BEDROOM_AREA_KEYWORDS):
-            return True
-        if self.hass and MODULE_DATA in self.hass.data:
-            for entry_info in self.hass.data[MODULE_DATA].values():
-                other = entry_info.get(DATA_AREA_OBJECT)
-                if other and other.is_meta() and other.is_bedroom_meta():
-                    configured_children = other.config.get(CONF_CHILD_AREAS) or []
-                    if any(
-                        str(c).lower() in (slug, name, area_id)
-                        for c in configured_children
-                    ):
-                        return True
-        return False
+        return any(kw in combined for kw in BEDROOM_AREA_KEYWORDS)
 
     def is_main_house_area(self) -> bool:
         """Return True if this room is a main interior house area (excluding bedrooms and ensuites)."""
@@ -1147,27 +1314,11 @@ class MagicMetaArea(MagicArea):
         return active_areas
 
     def get_child_areas(self) -> list[str]:
-        """Get the child areas."""
+        """Get the child areas (strictly from other Simply Magic Area devices)."""
         data = self.hass.data.get(MODULE_DATA, {})
         configured_children = self.config.get(CONF_CHILD_AREAS)
         if configured_children and isinstance(configured_children, (list, tuple, set)):
-            normalized_children = {str(c).lower() for c in configured_children if c}
-            matched_areas: list[str] = []
-            for area_info in data.values():
-                area = area_info.get(DATA_AREA_OBJECT)
-                if (
-                    area
-                    and not area.is_meta()
-                    and (
-                        area.slug.lower() in normalized_children
-                        or area.id.lower() in normalized_children
-                        or area.name.lower() in normalized_children
-                    )
-                ):
-                    matched_areas.append(area.slug)
-            if matched_areas:
-                return matched_areas
-            return [slugify(str(c)) for c in configured_children if c]
+            return self.resolve_child_magic_area_slugs(configured_children)
 
         areas: list[str] = []
 

@@ -292,10 +292,16 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
             META_AREA_INTERIOR.lower(),
             META_AREA_GLOBAL.lower(),
             META_AREA_BEDROOMS.lower(),
+            META_AREA_EXTERIOR.lower(),
         ):
             tracked_entities.append(
                 self.area.simply_magic_entity_id(
                     SENSOR_DOMAIN, EntityNames.STATE, area_name=meta_slug
+                )
+            )
+            tracked_entities.append(
+                self.area.simply_magic_entity_id(
+                    SENSOR_DOMAIN, EntityNames.LIGHTING_PROFILE, area_name=meta_slug
                 )
             )
 
@@ -602,10 +608,13 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
                 if bedrooms_sw not in inherited:
                     inherited.append(bedrooms_sw)
         elif not self.area.is_meta():
-            for meta_slug in (
+            meta_slugs = [
                 META_AREA_INTERIOR.lower(),
                 META_AREA_GLOBAL.lower(),
-            ):
+            ]
+            if self.area.is_exterior():
+                meta_slugs.insert(0, META_AREA_EXTERIOR.lower())
+            for meta_slug in meta_slugs:
                 meta_sw = self.area.simply_magic_entity_id(
                     SWITCH_DOMAIN, EntityNames.SLEEP_MODE, area_name=meta_slug
                 )
@@ -657,12 +666,6 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
 
     def _is_manual_sleep_mode_active(self) -> bool:
         """Return True if manual sleep mode is active for this area or its parent area."""
-        if (
-            self.area.is_exterior()
-            or str(getattr(self.area, "id", "")).lower() == META_AREA_EXTERIOR.lower()
-        ):
-            return False
-
         if self._manual_sleep_mode or getattr(self.area, "sleep_mode_enabled", False) is True:
             return True
         if (
@@ -1182,6 +1185,20 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
                 state_obj = self.hass.states.get(parent_profile_sensor)
                 if state_obj and state_obj.state == LightingProfile.SLEEP:
                     return LightingProfile.SLEEP
+            if self.area.is_exterior():
+                for meta_slug in (
+                    META_AREA_EXTERIOR.lower(),
+                    META_AREA_INTERIOR.lower(),
+                    META_AREA_GLOBAL.lower(),
+                ):
+                    meta_profile_id = self.area.simply_magic_entity_id(
+                        SENSOR_DOMAIN,
+                        EntityNames.LIGHTING_PROFILE,
+                        area_name=meta_slug,
+                    )
+                    st = self.hass.states.get(meta_profile_id)
+                    if st is not None and st.state == LightingProfile.SLEEP:
+                        return LightingProfile.SLEEP
 
         # Automatic night sleep mode:
         # - In bedrooms: only set after the light is turned ON and then OFF at night (after 10pm).

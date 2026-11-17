@@ -756,7 +756,14 @@ class MagicArea(object):  # noqa: UP004
                     META_AREA_INTERIOR.lower(),
                     META_AREA_GLOBAL.lower(),
                 ):
-                    should_propagate = other.is_main_house_area()
+                    should_propagate = (
+                        other.is_main_house_area()
+                        or other.is_exterior()
+                        or str(getattr(other, "id", "")).lower()
+                        == META_AREA_EXTERIOR.lower()
+                    )
+                elif self.id.lower() == META_AREA_EXTERIOR.lower():
+                    should_propagate = other.is_exterior()
             elif (configured_children and (other_keys & configured_children)) or (
                 other_ref and other_ref in my_keys
             ):
@@ -766,13 +773,21 @@ class MagicArea(object):  # noqa: UP004
                 other.set_sleep_mode(enabled_bool, propagate=False)
 
     def set_house_sleep_mode(self, enabled: bool) -> None:
-        """Manually enable or disable sleep mode for the main house (excluding bedrooms)."""
+        """Manually enable or disable sleep mode for the main house and exterior (excluding bedrooms)."""
         enabled_bool = bool(enabled)
         if not self.hass or MODULE_DATA not in self.hass.data:
-            if self.is_main_house_area() or (
-                self.is_meta()
-                and self.id.lower()
-                in (META_AREA_INTERIOR.lower(), META_AREA_GLOBAL.lower())
+            if (
+                self.is_main_house_area()
+                or self.is_exterior()
+                or (
+                    self.is_meta()
+                    and self.id.lower()
+                    in (
+                        META_AREA_INTERIOR.lower(),
+                        META_AREA_GLOBAL.lower(),
+                        META_AREA_EXTERIOR.lower(),
+                    )
+                )
             ):
                 self.set_sleep_mode(enabled_bool, propagate=False)
             return
@@ -783,10 +798,18 @@ class MagicArea(object):  # noqa: UP004
             other = entry_info.get(DATA_AREA_OBJECT)
             if other is None:
                 continue
-            if other.is_main_house_area() or (
-                other.is_meta()
-                and other.id.lower()
-                in (META_AREA_INTERIOR.lower(), META_AREA_GLOBAL.lower())
+            if (
+                other.is_main_house_area()
+                or other.is_exterior()
+                or (
+                    other.is_meta()
+                    and other.id.lower()
+                    in (
+                        META_AREA_INTERIOR.lower(),
+                        META_AREA_GLOBAL.lower(),
+                        META_AREA_EXTERIOR.lower(),
+                    )
+                )
             ):
                 other.set_sleep_mode(enabled_bool, propagate=False)
 

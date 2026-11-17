@@ -353,3 +353,159 @@ async def test_exterior_lighting_state_restoration(hass: HomeAssistant) -> None:
     assert light_state.attributes.get(ATTR_EXTERIOR_TRIGGER_REASON) == "sunset"
     assert light_state.attributes.get(ATTR_EXTERIOR_TIMER_TS) == target_ts
 
+
+async def test_exterior_lighting_pre_sunset_low_lux_house_sleep_and_motion_full(
+    hass: HomeAssistant,
+) -> None:
+    """Test exterior areas: 1h before sunset, very low outdoor lux, house sleep turns off, motion turns back on full."""
+    now_utc = datetime.now(UTC)
+    # 1. Start 2 hours before sunset (above horizon) -> lights stay off even on motion
+    hass.states.async_set(
+        "sun.sun",
+        "above_horizon",
+        {
+            "elevation": 25.0,
+            "next_setting": (now_utc + timedelta(hours=2)).isoformat(),
+        },
+    )
+    hass.states.async_set(
+        "sensor.simply_magic_areas_illuminance_patio",
+        "250",
+        {"unit_of_measurement": "lx"},
+    )
+
+    motion_sensor, _entry = await setup_exterior_area(hass, "patio")
+    light_entity = "light.simply_magic_areas_light_patio"
+    turn_on_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_on")
+    turn_off_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
+
+    motion_sensor.turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_on_calls) == 0
+    motion_sensor.turn_off()
+    await hass.async_block_till_done()
+    async_fire_time_changed(hass, datetime.now(UTC) + timedelta(seconds=15))
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    # 2. Very low light level outside (<= 10 lx) during daytime -> turns outside lights on to full (255)
+    hass.states.async_set(
+        "sensor.simply_magic_areas_illuminance_patio",
+        "4",
+        {"unit_of_measurement": "lx"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_on_calls) >= 1
+    assert turn_on_calls[-1].data.get("brightness") == 255
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_TRIGGER_REASON)
+        == "low_lux"
+    )
+
+    # Outdoor lux recovers above threshold while still >1h before sunset -> turns off
+    turn_off_calls.clear()
+    hass.states.async_set(
+        "sensor.simply_magic_areas_illuminance_patio",
+        "300",
+        {"unit_of_measurement": "lx"},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_off_calls) >= 1
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_LIGHTING_ACTIVE)
+        is False
+    )
+
+    # 3. 1 hour before sunset (within 3600s of next_setting) -> turns outside lights on to full (255)
+    turn_on_calls.clear()
+    hass.states.async_set(
+        "sun.sun",
+        "above_horizon",
+        {
+            "elevation": 8.0,
+            "next_setting": (datetime.now(UTC) + timedelta(minutes=50)).isoformat(),
+        },
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_on_calls) >= 1
+    assert turn_on_calls[-1].data.get("brightness") == 255
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_LIGHTING_ACTIVE)
+        is True
+    )
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_TRIGGER_REASON)
+        == "sunset"
+    )
+
+    # 4. House goes into sleep mode -> turns off the outside lights
+    turn_off_calls.clear()
+    hass.states.async_set(
+        "sensor.simply_magic_areas_lighting_profile_interior",
+        "sleep",
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_off_calls) >= 1
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_LIGHTING_ACTIVE)
+        is False
+    )
+
+    # 5. Any motion outside while house is in sleep mode turns outside lights back on to FULL (255)
+    turn_on_calls.clear()
+    motion_sensor.turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_on_calls) >= 1
+    assert turn_on_calls[-1].data.get("brightness") == 255
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_LIGHTING_ACTIVE)
+        is True
+    )
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_TRIGGER_REASON)
+        == "motion"
+    )
+
+    # 6. House goes back into sleep mode -> turns off outside lights; then any person coming home triggers lights to FULL (255)
+    hass.states.async_set("person.dave", STATE_NOT_HOME)
+    hass.states.async_set(
+        "sensor.simply_magic_areas_lighting_profile_interior",
+        "standard",
+    )
+    await hass.async_block_till_done()
+    turn_off_calls.clear()
+    hass.states.async_set(
+        "sensor.simply_magic_areas_lighting_profile_interior",
+        "sleep",
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_off_calls) >= 1
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_LIGHTING_ACTIVE)
+        is False
+    )
+
+    turn_on_calls.clear()
+    hass.states.async_set("person.dave", STATE_HOME)
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_on_calls) >= 1
+    assert turn_on_calls[-1].data.get("brightness") == 255
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_LIGHTING_ACTIVE)
+        is True
+    )
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_TRIGGER_REASON)
+        == "arrival"
+    )
+
+
+

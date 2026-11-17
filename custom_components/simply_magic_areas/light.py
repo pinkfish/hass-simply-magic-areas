@@ -45,6 +45,7 @@ from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
 )
+from homeassistant.util import dt as dt_util
 
 from .base.entities import MagicEntity
 from .base.magic import ControlType, MagicArea, StateConfigData
@@ -81,6 +82,7 @@ from .const import (
     CONF_EXTENDED_WARNING_DIM,
     CONF_EXTERIOR_ARRIVAL_TRIGGER,
     CONF_EXTERIOR_LIGHTING_TIMEOUT,
+    CONF_EXTERIOR_SUNSET_OFFSET,
     CONF_EXTERIOR_SUNSET_TRIGGER,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
     CONF_LEARN_DAYLIGHT_LUX,
@@ -88,6 +90,7 @@ from .const import (
     CONF_MANUAL_TIMEOUT,
     CONF_MAX_BRIGHTNESS_LEVEL,
     CONF_MIN_BRIGHTNESS_LEVEL,
+    CONF_REFERENCE_ILLUMINANCE_SENSOR,
     CONF_SLEEP_WAKEUP_DELAY,
     DATA_AREA_OBJECT,
     DEFAULT_ACTUATOR_RETRY_DELAYS,
@@ -98,6 +101,7 @@ from .const import (
     DEFAULT_EXTENDED_WARNING_DIM,
     DEFAULT_EXTERIOR_ARRIVAL_TRIGGER,
     DEFAULT_EXTERIOR_LIGHTING_TIMEOUT,
+    DEFAULT_EXTERIOR_SUNSET_OFFSET,
     DEFAULT_EXTERIOR_SUNSET_TRIGGER,
     DEFAULT_LEARN_LIGHTING_PREFERENCES,
     DEFAULT_LIGHT_SETTLE_TIME,
@@ -112,6 +116,8 @@ from .const import (
     INVALID_STATES,
     LIVING_AREA_KEYWORDS,
     META_AREA_EXTERIOR,
+    META_AREA_GLOBAL,
+    META_AREA_INTERIOR,
     MODULE_DATA,
     bright_lights,
     extended_lights,
@@ -280,6 +286,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._exterior_timer_cb: CALLBACK_TYPE | None = None
         self._exterior_timer_ts: float | None = None
         self._exterior_trigger_reason: str | None = None
+        self._pre_sunset_timer_cb: CALLBACK_TYPE | None = None
+        self._pre_sunset_triggered: bool = False
 
         # Interior arrival pre-warming and sustained sleep wake-up state
         self._arrival_prewarm_timer_cb: CALLBACK_TYPE | None = None
@@ -375,7 +383,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 target_ts = last_state.attributes.get(ATTR_EXTERIOR_TIMER_TS)
                 trigger_reason = last_state.attributes.get(ATTR_EXTERIOR_TRIGGER_REASON)
                 now_ts = datetime.now(UTC).timestamp()
-                if ext_active and target_ts is not None and self._is_nighttime():
+                if ext_active and target_ts is not None and self._is_exterior_dark():
                     try:
                         remaining = float(target_ts) - now_ts
                         if remaining > 0:
@@ -653,6 +661,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         )
 
         if self.is_exterior:
+            self._schedule_pre_sunset_timer()
             self.async_on_remove(
                 async_track_state_change_event(
                     self.hass,
@@ -660,6 +669,50 @@ class AreaLightGroup(MagicEntity, LightGroup):
                     self._sun_state_change,
                 )
             )
+            house_sleep_entities = [
+                self.area.simply_magic_entity_id(
+                    SWITCH_DOMAIN, EntityNames.SLEEP_MODE
+                ),
+            ]
+            for meta_slug in (
+                META_AREA_INTERIOR.lower(),
+                META_AREA_GLOBAL.lower(),
+                META_AREA_EXTERIOR.lower(),
+            ):
+                prof_id = self.area.simply_magic_entity_id(
+                    SENSOR_DOMAIN, EntityNames.LIGHTING_PROFILE, area_name=meta_slug
+                )
+                sw_id = self.area.simply_magic_entity_id(
+                    SWITCH_DOMAIN, EntityNames.SLEEP_MODE, area_name=meta_slug
+                )
+                for eid in (prof_id, sw_id):
+                    if eid and eid not in house_sleep_entities:
+                        house_sleep_entities.append(eid)
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass,
+                    house_sleep_entities,
+                    self._exterior_house_sleep_change,
+                )
+            )
+            lux_entities = self._get_exterior_illuminance_entities()
+            if lux_entities:
+                self.async_on_remove(
+                    async_track_state_change_event(
+                        self.hass,
+                        lux_entities,
+                        self._exterior_illuminance_change,
+                    )
+                )
+            motion_entities = self._get_exterior_motion_entities()
+            if motion_entities:
+                self.async_on_remove(
+                    async_track_state_change_event(
+                        self.hass,
+                        motion_entities,
+                        self._exterior_motion_sensor_change,
+                    )
+                )
             cam_entities = [
                 e[ATTR_ENTITY_ID]
                 for e in self.area.entities.get(CAMERA_DOMAIN, [])
@@ -689,6 +742,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._clear_arrival_prewarm()
         self._cancel_sleep_wakeup_timer()
         self._cancel_manual_off_unoccupied_timer()
+        self._cancel_pre_sunset_timer()
         if self._manual_timeout_cb is not None:
             self._manual_timeout_cb()
             self._manual_timeout_cb = None
@@ -849,7 +903,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
                     and self._attr_extra_state_attributes.get(
                         ATTR_EXTERIOR_LIGHTING_ACTIVE, False
                     )
-                    and self._is_nighttime()
+                    and self._is_exterior_dark()
                 ):
                     _LOGGER.debug(
                         "%s: Movement ceased in exterior area at night; restarting 2-hour countdown",
@@ -857,7 +911,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
                     )
                     self._trigger_exterior_lighting(reason="motion")
                     return
-                if not self._is_nighttime():
+                if not self._is_exterior_dark():
                     self._clear_exterior_lighting()
                     self._turn_off_light()
                     return
@@ -883,7 +937,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             AreaState.AREA_STATE_ACCENTED,
         ):
             if self.is_exterior:
-                if not self._is_nighttime():
+                if not self._is_exterior_dark():
                     _LOGGER.debug(
                         "%s: Exterior area occupied during daytime; lights suppressed",
                         self.name,
@@ -908,7 +962,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             if left_occupied_while_manually_off:
                 return
             if self.is_exterior:
-                if not self._is_nighttime():
+                if not self._is_exterior_dark():
                     self._turn_off_light()
                     return
                 self._trigger_exterior_lighting(reason="motion")
@@ -1121,7 +1175,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
         active_profile = profile or getattr(
             self.area, "lighting_profile", LightingProfile.STANDARD
         )
-        if active_profile in (LightingProfile.SLEEP, AreaState.AREA_STATE_SLEEP):
+        if self.is_exterior:
+            target_pct = 100
+        elif active_profile in (LightingProfile.SLEEP, AreaState.AREA_STATE_SLEEP):
             conf = self._get_profile_config_for(LightingProfile.SLEEP)
             raw_pct = (
                 conf.dim_level
@@ -1398,7 +1454,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
         else:
             self._schedule_sleep_wakeup_if_needed()
 
-        if self.is_exterior and not self._is_nighttime():
+        if self.is_exterior:
+            if is_sleep_profile:
+                self._handle_exterior_sleep_entry()
             return
 
         occupied_states = {
@@ -2700,7 +2758,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
             active_profile in (LightingProfile.SLEEP, AreaState.AREA_STATE_SLEEP)
             or conf.for_state == AreaState.AREA_STATE_SLEEP
         )
-        if not has_lux_sensor:
+        if self.is_exterior:
+            # Outside areas always turn on to full brightness (100% / 255)
+            brightness = 255
+        elif not has_lux_sensor:
             # If there is no lux sensor in the room, lights go on full (100%) or dimmed based on sleep state
             if is_sleep_mode or conf.for_state in (
                 AreaState.AREA_STATE_EXTENDED,
@@ -2745,10 +2806,11 @@ class AreaLightGroup(MagicEntity, LightGroup):
         historical_daylight = getattr(self.area, "historical_daylight_lux", None)
         target_daylight_lux: float | None = None
 
-        # If there is no lux sensor in the room, or windowless/nighttime/sleep/dark_floor:
+        # If exterior, no lux sensor in the room, or windowless/nighttime/sleep/dark_floor:
         # do not scale down brightness by lux
         if (
-            not has_lux_sensor
+            self.is_exterior
+            or not has_lux_sensor
             or is_sleep_mode
             or is_windowless
             or self._is_nighttime()
@@ -2756,7 +2818,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         ):
             darkness_ratio = 1.0
             _LOGGER.debug(
-                "%s: No lux sensor or ambient lux %s <= dark floor %s (or windowless/nighttime/sleep) -> brightness %s",
+                "%s: Exterior/no lux sensor or ambient lux %s <= dark floor %s (or windowless/nighttime/sleep) -> brightness %s",
                 self.name,
                 luminesence,
                 dark_lux_floor,
@@ -2863,7 +2925,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
             )
         )
         if (
-            has_lux_sensor
+            not self.is_exterior
+            and has_lux_sensor
             and learn_preferences
             and self._lighting_learner
             and self._lighting_learner.sample_count > 0
@@ -3152,6 +3215,305 @@ class AreaLightGroup(MagicEntity, LightGroup):
                     pass
         return False
 
+    def _get_exterior_sunset_offset(self) -> float:
+        """Return the pre-sunset offset in seconds for exterior areas (default 3600s / 1 hour)."""
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        val = adv_conf.get(
+            CONF_EXTERIOR_SUNSET_OFFSET,
+            self.area.config.get(
+                CONF_EXTERIOR_SUNSET_OFFSET, DEFAULT_EXTERIOR_SUNSET_OFFSET
+            ),
+        )
+        try:
+            return max(0.0, float(val))
+        except (ValueError, TypeError):
+            return float(DEFAULT_EXTERIOR_SUNSET_OFFSET)
+
+    def _get_seconds_until_sunset(self) -> float | None:
+        """Return seconds until next sunset when sun is above horizon, or None."""
+        sun_state = self.hass.states.get("sun.sun")
+        if sun_state is None or sun_state.state == "below_horizon":
+            return None
+        attrs = sun_state.attributes
+        if "seconds_to_sunset" in attrs and attrs["seconds_to_sunset"] is not None:
+            try:
+                return float(attrs["seconds_to_sunset"])
+            except (ValueError, TypeError):
+                pass
+        if "minutes_to_sunset" in attrs and attrs["minutes_to_sunset"] is not None:
+            try:
+                return float(attrs["minutes_to_sunset"]) * 60.0
+            except (ValueError, TypeError):
+                pass
+        next_setting = attrs.get("next_setting")
+        if next_setting is not None:
+            dt_val: datetime | None = None
+            if isinstance(next_setting, datetime):
+                dt_val = next_setting
+            elif isinstance(next_setting, str):
+                dt_val = dt_util.parse_datetime(next_setting)
+            if dt_val is not None:
+                delta = (dt_util.as_utc(dt_val) - dt_util.utcnow()).total_seconds()
+                if delta >= -60.0:
+                    return max(0.0, float(delta))
+        return None
+
+    def _is_within_pre_sunset_or_night(self) -> bool:
+        """Return True if it is currently nighttime or within 1 hour (sunset_offset) before sunset."""
+        if self._is_nighttime():
+            return True
+        sec_to_sunset = self._get_seconds_until_sunset()
+        if sec_to_sunset is not None:
+            return 0.0 <= sec_to_sunset <= self._get_exterior_sunset_offset()
+        return False
+
+    def _is_exterior_lux_very_low(self) -> bool:
+        """Return True if the outdoor illuminance sensor reports a very low light level (<= dark_lux_floor)."""
+        val = self.area.get_effective_illuminance()
+        if val is None:
+            return False
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        dark_lux_floor = float(
+            getattr(self.area, "dark_lux_floor", None)
+            or adv_conf.get(CONF_DARK_LUX_FLOOR)
+            or self.area.config.get(CONF_DARK_LUX_FLOOR, DEFAULT_DARK_LUX_FLOOR)
+        )
+        try:
+            return float(val) <= dark_lux_floor
+        except (ValueError, TypeError):
+            return False
+
+    def _is_exterior_dark(self) -> bool:
+        """Return True if outside lights are allowed to turn on (within 1h before sunset, nighttime, or very low outdoor lux)."""
+        return self._is_within_pre_sunset_or_night() or self._is_exterior_lux_very_low()
+
+    def _get_exterior_illuminance_entities(self) -> list[str]:
+        """Return illuminance sensor entity IDs tracked for this exterior area."""
+        entities: list[str] = []
+        local_lux = self.area.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.ILLUMINANCE
+        )
+        if local_lux:
+            entities.append(local_lux)
+        for ent in self.area.entities.get(SENSOR_DOMAIN, []):
+            if isinstance(ent, dict):
+                eid = ent.get(ATTR_ENTITY_ID)
+                if eid and eid not in entities:
+                    entities.append(eid)
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        ref_sensor = self.area.config.get(
+            CONF_REFERENCE_ILLUMINANCE_SENSOR,
+            adv_conf.get(CONF_REFERENCE_ILLUMINANCE_SENSOR),
+        )
+        if ref_sensor and ref_sensor not in entities:
+            entities.append(str(ref_sensor))
+        return entities
+
+    def _get_exterior_motion_entities(self) -> list[str]:
+        """Return binary_sensor presence/motion entity IDs in this exterior area."""
+        entities: list[str] = []
+        for ent in self.area.entities.get(BINARY_SENSOR_DOMAIN, []):
+            if isinstance(ent, dict):
+                eid = ent.get(ATTR_ENTITY_ID)
+                if eid and eid not in entities:
+                    entities.append(eid)
+        return entities
+
+    @callback
+    def _exterior_motion_sensor_change(
+        self, event: Event[EventStateChangedData]
+    ) -> None:
+        """Handle direct motion/presence sensor transitions in exterior areas."""
+        if not self.is_exterior:
+            return
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if new_state is None:
+            return
+        if old_state is not None and old_state.state == new_state.state:
+            return
+        if new_state.state in (STATE_ON, "open"):
+            if not self._is_exterior_dark():
+                return
+            self._reset_control()
+            self._trigger_exterior_lighting(reason="motion")
+
+    def _cancel_pre_sunset_timer(self) -> None:
+        """Cancel any scheduled 1-hour pre-sunset activation timer."""
+        if getattr(self, "_pre_sunset_timer_cb", None) is not None:
+            self._pre_sunset_timer_cb()
+            self._pre_sunset_timer_cb = None
+
+    def _schedule_pre_sunset_timer(self) -> None:
+        """Schedule a timer to fire at (next_setting - exterior_sunset_offset) when sun is above horizon."""
+        self._cancel_pre_sunset_timer()
+        if not self.is_exterior or self._is_nighttime():
+            return
+        sec_to_sunset = self._get_seconds_until_sunset()
+        offset = self._get_exterior_sunset_offset()
+        if sec_to_sunset is not None and sec_to_sunset > offset:
+            delay = sec_to_sunset - offset
+            self._ensure_hass_stop_listener()
+            self._pre_sunset_timer_cb = async_call_later(
+                self.hass,
+                delay,
+                self._pre_sunset_timer_expired,
+            )
+
+    @callback
+    def _pre_sunset_timer_expired(self, _now: datetime | None = None) -> None:
+        """Trigger exterior lighting when the 1-hour pre-sunset mark is reached."""
+        self._pre_sunset_timer_cb = None
+        if not self.is_exterior:
+            return
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
+        if not self._is_exterior_sunset_trigger_enabled():
+            return
+        if self._is_house_in_sleep_mode():
+            return
+        self._pre_sunset_triggered = True
+        _LOGGER.info(
+            "%s: 1 hour before sunset reached, triggering exterior lighting",
+            self.name,
+        )
+        self._trigger_exterior_lighting(reason="sunset")
+
+    def _is_house_in_sleep_mode(self) -> bool:
+        """Return True if the house or this exterior area is currently in sleep mode."""
+        if self._get_current_lighting_profile() in (
+            LightingProfile.SLEEP,
+            AreaState.AREA_STATE_SLEEP,
+        ):
+            return True
+        if getattr(self.area, "sleep_mode_enabled", False) is True:
+            return True
+        local_sw = self.area.simply_magic_entity_id(
+            SWITCH_DOMAIN, EntityNames.SLEEP_MODE
+        )
+        st_local = self.hass.states.get(local_sw)
+        if st_local is not None and st_local.state == STATE_ON:
+            return True
+        for meta_slug in (
+            META_AREA_INTERIOR.lower(),
+            META_AREA_GLOBAL.lower(),
+            META_AREA_EXTERIOR.lower(),
+        ):
+            prof_id = self.area.simply_magic_entity_id(
+                SENSOR_DOMAIN, EntityNames.LIGHTING_PROFILE, area_name=meta_slug
+            )
+            st_prof = self.hass.states.get(prof_id)
+            if st_prof is not None and st_prof.state == LightingProfile.SLEEP:
+                return True
+            sw_id = self.area.simply_magic_entity_id(
+                SWITCH_DOMAIN, EntityNames.SLEEP_MODE, area_name=meta_slug
+            )
+            st_sw = self.hass.states.get(sw_id)
+            if st_sw is not None and st_sw.state == STATE_ON:
+                return True
+        for entry_data in self.hass.data.get(MODULE_DATA, {}).values():
+            if not isinstance(entry_data, dict):
+                continue
+            other = entry_data.get(DATA_AREA_OBJECT)
+            if other is None:
+                continue
+            if other.is_meta() and str(getattr(other, "id", "")).lower() in (
+                META_AREA_INTERIOR.lower(),
+                META_AREA_GLOBAL.lower(),
+                META_AREA_EXTERIOR.lower(),
+            ) and (
+                getattr(other, "lighting_profile", None) == LightingProfile.SLEEP
+                or getattr(other, "sleep_mode_enabled", False) is True
+            ):
+                return True
+        return False
+
+    def _handle_exterior_sleep_entry(self) -> None:
+        """Turn off outside lights and clear active exterior timer when the house enters sleep mode."""
+        if not self.is_exterior:
+            return
+        _LOGGER.info(
+            "%s: House entered sleep mode; turning off exterior lights",
+            self.name,
+        )
+        self._manual_brightness_override = False
+        self._clear_exterior_lighting()
+        self._reset_control()
+        self._turn_off_light(force=True)
+
+    @callback
+    def _exterior_house_sleep_change(
+        self, event: Event[EventStateChangedData]
+    ) -> None:
+        """Handle house sleep mode / profile transitions for exterior areas."""
+        if not self.is_exterior:
+            return
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if new_state is None:
+            return
+        if old_state is not None and old_state.state == new_state.state:
+            return
+        entity_id = str(event.data.get("entity_id", ""))
+        entered_sleep = (
+            entity_id.startswith(f"{SENSOR_DOMAIN}.")
+            and new_state.state in (LightingProfile.SLEEP, AreaState.AREA_STATE_SLEEP)
+        ) or (
+            entity_id.startswith(f"{SWITCH_DOMAIN}.")
+            and new_state.state == STATE_ON
+        )
+        if entered_sleep:
+            self._handle_exterior_sleep_entry()
+
+    @callback
+    def _exterior_illuminance_change(
+        self, event: Event[EventStateChangedData]
+    ) -> None:
+        """Handle outdoor illuminance sensor updates for low-lux exterior activation."""
+        if not self.is_exterior:
+            return
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
+        new_state = event.data.get("new_state")
+        if new_state is None or new_state.state in INVALID_STATES:
+            return
+        if self._is_exterior_lux_very_low():
+            if not self.is_on and not self._has_any_working_light_on():
+                if (
+                    self._is_exterior_sunset_trigger_enabled()
+                    and not self._is_house_in_sleep_mode()
+                ):
+                    _LOGGER.info(
+                        "%s: Outdoor light level is very low; triggering exterior lighting",
+                        self.name,
+                    )
+                    self._trigger_exterior_lighting(reason="low_lux")
+                elif self._has_active_motion():
+                    self._trigger_exterior_lighting(reason="motion")
+        elif (
+            not self._is_within_pre_sunset_or_night()
+            and self._attr_extra_state_attributes.get(ATTR_EXTERIOR_TRIGGER_REASON)
+            == "low_lux"
+        ):
+            self._clear_exterior_lighting()
+            self._turn_off_light(force=True)
+
     def _get_exterior_timeout(self) -> float:
         """Get the configured or default exterior lighting timeout in seconds."""
         adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
@@ -3191,7 +3553,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     def _trigger_exterior_lighting(self, reason: str) -> None:
         """Trigger exterior nighttime lighting and arm the 2-hour stay-on timer."""
-        if not self.is_exterior or not self._is_nighttime():
+        if not self.is_exterior or not self._is_exterior_dark():
             return
         if (
             not self.area.is_control_enabled(ControlType.System)
@@ -3216,25 +3578,25 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._exterior_trigger_reason
         )
 
+        self._ensure_hass_stop_listener()
         self._exterior_timer_cb = async_call_later(
             self.hass, timeout, self._exterior_timer_expired
         )
 
         conf = self._get_active_profile_config()
         if conf is not None:
-            self._turn_on_light(conf, force=(not self.is_on))
+            self._turn_on_light(conf, force=True)
         else:
-            if not self.is_on:
+            if not self.is_on or self.brightness != 255:
                 self.last_update_from_entity = True
                 self._attr_is_on = True
+                self._attr_brightness = 255
                 self._command_in_flight_until = datetime.now(UTC).timestamp() + 2.5
                 service_data = {
                     ATTR_ENTITY_ID: self.entity_id,
                     ATTR_BRIGHTNESS: 255,
                 }
-                call_service_non_blocking(
-                    self.hass, LIGHT_DOMAIN, SERVICE_TURN_ON, service_data
-                )
+                self._dispatch_light_command(SERVICE_TURN_ON, service_data)
                 self._schedule_actuator_retry(STATE_ON, 255)
 
         self.schedule_update_ha_state()
@@ -3251,7 +3613,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         ):
             return
 
-        if self._has_active_motion() and self._is_nighttime():
+        if self._has_active_motion() and self._is_exterior_dark():
             _LOGGER.info(
                 "%s: Exterior timer expired but motion is still active at night; restarting timer",
                 self.name,
@@ -3310,7 +3672,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     @callback
     def _sun_state_change(self, event: Event[EventStateChangedData]) -> None:
-        """Handle sun state changes for sunset activation and sunrise deactivation."""
+        """Handle sun state changes for 1-hour pre-sunset/sunset activation and sunrise deactivation."""
         if not self.is_exterior:
             return
         if (
@@ -3323,22 +3685,31 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if new_state is None:
             return
 
-        # Sunset transition: below_horizon
-        if new_state.state == "below_horizon":
-            if old_state is not None and old_state.state == "below_horizon":
-                return
-            if not self._is_exterior_sunset_trigger_enabled():
-                return
-            _LOGGER.info("%s: Sunset detected, triggering exterior lighting", self.name)
-            self._trigger_exterior_lighting(reason="sunset")
+        self._schedule_pre_sunset_timer()
 
-        # Sunrise transition: above_horizon
-        elif new_state.state == "above_horizon":
+        # Sunrise / daytime outside pre-sunset window
+        if new_state.state == "above_horizon" and not self._is_within_pre_sunset_or_night():
+            self._pre_sunset_triggered = False
             if old_state is not None and old_state.state == "above_horizon":
+                return
+            if self._is_exterior_lux_very_low():
                 return
             _LOGGER.info("%s: Sunrise detected, clearing exterior lighting", self.name)
             self._clear_exterior_lighting()
             self._turn_off_light(force=True)
+            return
+
+        # Within 1 hour before sunset or below_horizon
+        if self._is_within_pre_sunset_or_night():
+            if self._pre_sunset_triggered:
+                return
+            if not self._is_exterior_sunset_trigger_enabled():
+                return
+            self._pre_sunset_triggered = True
+            if self._is_house_in_sleep_mode():
+                return
+            _LOGGER.info("%s: Sunset (or 1h pre-sunset) detected, triggering exterior lighting", self.name)
+            self._trigger_exterior_lighting(reason="sunset")
 
     @callback
     def _person_state_change(self, event: Event[EventStateChangedData]) -> None:
@@ -3356,11 +3727,15 @@ class AreaLightGroup(MagicEntity, LightGroup):
             return
 
         # Resident arrival: person transitions from non-home to home
-        if new_state.state == STATE_HOME and old_state.state != STATE_HOME:
+        if (
+            new_state.state == STATE_HOME
+            and old_state.state != STATE_HOME
+            and old_state.state not in INVALID_STATES
+        ):
             if self.is_exterior:
                 if not self._is_exterior_arrival_trigger_enabled():
                     return
-                if not self._is_nighttime():
+                if not self._is_exterior_dark():
                     _LOGGER.debug(
                         "%s: Person %s arrived home during daytime; exterior lighting suppressed",
                         self.name,
@@ -3368,10 +3743,11 @@ class AreaLightGroup(MagicEntity, LightGroup):
                     )
                     return
                 _LOGGER.info(
-                    "%s: Person %s arrived home at night, triggering exterior lighting",
+                    "%s: Person %s arrived home, triggering exterior lighting",
                     self.name,
                     event.data.get("entity_id"),
                 )
+                self._reset_control()
                 self._trigger_exterior_lighting(reason="arrival")
             elif self._is_entry_area():
                 self._trigger_arrival_prewarm(reason="person_arrival")
@@ -3388,13 +3764,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     @callback
     def _proximity_state_change(self, event: Event[EventStateChangedData]) -> None:
-        """Handle proximity sensor updates to pre-warm entry lighting before arrival."""
+        """Handle proximity sensor updates to trigger exterior lighting or pre-warm entry lighting before arrival."""
         if (
             not self.area.is_control_enabled(ControlType.System)
             or self.area.state == AreaState.AREA_STATE_MANUAL
         ):
             return
-        if self.is_exterior or not self._is_entry_area():
+        if not self.is_exterior and not self._is_entry_area():
             return
         new_state = event.data.get("new_state")
         if new_state is None or new_state.state in INVALID_STATES:
@@ -3408,8 +3784,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
             distance = float(new_state.state)
         except (ValueError, TypeError):
             return
-        if 0 < distance <= 1500 and self._is_interior_vacant():
-            self._trigger_arrival_prewarm(reason="proximity_approaching")
+        if 0 < distance <= 1500:
+            if self.is_exterior:
+                if self._is_exterior_arrival_trigger_enabled() and self._is_exterior_dark():
+                    self._reset_control()
+                    self._trigger_exterior_lighting(reason="arrival")
+            elif self._is_interior_vacant():
+                self._trigger_arrival_prewarm(reason="proximity_approaching")
 
     def _is_entry_area(self) -> bool:
         """Return True if this interior room is an entry/front room eligible for arrival pre-warming."""
@@ -3447,8 +3828,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
         return False
 
     def _is_dark_for_arrival(self) -> bool:
-        """Return True if it is nighttime or the room is dark enough to need arrival lighting."""
-        if self._is_nighttime():
+        """Return True if it is within 1h before sunset, nighttime, or the room is dark enough to need arrival lighting."""
+        if self._is_within_pre_sunset_or_night():
             return True
         sun_state = self.hass.states.get("sun.sun")
         adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
@@ -3748,7 +4129,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         )
 
         if is_motion:
-            if not self._is_nighttime():
+            if not self._is_exterior_dark():
                 _LOGGER.debug(
                     "%s: Camera %s detected motion during daytime; exterior lighting suppressed",
                     self.name,
@@ -3771,7 +4152,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         ):
             return
         entity_id = event.data.get("entity_id", "")
-        if entity_id.startswith("person."):
+        if entity_id.startswith(("person.", "device_tracker.")):
             self._person_state_change(event)
             return
         if entity_id.startswith("proximity."):

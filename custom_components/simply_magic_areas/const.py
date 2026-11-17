@@ -355,6 +355,10 @@ CONF_EXTERIOR_LIGHTING_TIMEOUT, DEFAULT_EXTERIOR_LIGHTING_TIMEOUT = (
     "exterior_lighting_timeout",
     7200,
 )
+CONF_EXTERIOR_SUNSET_OFFSET, DEFAULT_EXTERIOR_SUNSET_OFFSET = (
+    "exterior_sunset_offset",
+    3600,
+)
 CONF_EXTERIOR_SUNSET_TRIGGER, DEFAULT_EXTERIOR_SUNSET_TRIGGER = (
     "exterior_sunset_trigger",
     True,
@@ -687,6 +691,7 @@ ADVANCED_LIGHT_GROUP_FEATURE_SCHEMA: vol.Schema = vol.Schema(
         vol.Optional(
             CONF_EXTERIOR_LIGHTING_TIMEOUT, default=DEFAULT_EXTERIOR_LIGHTING_TIMEOUT
         ): cv.positive_int,
+        vol.Optional(CONF_EXTERIOR_SUNSET_OFFSET): cv.positive_int,
         vol.Optional(
             CONF_EXTERIOR_SUNSET_TRIGGER, default=DEFAULT_EXTERIOR_SUNSET_TRIGGER
         ): bool,

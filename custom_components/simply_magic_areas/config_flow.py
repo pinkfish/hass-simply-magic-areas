@@ -494,6 +494,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
                             include_entities=self.all_entities, multiple=False
                         )
                     )
+                if lg.state_dim_level() in option_keys:
                     selectors[lg.state_dim_level()] = selector(lg.number_selector())
 
         saved_options = dict(self.config_entry.options)

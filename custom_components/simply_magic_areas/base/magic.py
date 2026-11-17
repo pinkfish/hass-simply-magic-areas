@@ -324,14 +324,26 @@ class MagicArea(object):  # noqa: UP004
         """If this is an exterior area."""
         return self.area_type == AREA_TYPE_EXTERIOR
 
-    def get_other_magic_area_devices(self) -> list[dict[str, Any]]:
-        """Return metadata for all other configured non-meta Simply Magic Area devices."""
+    def get_other_magic_area_devices(
+        self, include_meta: bool | None = None
+    ) -> list[dict[str, Any]]:
+        """Return metadata for all other configured Simply Magic Area devices."""
         if not self.hass:
             return []
 
         reserved_meta_ids = {m.lower() for m in META_AREAS}
         my_id = str(getattr(self, "id", "") or "").lower()
         my_slug = str(getattr(self, "slug", "") or "").lower()
+        if include_meta is None:
+            include_meta = bool(
+                self.is_meta()
+                and my_id
+                in (
+                    META_AREA_INTERIOR.lower(),
+                    META_AREA_GLOBAL.lower(),
+                    META_AREA_EXTERIOR.lower(),
+                )
+            )
 
         devices_by_slug: dict[str, dict[str, Any]] = {}
 
@@ -341,13 +353,23 @@ class MagicArea(object):  # noqa: UP004
             area_slug: str | None = None,
             entry_id: str | None = None,
             device_id: str | None = None,
+            is_meta_candidate: bool = False,
         ) -> None:
             norm_id = str(area_id or "").strip()
             norm_name = str(area_name or norm_id).strip()
             slug = str(area_slug or slugify(norm_name or norm_id)).lower()
             if not slug or slug == my_slug or norm_id.lower() == my_id:
                 return
-            if norm_id.lower() in reserved_meta_ids or slug in reserved_meta_ids:
+            is_reserved_meta = (
+                is_meta_candidate
+                or norm_id.lower() in reserved_meta_ids
+                or slug in reserved_meta_ids
+            )
+            if is_reserved_meta and (
+                not include_meta
+                or norm_id.lower() == META_AREA_GLOBAL.lower()
+                or slug == META_AREA_GLOBAL.lower()
+            ):
                 return
 
             rec = devices_by_slug.get(slug)
@@ -358,6 +380,7 @@ class MagicArea(object):  # noqa: UP004
                     "name": norm_name or slug,
                     "device_id": device_id,
                     "entry_id": entry_id,
+                    "is_meta": is_reserved_meta,
                     "keys": set(),
                 }
                 devices_by_slug[slug] = rec
@@ -373,6 +396,7 @@ class MagicArea(object):  # noqa: UP004
                 norm_id.lower(),
                 norm_name.lower(),
                 norm_name.lower().replace(" ", "_"),
+                f"(meta) {norm_name.lower()}",
                 f"{MAGIC_DEVICE_ID_PREFIX}{slug}",
                 f"{MAGIC_DEVICE_ID_PREFIX}{norm_id.lower()}",
                 f"sensor.{MAGIC_DEVICE_ID_PREFIX}state_{slug}",
@@ -395,7 +419,9 @@ class MagicArea(object):  # noqa: UP004
                 if not isinstance(entry_info, dict):
                     continue
                 other = entry_info.get(DATA_AREA_OBJECT)
-                if other is None or other is self or other.is_meta():
+                if other is None or other is self:
+                    continue
+                if other.is_meta() and not include_meta:
                     continue
                 _register_candidate(
                     area_id=getattr(other, "id", ""),
@@ -405,6 +431,7 @@ class MagicArea(object):  # noqa: UP004
                         getattr(getattr(other, "hass_config", None), "entry_id", "")
                         or entry_key
                     ),
+                    is_meta_candidate=other.is_meta(),
                 )
 
         # 2. Configured Simply Magic Area ConfigEntries
@@ -412,7 +439,8 @@ class MagicArea(object):  # noqa: UP004
             self.hass.config_entries, "async_entries"
         ):
             for entry in self.hass.config_entries.async_entries(DOMAIN):
-                if entry.data.get(CONF_TYPE) == AREA_TYPE_META:
+                is_meta_entry = entry.data.get(CONF_TYPE) == AREA_TYPE_META
+                if is_meta_entry and not include_meta:
                     continue
                 c_id = str(entry.data.get(CONF_ID) or "")
                 c_name = str(entry.data.get(CONF_NAME) or entry.title or c_id)
@@ -422,6 +450,7 @@ class MagicArea(object):  # noqa: UP004
                     area_id=c_id or slugify(c_name),
                     area_name=c_name,
                     entry_id=entry.entry_id,
+                    is_meta_candidate=is_meta_entry,
                 )
 
         # 3. Simply Magic Area devices in Home Assistant's Device Registry
@@ -475,6 +504,12 @@ class MagicArea(object):  # noqa: UP004
             return False
         slug = (self.slug or "").lower()
         area_id = (self.id or "").lower()
+        if area_id in (
+            META_AREA_INTERIOR.lower(),
+            META_AREA_EXTERIOR.lower(),
+            META_AREA_GLOBAL.lower(),
+        ):
+            return False
         return (
             area_id in (META_AREA_BEDROOMS.lower(), "bedroom")
             or "bedroom" in slug
@@ -534,6 +569,128 @@ class MagicArea(object):  # noqa: UP004
             and self.is_interior()
             and not self.is_bedroom_or_ensuite()
         )
+
+    def get_parent_sleep_meta_area(self) -> "MagicArea | None":
+        """Return the top-level Meta-Area that controls sleep mode for this room, or None if standalone."""
+        if self.is_meta() or not self.hass:
+            return None
+
+        my_keys = {
+            str(getattr(self, "slug", "") or "").lower(),
+            str(getattr(self, "id", "") or "").lower(),
+            str(getattr(self, "name", "") or "").lower(),
+            str(getattr(self, "name", "") or "").lower().replace(" ", "_"),
+        }
+
+        meta_objects: list[MagicArea] = []
+        if MODULE_DATA in self.hass.data:
+            for entry_info in self.hass.data[MODULE_DATA].values():
+                if not isinstance(entry_info, dict):
+                    continue
+                other = entry_info.get(DATA_AREA_OBJECT)
+                if other is not None and other is not self and other.is_meta():
+                    meta_objects.append(other)
+
+        # 1. Bedrooms Meta-Area takes highest priority for bedrooms/ensuites
+        for meta in meta_objects:
+            if meta.is_bedroom_meta():
+                configured_children = meta.config.get(CONF_CHILD_AREAS)
+                if configured_children:
+                    child_slugs = {str(s).lower() for s in meta.get_child_areas()}
+                    if my_keys & child_slugs:
+                        return meta
+                elif self.is_bedroom_or_ensuite():
+                    return meta
+
+        # 2. Exterior Meta-Area for exterior rooms
+        if self.is_exterior():
+            for meta in meta_objects:
+                if str(getattr(meta, "id", "")).lower() == META_AREA_EXTERIOR.lower():
+                    configured_children = meta.config.get(CONF_CHILD_AREAS)
+                    if configured_children:
+                        child_slugs = {str(s).lower() for s in meta.get_child_areas()}
+                        if my_keys & child_slugs:
+                            return meta
+                    else:
+                        return meta
+
+        # 3. Interior Meta-Area for interior rooms
+        if self.is_interior():
+            for meta in meta_objects:
+                if str(getattr(meta, "id", "")).lower() == META_AREA_INTERIOR.lower():
+                    configured_children = meta.config.get(CONF_CHILD_AREAS)
+                    if configured_children:
+                        child_slugs = {str(s).lower() for s in meta.get_child_areas()}
+                        if my_keys & child_slugs:
+                            return meta
+                    elif self.is_main_house_area():
+                        return meta
+
+        # 4. Global Meta-Area fallback
+        for meta in meta_objects:
+            if str(getattr(meta, "id", "")).lower() == META_AREA_GLOBAL.lower():
+                configured_children = meta.config.get(CONF_CHILD_AREAS)
+                if configured_children:
+                    child_slugs = {str(s).lower() for s in meta.get_child_areas()}
+                    if my_keys & child_slugs:
+                        return meta
+                elif not self.is_bedroom_or_ensuite():
+                    return meta
+
+        return None
+
+    def is_top_level_sleep_target(self) -> bool:
+        """Return True if this area is a top-level Meta-Area or a standalone room not inside any Meta-Area collection."""
+        if self.is_meta():
+            return True
+        if self.get_parent_sleep_meta_area() is not None:
+            return False
+        if self.hass and hasattr(self.hass, "config_entries") and hasattr(
+            self.hass.config_entries, "async_entries"
+        ):
+            my_keys = {
+                str(getattr(self, "slug", "") or "").lower(),
+                str(getattr(self, "id", "") or "").lower(),
+                str(getattr(self, "name", "") or "").lower(),
+                str(getattr(self, "name", "") or "").lower().replace(" ", "_"),
+            }
+            for entry in self.hass.config_entries.async_entries(DOMAIN):
+                entry_id_val = str(entry.data.get(CONF_ID, "")).lower()
+                is_meta_entry = entry.data.get(CONF_TYPE) == AREA_TYPE_META or entry_id_val in {
+                    m.lower() for m in META_AREAS
+                }
+                if not is_meta_entry:
+                    continue
+                merged = dict(entry.data)
+                if entry.options:
+                    merged.update(entry.options)
+                configured_children = merged.get(CONF_CHILD_AREAS) or []
+                if configured_children:
+                    raw_tokens = {str(c).lower() for c in configured_children if c} | {
+                        slugify(str(c)) for c in configured_children if c
+                    }
+                    if my_keys & raw_tokens:
+                        return False
+                elif (
+                    (
+                        entry_id_val in (META_AREA_BEDROOMS.lower(), "bedroom")
+                        and self.is_bedroom_or_ensuite()
+                    )
+                    or (
+                        entry_id_val == META_AREA_INTERIOR.lower()
+                        and self.is_main_house_area()
+                    )
+                    or (
+                        entry_id_val == META_AREA_EXTERIOR.lower()
+                        and self.is_exterior()
+                    )
+                    or (
+                        entry_id_val == META_AREA_GLOBAL.lower()
+                        and not self.is_bedroom_or_ensuite()
+                    )
+                ):
+                    return False
+        return True
 
     def set_sleep_mode(self, enabled: bool, propagate: bool = True) -> None:
         """Manually enable or disable sleep mode for this area (and child areas if applicable)."""
@@ -895,6 +1052,12 @@ class MagicArea(object):  # noqa: UP004
                         entity_ob = None
                     else:
                         continue
+            elif lg.enable_state == AreaState.AREA_STATE_SLEEP:
+                entity_ob = base.get(lg.entity_name()) or self.config.get(
+                    lg.entity_name()
+                )
+                if not entity_ob:
+                    entity_ob = None
             lights = self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(
                 lg.advanced_lights_to_control(), light_entities
             )
@@ -1064,6 +1227,31 @@ class MagicArea(object):  # noqa: UP004
             except (ValueError, TypeError):
                 pass
         return None
+
+    def has_local_illuminance_sensor(self) -> bool:
+        """Return True if this area has its own local illuminance sensor."""
+        local_lux_sensor = self.simply_magic_entity_id(
+            SENSOR_DOMAIN, EntityNames.ILLUMINANCE
+        )
+        if self._parse_valid_lux(self.hass.states.get(local_lux_sensor)) is not None:
+            return True
+        if SENSOR_DOMAIN in self.entities:
+            for entity in self.entities[SENSOR_DOMAIN]:
+                if (
+                    entity.get(ATTR_DEVICE_CLASS) == SensorDeviceClass.ILLUMINANCE
+                    or entity.get("unit_of_measurement") == LIGHT_LUX
+                ) and (
+                    self._parse_valid_lux(
+                        self.hass.states.get(entity[ATTR_ENTITY_ID])
+                    )
+                    is not None
+                ):
+                    return True
+        return False
+
+    def has_illuminance_sensor(self) -> bool:
+        """Return True if this area has a valid local or reference illuminance sensor."""
+        return self.get_effective_illuminance() is not None
 
     def get_effective_illuminance(self) -> float | None:
         """Get the current illuminance value for this area from local or reference sensors."""
@@ -1313,12 +1501,40 @@ class MagicMetaArea(MagicArea):
 
         return active_areas
 
-    def get_child_areas(self) -> list[str]:
-        """Get the child areas (strictly from other Simply Magic Area devices)."""
+    def get_child_areas(self, _visited: set[str] | None = None) -> list[str]:
+        """Get the child areas (strictly from other Simply Magic Area devices, expanding child Meta-Areas)."""
+        if _visited is None:
+            _visited = {str(getattr(self, "slug", "") or "").lower()}
+        else:
+            _visited = set(_visited) | {str(getattr(self, "slug", "") or "").lower()}
+
         data = self.hass.data.get(MODULE_DATA, {})
         configured_children = self.config.get(CONF_CHILD_AREAS)
         if configured_children and isinstance(configured_children, (list, tuple, set)):
-            return self.resolve_child_magic_area_slugs(configured_children)
+            resolved_slugs = self.resolve_child_magic_area_slugs(configured_children)
+            expanded_slugs: list[str] = []
+            for slug in resolved_slugs:
+                matched_meta = None
+                if isinstance(data, dict):
+                    for area_info in data.values():
+                        if not isinstance(area_info, dict):
+                            continue
+                        candidate = area_info.get(DATA_AREA_OBJECT)
+                        if (
+                            candidate is not None
+                            and candidate.is_meta()
+                            and str(getattr(candidate, "slug", "")).lower() == slug.lower()
+                        ):
+                            matched_meta = candidate
+                            break
+                if matched_meta is not None:
+                    if slug.lower() not in _visited:
+                        for sub_slug in matched_meta.get_child_areas(_visited):
+                            if sub_slug not in expanded_slugs:
+                                expanded_slugs.append(sub_slug)
+                elif slug not in expanded_slugs:
+                    expanded_slugs.append(slug)
+            return expanded_slugs
 
         areas: list[str] = []
 
@@ -1362,19 +1578,27 @@ class MagicMetaArea(MagicArea):
         self._finalize_init()
 
     async def _load_entities(self) -> None:
+        self.entities = {}
         entity_list: list[str] = []
         child_slugs = set(self.get_child_areas())
+        has_explicit_children = bool(self.config.get(CONF_CHILD_AREAS))
 
         data = self.hass.data[MODULE_DATA]
         for area_info in data.values():
             area = area_info[DATA_AREA_OBJECT]
             if not area.is_meta() and (
                 area.slug in child_slugs
-                or self.id == META_AREA_GLOBAL.lower()  # type: ignore
-                or area.config.get(CONF_TYPE) == self.id
+                or (
+                    not has_explicit_children
+                    and (
+                        self.id == META_AREA_GLOBAL.lower()  # type: ignore
+                        or area.config.get(CONF_TYPE) == self.id
+                    )
+                )
             ):
                 if (
-                    self.id in (META_AREA_INTERIOR.lower(), META_AREA_GLOBAL.lower())
+                    area.slug not in child_slugs
+                    and self.id in (META_AREA_INTERIOR.lower(), META_AREA_GLOBAL.lower())
                     and area.is_bedroom_or_ensuite()
                 ):
                     continue

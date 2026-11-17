@@ -1,6 +1,7 @@
 """Light controls for magic areas."""
 
 import logging
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
@@ -21,6 +22,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     ATTR_DEVICE_CLASS,
     ATTR_ENTITY_ID,
+    EVENT_HOMEASSISTANT_STOP,
     EVENT_STATE_CHANGED,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
@@ -61,12 +63,14 @@ from .const import (
     ATTR_HISTORICAL_DAYLIGHT_LUX,
     ATTR_IS_WINDOWLESS,
     ATTR_LAST_UPDATE_FROM_ENTITY,
+    ATTR_LUX_PER_DIM_PCT,
     ATTR_MANUAL_CONTROL,
     ATTR_MANUAL_TIMEOUT_TS,
     ATTR_PRESENCE_SENSORS,
     ATTR_SLEEP_WAKEUP_BOOST,
     ATTR_SWITCH_DEFAULT_DIM_ENTITIES,
     ATTR_SWITCH_DEFAULT_DIM_LEVEL,
+    ATTR_TARGET_DAYLIGHT_LUX,
     BINARY_SENSOR_DOMAIN,
     CAMERA_DOMAIN,
     CONF_ALL_AWAY_SWEEP,
@@ -97,6 +101,7 @@ from .const import (
     DEFAULT_EXTERIOR_SUNSET_TRIGGER,
     DEFAULT_LEARN_LIGHTING_PREFERENCES,
     DEFAULT_LIGHT_SETTLE_TIME,
+    DEFAULT_LUX_SETTLE_DELAY,
     DEFAULT_MANUAL_OFF_UNOCCUPIED_DELAY,
     DEFAULT_MANUAL_TIMEOUT,
     DEFAULT_MAX_BRIGHTNESS_LEVEL,
@@ -282,6 +287,12 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._arrival_prewarm_reason: str | None = None
         self._sleep_wakeup_timer_cb: CALLBACK_TYPE | None = None
         self._sleep_wakeup_boost_active: bool = False
+        self._lux_settle_timer_cb: CALLBACK_TYPE | None = None
+        self._lux_settle_pre_lux: float | None = None
+        self._lux_settle_pre_dim_pct: float = 0.0
+        self._lux_settle_commanded_dim_pct: float = 0.0
+        self._lux_settle_target_daylight_lux: float | None = None
+        self._hass_stop_unsub: CALLBACK_TYPE | None = None
 
         # Add static attributes
         self._all_lights: list[str] = list(entities)
@@ -480,6 +491,99 @@ class AreaLightGroup(MagicEntity, LightGroup):
             service_data,
         )
 
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Handle turn_on service calls (including manual UI brightness/dimmer adjustments)."""
+        now_ts = datetime.now(UTC).timestamp()
+        req_b = kwargs.get(ATTR_BRIGHTNESS)
+        if req_b is None and "brightness_pct" in kwargs:
+            with suppress(ValueError, TypeError):
+                req_b = round(float(kwargs["brightness_pct"]) * 255.0 / 100.0)
+                kwargs[ATTR_BRIGHTNESS] = req_b
+
+        last_sig = getattr(self, "_last_dispatched_sig", None)
+        is_internal_dispatch = (
+            last_sig is not None
+            and (now_ts - getattr(self, "_last_dispatched_ts", 0.0)) < 2.0
+            and last_sig[0] == SERVICE_TURN_ON
+            and (
+                req_b is None
+                or last_sig[2] is None
+                or abs(int(req_b) - int(last_sig[2]))
+                <= DEFAULT_BRIGHTNESS_SMOOTHING_DEADBAND
+            )
+            and (
+                self.last_update_from_entity
+                or now_ts <= getattr(self, "_command_in_flight_until", 0.0)
+            )
+        )
+
+        if not is_internal_dispatch and self.area.is_control_enabled(ControlType.System):
+            self._cancel_retry_timer()
+            self._cancel_lux_settle_timer()
+            self._cancel_manual_off_unoccupied_timer()
+            if self._manual_timeout_cb is not None:
+                self._manual_timeout_cb()
+                self._manual_timeout_cb = None
+            self._command_in_flight_until = now_ts + 2.5
+            self._automation_transition_until = 0.0
+            self._expected_state = STATE_ON
+            self._attr_is_on = True
+            self._set_controlled_by_this_entity(False)
+            if req_b is not None:
+                self._expected_brightness = int(req_b)
+                self._attr_brightness = int(req_b)
+                self._manual_brightness_override = True
+                self._record_manual_brightness_preference(int(req_b))
+
+        await super().async_turn_on(**kwargs)
+
+        if not is_internal_dispatch and self.area.is_control_enabled(ControlType.System):
+            if req_b is not None:
+                self._schedule_actuator_retry(
+                    STATE_ON, int(req_b), allow_manual=True
+                )
+            self.schedule_update_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Handle turn_off service calls (including manual UI turn-off)."""
+        now_ts = datetime.now(UTC).timestamp()
+        last_sig = getattr(self, "_last_dispatched_sig", None)
+        is_internal_dispatch = (
+            last_sig is not None
+            and (now_ts - getattr(self, "_last_dispatched_ts", 0.0)) < 2.0
+            and last_sig[0] == SERVICE_TURN_OFF
+            and (
+                self.last_update_from_entity
+                or now_ts <= getattr(self, "_command_in_flight_until", 0.0)
+            )
+        )
+
+        if not is_internal_dispatch and self.area.is_control_enabled(ControlType.System):
+            self._cancel_retry_timer()
+            self._cancel_lux_settle_timer()
+            self._command_in_flight_until = now_ts + 2.5
+            self._automation_transition_until = 0.0
+            self._expected_state = STATE_OFF
+            self._expected_brightness = None
+            self._manual_brightness_override = False
+            self._attr_is_on = False
+            if self.is_exterior:
+                self._clear_exterior_lighting()
+            if not self._has_presence_sensors():
+                self._reset_control()
+            else:
+                self._set_controlled_by_this_entity(False)
+                if self._manual_timeout_cb is not None:
+                    self._manual_timeout_cb()
+                    self._manual_timeout_cb = None
+                self._schedule_manual_off_unoccupied_clear_if_needed()
+
+        await super().async_turn_off(**kwargs)
+
+        if not is_internal_dispatch and self.area.is_control_enabled(ControlType.System):
+            self._schedule_actuator_retry(STATE_OFF, allow_manual=True)
+            self.schedule_update_ha_state()
+
     async def _setup_listeners(self) -> None:
         self.async_on_remove(
             async_track_state_change_event(
@@ -581,6 +685,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._cancel_active_service_task()
         self._cancel_retry_timer()
         self._cancel_settle_timer()
+        self._cancel_lux_settle_timer()
         self._clear_arrival_prewarm()
         self._cancel_sleep_wakeup_timer()
         self._cancel_manual_off_unoccupied_timer()
@@ -590,12 +695,33 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if self._exterior_timer_cb is not None:
             self._exterior_timer_cb()
             self._exterior_timer_cb = None
+        if getattr(self, "_hass_stop_unsub", None) is not None:
+            self._hass_stop_unsub()
+            self._hass_stop_unsub = None
         self._command_in_flight_until = 0.0
         self._automation_transition_until = 0.0
         self._sync_settle_until = 0.0
         self._last_dispatched_sig = None
         self._last_dispatched_ts = 0.0
         self.last_update_from_entity = False
+
+    @callback
+    def _on_hass_stop(self, _event: Event | None = None) -> None:
+        """Cancel active timers when Home Assistant stops."""
+        self._hass_stop_unsub = None
+        self.stop_all_active_control()
+
+    def _ensure_hass_stop_listener(self) -> None:
+        """Ensure timers are cancelled if Home Assistant stops before entity removal."""
+        if (
+            getattr(self, "_hass_stop_unsub", None) is None
+            and self.hass is not None
+            and hasattr(self.hass, "bus")
+        ):
+            self._hass_stop_unsub = self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STOP,
+                self._on_hass_stop,
+            )
 
     @callback
     def _system_control_change(self, event: Event[EventStateChangedData]) -> None:
@@ -657,9 +783,14 @@ class AreaLightGroup(MagicEntity, LightGroup):
         is_manually_off = not self._is_controlled_by_this_entity() and (
             not self.is_on or getattr(self, "_expected_state", None) == STATE_OFF
         )
+        holding_manual_dim = bool(
+            getattr(self, "_manual_brightness_override", False)
+            and (self.is_on or self._has_any_working_light_on())
+        )
         reentered_from_extended = (
             from_state == AreaState.AREA_STATE_EXTENDED
             and to_state in active_occupied_states
+            and not holding_manual_dim
         )
         left_occupied_while_manually_off = (
             is_manually_off
@@ -1258,6 +1389,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
             LightingProfile.SLEEP,
             AreaState.AREA_STATE_SLEEP,
         )
+        was_sleep_profile = old_profile in (
+            LightingProfile.SLEEP,
+            AreaState.AREA_STATE_SLEEP,
+        )
         if not is_sleep_profile:
             self._cancel_sleep_wakeup_timer()
         else:
@@ -1289,9 +1424,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 )
             return
 
+        # When transitioning out of sleep mode, clear manual dim hold so lights restore to the new profile's level
+        if was_sleep_profile and getattr(self, "_manual_brightness_override", False):
+            self._manual_brightness_override = False
+
         if getattr(self, "_manual_brightness_override", False):
             _LOGGER.debug(
-                "%s: In manual brightness override; ignoring profile change from %s to %s",
+                "%s: In manual brightness override; holding dim level across non-sleep profile change from %s to %s",
                 self.name,
                 old_profile,
                 new_profile,
@@ -1392,37 +1531,42 @@ class AreaLightGroup(MagicEntity, LightGroup):
             and old_state.attributes.get(ATTR_BRIGHTNESS)
             != new_state.attributes.get(ATTR_BRIGHTNESS)
         ):
+            old_brightness = old_state.attributes.get(ATTR_BRIGHTNESS)
             new_brightness = new_state.attributes.get(ATTR_BRIGHTNESS)
             if (
-                self.last_update_from_entity
-                or expected_state == STATE_OFF
+                expected_state == STATE_OFF
+                or (
+                    self.last_update_from_entity
+                    and expected_brightness is None
+                )
                 or (
                     expected_state == STATE_ON
                     and new_brightness is not None
                     and expected_brightness is not None
-                    and abs(int(new_brightness) - int(expected_brightness)) <= 8
+                    and abs(int(new_brightness) - int(expected_brightness))
+                    <= DEFAULT_BRIGHTNESS_SMOOTHING_DEADBAND
                 )
                 or (
                     in_command_grace
-                    and (
-                        expected_state == STATE_OFF
-                        or (
-                            expected_state == STATE_ON
-                            and new_brightness is not None
-                            and expected_brightness is not None
-                            and abs(int(new_brightness) - int(expected_brightness)) <= 8
-                        )
-                    )
+                    and expected_state == STATE_ON
+                    and new_brightness is not None
+                    and expected_brightness is not None
+                    and isinstance(old_brightness, (int, float))
+                    and abs(int(new_brightness) - int(expected_brightness))
+                    < abs(int(old_brightness) - int(expected_brightness))
                 )
             ):
                 self.last_update_from_entity = False
                 return
 
             if new_brightness is not None and isinstance(new_brightness, (int, float)):
+                self.last_update_from_entity = False
                 self._cancel_retry_timer()
+                self._cancel_lux_settle_timer()
                 self._expected_state = STATE_ON
                 self._expected_brightness = int(new_brightness)
                 self._command_in_flight_until = 0.0
+                self._automation_transition_until = 0.0
                 self._record_manual_brightness_preference(int(new_brightness))
                 self._manual_brightness_override = True
                 self._set_controlled_by_this_entity(False)
@@ -1728,9 +1872,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
                         and (now_ts - getattr(self, "_last_sync_dispatch_ts", 0.0))
                         < DEFAULT_LIGHT_SETTLE_TIME
                     ):
+                        self._last_member_manual_ts = now_ts
                         self._expected_brightness = int(new_b)
                         self._last_sync_target_brightness = int(new_b)
                         self._attr_brightness = int(new_b)
+                        self._manual_brightness_override = True
+                        if self._has_presence_sensors():
+                            self._set_controlled_by_this_entity(False)
                         self._schedule_light_settle(entity_id)
                         return
             elif new_state.state == sync_target_state:
@@ -1781,8 +1929,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
             ):
                 return
             if (
-                self.last_update_from_entity
-                or in_command_grace
+                (
+                    (self.last_update_from_entity or in_command_grace)
+                    and expected_brightness is None
+                )
                 or (
                     now_ts
                     - getattr(self, "_member_invalid_transition_ts", {}).get(
@@ -1819,14 +1969,20 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 and expected_brightness is not None
                 and now_ts <= getattr(self, "_automation_transition_until", 0.0)
                 and self._is_controlled_by_this_entity()
+                and isinstance(old_b, (int, float))
+                and abs(int(old_b) - int(expected_brightness))
+                > DEFAULT_BRIGHTNESS_SMOOTHING_DEADBAND
+                and abs(int(new_b) - int(expected_brightness))
+                < abs(int(old_b) - int(expected_brightness))
             ):
-                # During an automated profile/dim transition, align lagging bulbs to
+                # During an automated profile/dim transition, align lagging bulbs moving toward
                 # expected_brightness instead of letting them trigger a manual override loop.
                 self._schedule_actuator_retry(STATE_ON, expected_brightness)
                 return
 
             self._last_member_manual_ts = now_ts
             self._cancel_retry_timer()
+            self._cancel_lux_settle_timer()
             self._expected_state = STATE_ON
             self._expected_brightness = int(new_b)
             self._command_in_flight_until = 0.0
@@ -2242,6 +2398,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
     def _cancel_retry_timer(self) -> None:
         """Cancel any pending actuator sliding backoff retry timer."""
         self._cancel_settle_timer()
+        self._cancel_lux_settle_timer()
         if getattr(self, "_retry_timer_cb", None) is not None:
             self._retry_timer_cb()
             self._retry_timer_cb = None
@@ -2327,6 +2484,159 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 self._execute_actuator_retry,
             )
 
+    def _cancel_lux_settle_timer(self) -> None:
+        """Cancel any pending 30-second lux settle tracking timer."""
+        if getattr(self, "_lux_settle_timer_cb", None) is not None:
+            self._lux_settle_timer_cb()
+            self._lux_settle_timer_cb = None
+
+    def _schedule_lux_settle_check(
+        self,
+        pre_lux: float,
+        pre_dim_pct: float,
+        commanded_dim_pct: float,
+        target_daylight_lux: float | None,
+    ) -> None:
+        """Schedule a 30-second settle check to measure lux change and recalculate daylight target."""
+        self._cancel_lux_settle_timer()
+        self._lux_settle_pre_lux = float(pre_lux)
+        self._lux_settle_pre_dim_pct = float(pre_dim_pct)
+        self._lux_settle_commanded_dim_pct = float(commanded_dim_pct)
+        self._lux_settle_target_daylight_lux = (
+            float(target_daylight_lux) if target_daylight_lux is not None else None
+        )
+        self._ensure_hass_stop_listener()
+        self._lux_settle_timer_cb = async_call_later(
+            self.hass,
+            DEFAULT_LUX_SETTLE_DELAY,
+            self._lux_settle_timer_expired,
+        )
+
+    @callback
+    def _lux_settle_timer_expired(self, _now: datetime | None = None) -> None:
+        """Measure settled lux after 30s, learn lux-per-dim gain, and perform one adjustment to hit daylight level."""
+        self._lux_settle_timer_cb = None
+        if (
+            not self.area.is_control_enabled(ControlType.System)
+            or self.area.state == AreaState.AREA_STATE_MANUAL
+        ):
+            return
+        if not self.is_on and not self._has_any_working_light_on():
+            return
+
+        settled_lux = self.area.get_effective_illuminance()
+        if settled_lux is None:
+            return
+
+        pre_lux = getattr(self, "_lux_settle_pre_lux", None)
+        pre_dim_pct = float(getattr(self, "_lux_settle_pre_dim_pct", 0.0))
+        commanded_dim_pct = float(getattr(self, "_lux_settle_commanded_dim_pct", 0.0))
+        target_daylight_lux = getattr(self, "_lux_settle_target_daylight_lux", None)
+
+        if pre_lux is not None and self._lighting_learner is not None:
+            delta_dim_pct = commanded_dim_pct - pre_dim_pct
+            delta_lux = float(settled_lux) - float(pre_lux)
+            learned_gain = self._lighting_learner.record_lux_dim_response(
+                delta_dim_pct=delta_dim_pct,
+                delta_lux=delta_lux,
+            )
+            if learned_gain is not None:
+                self._attr_extra_state_attributes[ATTR_LUX_PER_DIM_PCT] = round(
+                    learned_gain, 3
+                )
+            self._attr_extra_state_attributes.update(
+                self._lighting_learner.get_attributes()
+            )
+
+        if (
+            target_daylight_lux is None
+            or target_daylight_lux <= 0
+            or self._is_nighttime()
+            or not self._is_controlled_by_this_entity()
+            or self._get_current_lighting_profile()
+            in (LightingProfile.SLEEP, AreaState.AREA_STATE_SLEEP)
+        ):
+            self.schedule_update_ha_state()
+            return
+
+        # If settled lux is already within deadband of target daylight lux, no change needed
+        if abs(float(settled_lux) - float(target_daylight_lux)) <= 5.0:
+            self.schedule_update_ha_state()
+            return
+
+        new_dim_pct: int | None = None
+        if self._lighting_learner is not None:
+            new_dim_pct = self._lighting_learner.calculate_dim_pct_for_target_lux(
+                current_lux=float(settled_lux),
+                current_dim_pct=commanded_dim_pct,
+                target_daylight_lux=float(target_daylight_lux),
+            )
+        if new_dim_pct is None and float(settled_lux) > 0 and commanded_dim_pct > 0:
+            new_dim_pct = max(
+                1,
+                min(
+                    100,
+                    round(
+                        commanded_dim_pct
+                        * (float(target_daylight_lux) / float(settled_lux))
+                    ),
+                ),
+            )
+
+        if new_dim_pct is None:
+            self.schedule_update_ha_state()
+            return
+
+        if new_dim_pct <= 0:
+            self._turn_off_light(force=True)
+            return
+
+        new_brightness = max(1, min(255, round(new_dim_pct * 255 / 100)))
+        cur_brightness = (
+            getattr(self, "_expected_brightness", None)
+            or self.brightness
+            or round(commanded_dim_pct * 255 / 100)
+        )
+        if (
+            abs(int(new_brightness) - int(cur_brightness))
+            <= DEFAULT_BRIGHTNESS_SMOOTHING_DEADBAND
+        ):
+            self.schedule_update_ha_state()
+            return
+
+        _LOGGER.info(
+            "%s: 30s settled lux=%s (target=%s, gain=%s lx/%%) -> adjusting dim from %.0f%% to %d%% (brightness %d)",
+            self.name,
+            settled_lux,
+            target_daylight_lux,
+            getattr(self._lighting_learner, "lux_per_dim_pct", None),
+            commanded_dim_pct,
+            new_dim_pct,
+            new_brightness,
+        )
+        now_ts = datetime.now(UTC).timestamp()
+        self._last_turn_on_ts = now_ts
+        self.last_update_from_entity = True
+        self._attr_is_on = True
+        self._attr_brightness = int(new_brightness)
+        self._expected_state = STATE_ON
+        self._expected_brightness = int(new_brightness)
+        self._command_in_flight_until = now_ts + 2.5
+        self._automation_transition_until = now_ts + 6.0
+        self.schedule_update_ha_state()
+        self._dispatch_light_command(
+            SERVICE_TURN_ON,
+            {
+                ATTR_ENTITY_ID: self.entity_id,
+                ATTR_BRIGHTNESS: int(new_brightness),
+            },
+        )
+        self._schedule_actuator_retry(STATE_ON, int(new_brightness))
+
+    def _has_illuminance_sensor(self) -> bool:
+        """Return True if this room has a local or configured reference illuminance sensor."""
+        return self.area.get_effective_illuminance() is not None
+
     def _turn_on_light(
         self,
         conf: StateConfigData,
@@ -2364,6 +2674,16 @@ class AreaLightGroup(MagicEntity, LightGroup):
             )
             return
 
+        was_already_on = bool(self.is_on or self._has_any_working_light_on())
+        prev_b = (
+            self.brightness
+            or getattr(self, "_expected_brightness", None)
+            or 255
+        )
+        prev_dim_pct = round(float(prev_b) * 100.0 / 255.0, 1) if was_already_on else 0.0
+        live_lux = self.area.get_effective_illuminance()
+        has_lux_sensor = live_lux is not None
+
         self._entity_ids = conf.lights
         self.async_update_group_state()
         _LOGGER.debug(
@@ -2375,7 +2695,28 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self.area.entities[LIGHT_DOMAIN],
         )
 
-        brightness = int(conf.dim_level * 255 / 100)
+        active_profile = self._get_current_lighting_profile()
+        is_sleep_mode = (
+            active_profile in (LightingProfile.SLEEP, AreaState.AREA_STATE_SLEEP)
+            or conf.for_state == AreaState.AREA_STATE_SLEEP
+        )
+        if not has_lux_sensor:
+            # If there is no lux sensor in the room, lights go on full (100%) or dimmed based on sleep state
+            if is_sleep_mode or conf.for_state in (
+                AreaState.AREA_STATE_EXTENDED,
+                AreaState.AREA_STATE_CLEAR,
+                AreaState.AREA_STATE_ACCENTED,
+            ):
+                brightness = int(conf.dim_level * 255 / 100)
+            else:
+                brightness = (
+                    int(conf.dim_level * 255 / 100)
+                    if conf.dim_level > 0
+                    else 255
+                )
+        else:
+            brightness = int(conf.dim_level * 255 / 100)
+
         now_ts = datetime.now(UTC).timestamp()
         recent_turn_off = (now_ts - getattr(self, "_last_turn_off_ts", 0.0)) < 3.0
         all_working_on = not self._has_any_working_light_off()
@@ -2402,12 +2743,20 @@ class AreaLightGroup(MagicEntity, LightGroup):
         )
         is_windowless = bool(getattr(self.area, "is_windowless", False))
         historical_daylight = getattr(self.area, "historical_daylight_lux", None)
+        target_daylight_lux: float | None = None
 
-        # Check for windowless room, nighttime, or absolute dark floor guarantee
-        if is_windowless or self._is_nighttime() or luminesence <= dark_lux_floor:
+        # If there is no lux sensor in the room, or windowless/nighttime/sleep/dark_floor:
+        # do not scale down brightness by lux
+        if (
+            not has_lux_sensor
+            or is_sleep_mode
+            or is_windowless
+            or self._is_nighttime()
+            or luminesence <= dark_lux_floor
+        ):
             darkness_ratio = 1.0
             _LOGGER.debug(
-                "%s: Ambient lux %s is at or below dark floor %s (or windowless/nighttime) -> full brightness %s",
+                "%s: No lux sensor or ambient lux %s <= dark floor %s (or windowless/nighttime/sleep) -> brightness %s",
                 self.name,
                 luminesence,
                 dark_lux_floor,
@@ -2430,7 +2779,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 and historical_daylight is not None
                 and historical_daylight > (dark_lux_floor + 5.0)
             ):
-                # Autonomously learned daylight baseline for this specific room's sensor
+                # Autonomously learned multi-day daylight baseline for this specific room's sensor
                 lower_lux = dark_lux_floor
                 upper_lux = float(historical_daylight)
             else:
@@ -2446,6 +2795,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
                     )
                 )
 
+            target_daylight_lux = float(upper_lux)
+
             if luminesence >= upper_lux:
                 darkness_ratio = 0.0
                 brightness = 0
@@ -2455,6 +2806,23 @@ class AreaLightGroup(MagicEntity, LightGroup):
                     luminesence,
                     upper_lux,
                 )
+            elif (
+                self._lighting_learner is not None
+                and getattr(self._lighting_learner, "lux_per_dim_pct", None) is not None
+            ):
+                needed_dim_pct = self._lighting_learner.calculate_dim_pct_for_target_lux(
+                    current_lux=float(luminesence),
+                    current_dim_pct=0.0,
+                    target_daylight_lux=float(upper_lux),
+                )
+                if needed_dim_pct is not None:
+                    darkness_ratio = needed_dim_pct / 100.0
+                    brightness = round(brightness * darkness_ratio)
+                elif luminesence > lower_lux:
+                    darkness_ratio = (upper_lux - luminesence) / (upper_lux - lower_lux)
+                    brightness = int(brightness * darkness_ratio)
+                else:
+                    darkness_ratio = 1.0
             elif luminesence > lower_lux:
                 darkness_ratio = (upper_lux - luminesence) / (upper_lux - lower_lux)
                 brightness = int(brightness * darkness_ratio)
@@ -2478,12 +2846,16 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 ATTR_IS_WINDOWLESS: is_windowless,
             }
         )
+        if target_daylight_lux is not None:
+            self._attr_extra_state_attributes[ATTR_TARGET_DAYLIGHT_LUX] = round(
+                float(target_daylight_lux), 1
+            )
         if historical_daylight is not None:
             self._attr_extra_state_attributes[ATTR_HISTORICAL_DAYLIGHT_LUX] = round(
                 float(historical_daylight), 1
             )
 
-        # Apply local ML Bayesian preference learning if enabled and samples exist
+        # Apply local ML Bayesian preference learning only when room has a lux sensor
         learn_preferences = bool(
             adv_conf.get(
                 CONF_LEARN_LIGHTING_PREFERENCES,
@@ -2491,7 +2863,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
             )
         )
         if (
-            learn_preferences
+            has_lux_sensor
+            and learn_preferences
             and self._lighting_learner
             and self._lighting_learner.sample_count > 0
             and brightness > 0
@@ -2567,6 +2940,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._last_turn_on_ts = now_ts
         self.last_update_from_entity = True
         self._attr_is_on = True
+        self._sync_settle_until = 0.0
+        self._last_sync_source_entity = None
         self._command_in_flight_until = now_ts + 2.5
         self._automation_transition_until = now_ts + 6.0
         self.schedule_update_ha_state()
@@ -2577,12 +2952,28 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._dispatch_light_command(SERVICE_TURN_ON, service_data)
         self._schedule_actuator_retry(STATE_ON, brightness)
 
+        if (
+            not self.is_exterior
+            and has_lux_sensor
+            and live_lux is not None
+            and isinstance(live_lux, (int, float))
+        ):
+            commanded_dim_pct = round(float(brightness) * 100.0 / 255.0, 1)
+            if abs(commanded_dim_pct - prev_dim_pct) >= 5.0:
+                self._schedule_lux_settle_check(
+                    pre_lux=float(live_lux),
+                    pre_dim_pct=prev_dim_pct,
+                    commanded_dim_pct=commanded_dim_pct,
+                    target_daylight_lux=target_daylight_lux,
+                )
+
         return
 
     def _turn_off_light(
         self, force: bool = False, allow_sensorless: bool = False
     ) -> None:
         """Turn off the light group."""
+        self._cancel_lux_settle_timer()
         if (
             not self.area.is_control_enabled(ControlType.System)
             or self.area.state == AreaState.AREA_STATE_MANUAL
@@ -2643,16 +3034,20 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if not self.is_on and not self._has_any_working_light_on():
             self._expected_state = STATE_OFF
             self._expected_brightness = None
+            self._manual_brightness_override = False
             _LOGGER.debug("%s: Light already off", self.name)
             return
 
         if not self.area.is_control_enabled(ControlType.System):
             return
 
+        self._manual_brightness_override = False
         now_ts = datetime.now(UTC).timestamp()
         self._last_turn_off_ts = now_ts
         self.last_update_from_entity = True
         self._attr_is_on = False
+        self._sync_settle_until = 0.0
+        self._last_sync_source_entity = None
         self._command_in_flight_until = now_ts + 2.5
         self._automation_transition_until = now_ts + 6.0
         service_data = {ATTR_ENTITY_ID: self.entity_id}

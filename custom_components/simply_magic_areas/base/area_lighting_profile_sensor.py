@@ -2,7 +2,7 @@
 
 import logging
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.sensor import (
@@ -21,6 +21,7 @@ from homeassistant.util import dt as dt_util
 from ..config.area_state import AreaState, LightingProfile
 from ..config.entity_names import EntityNames
 from ..const import (
+    ATTR_DAILY_DAYLIGHT_PEAKS,
     ATTR_DARK_LUX_FLOOR,
     ATTR_HISTORICAL_DAYLIGHT_LUX,
     ATTR_IS_WINDOWLESS,
@@ -44,6 +45,7 @@ from ..const import (
     DEFAULT_BRIGHT_LUX_HYSTERESIS,
     DEFAULT_BRIGHT_LUX_THRESHOLD,
     DEFAULT_DARK_LUX_FLOOR,
+    DEFAULT_DAYLIGHT_HISTORY_DAYS,
     DEFAULT_DAYLIGHT_LUX_LEVEL,
     DEFAULT_LEARN_DAYLIGHT_LUX,
     DEFAULT_SLEEP_MODE,
@@ -79,6 +81,7 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
         self._attr_extra_state_attributes = {}
 
         self._historical_daylight_lux: float | None = None
+        self._daily_daylight_peaks: dict[str, float] = {}
         self._is_windowless: bool = False
         self._daylight_dark_samples: int = 0
         self._auto_sleep_latched: bool = False
@@ -100,6 +103,7 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
         await super().async_added_to_hass()
         self.area._lighting_profile_sensor = self  # type: ignore[attr-defined]
         await self._restore_state()
+        await self._async_load_multiday_daylight_history()
         await self._setup_listeners()
 
         self._update_historical_daylight()
@@ -128,6 +132,7 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
     async def _restore_state(self) -> None:
         """Restore previous state on startup."""
         self._historical_daylight_lux = None
+        self._daily_daylight_peaks = {}
         self._is_windowless = False
         self._daylight_dark_samples = 0
 
@@ -138,6 +143,10 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
                 self._attr_native_value = restored
                 self.area.lighting_profile = restored
             attrs = last_state.attributes
+            if isinstance(attrs.get(ATTR_DAILY_DAYLIGHT_PEAKS), dict):
+                for day_key, peak_val in attrs[ATTR_DAILY_DAYLIGHT_PEAKS].items():
+                    with suppress(ValueError, TypeError):
+                        self._daily_daylight_peaks[str(day_key)] = float(peak_val)
             if (
                 ATTR_HISTORICAL_DAYLIGHT_LUX in attrs
                 and attrs[ATTR_HISTORICAL_DAYLIGHT_LUX] is not None
@@ -155,6 +164,107 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
         else:
             self._attr_native_value = LightingProfile.STANDARD
             self.area.lighting_profile = LightingProfile.STANDARD
+
+    async def _async_load_multiday_daylight_history(self) -> None:
+        """Load multi-day (14-day) illuminance history from recorder if available."""
+        if not self.hass or "recorder" not in self.hass.config.components:
+            return
+        try:
+            from homeassistant.components.recorder import get_instance
+            from homeassistant.components.recorder.history import get_significant_states
+
+            lux_entity_ids: list[str] = []
+            local_lux = self.area.simply_magic_entity_id(
+                SENSOR_DOMAIN, EntityNames.ILLUMINANCE
+            )
+            if local_lux:
+                lux_entity_ids.append(local_lux)
+            for ent in self.area.entities.get(SENSOR_DOMAIN, []):
+                if isinstance(ent, dict) and (
+                    ent.get("device_class") == SensorDeviceClass.ILLUMINANCE
+                    or ent.get("unit_of_measurement") == "lx"
+                ):
+                    eid = ent.get(ATTR_ENTITY_ID)
+                    if eid and eid not in lux_entity_ids:
+                        lux_entity_ids.append(eid)
+            if not lux_entity_ids:
+                return
+
+            end_time = dt_util.utcnow()
+            start_time = end_time - timedelta(days=DEFAULT_DAYLIGHT_HISTORY_DAYS)
+            rec = get_instance(self.hass)
+            states_map = await rec.async_add_executor_job(
+                get_significant_states,
+                self.hass,
+                start_time,
+                end_time,
+                lux_entity_ids,
+                None,
+                True,
+                True,
+            )
+            dark_floor = self._get_dark_lux_floor()
+            for state_list in (states_map or {}).values():
+                for st in state_list:
+                    if st is None or st.state in INVALID_STATES:
+                        continue
+                    local_dt = dt_util.as_local(st.last_updated)
+                    if not (8 <= local_dt.hour <= 17):
+                        continue
+                    try:
+                        val = float(st.state)
+                    except (ValueError, TypeError):
+                        continue
+                    if val > dark_floor:
+                        day_key = local_dt.strftime("%Y-%m-%d")
+                        prev = self._daily_daylight_peaks.get(day_key, 0.0)
+                        if val > prev:
+                            self._daily_daylight_peaks[day_key] = val
+
+            computed = self._compute_multiday_daylight_target()
+            if computed is not None and computed > dark_floor:
+                self._historical_daylight_lux = computed
+                self.area.historical_daylight_lux = computed
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug(
+                "%s: Multi-day recorder daylight lookup skipped: %s",
+                self.name,
+                err,
+            )
+
+    def _compute_multiday_daylight_target(self) -> float | None:
+        """Compute full daylight target lux across multi-day historical peaks (not just the last day)."""
+        if not self._daily_daylight_peaks:
+            return self._historical_daylight_lux
+        sorted_days = sorted(self._daily_daylight_peaks.keys())[
+            -DEFAULT_DAYLIGHT_HISTORY_DAYS:
+        ]
+        self._daily_daylight_peaks = {
+            k: self._daily_daylight_peaks[k] for k in sorted_days
+        }
+        peaks = sorted(
+            float(v) for v in self._daily_daylight_peaks.values() if v > 0
+        )
+        if not peaks:
+            return self._historical_daylight_lux
+        if len(peaks) == 1:
+            return peaks[0]
+        # Use 90th-percentile peak across multi-day history so a cloudy day does not lower full daylight target
+        idx = min(len(peaks) - 1, max(0, round(0.9 * (len(peaks) - 1))))
+        return float(peaks[idx])
+
+    def record_daily_daylight_sample(self, date_str: str, lux_val: float) -> None:
+        """Record a daytime lux reading for a specific date and update the multi-day full daylight baseline."""
+        dark_floor = self._get_dark_lux_floor()
+        if lux_val <= dark_floor:
+            return
+        prev = self._daily_daylight_peaks.get(date_str, 0.0)
+        if float(lux_val) > prev:
+            self._daily_daylight_peaks[date_str] = float(lux_val)
+        multiday_target = self._compute_multiday_daylight_target()
+        if multiday_target is not None:
+            self._historical_daylight_lux = multiday_target
+            self.area.historical_daylight_lux = multiday_target
 
     async def _setup_listeners(self) -> None:
         """Set up state change listeners for environmental and context entities."""
@@ -354,12 +464,22 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
             self.area.is_windowless = False
             self._daylight_dark_samples = 0
 
-            # Update historical daylight baseline
+            today_key = dt_util.now().strftime("%Y-%m-%d")
+            prev_day_peak = self._daily_daylight_peaks.get(today_key, 0.0)
+            if float(lux) > prev_day_peak:
+                self._daily_daylight_peaks[today_key] = float(lux)
+            multiday_target = self._compute_multiday_daylight_target()
+
+            # Update historical daylight baseline across multi-day history
             if (
                 self._historical_daylight_lux is None
                 or self._historical_daylight_lux <= dark_floor
             ):
-                self._historical_daylight_lux = float(lux)
+                self._historical_daylight_lux = (
+                    float(multiday_target)
+                    if multiday_target is not None and len(self._daily_daylight_peaks) > 1
+                    else float(lux)
+                )
             else:
                 if lux > self._historical_daylight_lux:
                     # Upward adaptation towards peak daylight
@@ -372,6 +492,12 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
                         dark_floor + 5.0,
                         0.02 * float(lux) + 0.98 * self._historical_daylight_lux,
                     )
+                if (
+                    multiday_target is not None
+                    and len(self._daily_daylight_peaks) > 1
+                    and multiday_target > self._historical_daylight_lux
+                ):
+                    self._historical_daylight_lux = float(multiday_target)
 
             self.area.historical_daylight_lux = self._historical_daylight_lux
 
@@ -379,7 +505,7 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
         """Update sensor attributes with floor, daylight baseline, and windowless status."""
         dark_floor = self._get_dark_lux_floor()
         lux = self.area.get_effective_illuminance()
-        self._attr_extra_state_attributes = {
+        attrs: dict[str, object] = {
             ATTR_DARK_LUX_FLOOR: dark_floor,
             ATTR_HISTORICAL_DAYLIGHT_LUX: (
                 round(self._historical_daylight_lux, 1)
@@ -389,6 +515,9 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
             ATTR_IS_WINDOWLESS: self._is_windowless,
             "effective_illuminance": lux,
         }
+        if self._daily_daylight_peaks:
+            attrs[ATTR_DAILY_DAYLIGHT_PEAKS] = dict(self._daily_daylight_peaks)
+        self._attr_extra_state_attributes = attrs
 
     def _write_or_schedule_ha_state(self) -> None:
         """Write state immediately when on the event loop, or schedule thread-safely."""

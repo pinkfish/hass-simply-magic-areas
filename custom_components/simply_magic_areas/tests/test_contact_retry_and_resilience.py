@@ -3231,3 +3231,561 @@ async def test_bedroom_meta_area_child_areas_config_flow_only_magic_area_devices
     assert bedrooms_meta.get_child_areas() == ["master_bedroom", "master_ensuite"]
 
 
+async def test_no_lux_sensor_full_or_sleep_dim_top_level_sleep_nested_meta_and_30s_lux_settle(
+    hass: HomeAssistant,
+) -> None:
+    """Test no-lux-sensor full/sleep brightness, top-level sleep switch rules, nested meta-areas in Interior, multi-day daylight learning, and 30s settled lux gain recalculation."""
+    from unittest.mock import MagicMock
+
+    from custom_components.simply_magic_areas.base.area_lighting_profile_sensor import (
+        AreaLightingProfileSensor,
+    )
+    from custom_components.simply_magic_areas.base.magic import (
+        MagicArea,
+        MagicMetaArea,
+        StateConfigData,
+    )
+    from custom_components.simply_magic_areas.const import (
+        AREA_TYPE_BEDROOM,
+        AREA_TYPE_INTERIOR,
+        AREA_TYPE_META,
+        ATTR_LUX_PER_DIM_PCT,
+        CONF_CHILD_AREAS,
+        CONF_ID,
+        CONF_LEARN_DAYLIGHT_LUX,
+        CONF_NAME,
+        CONF_TYPE,
+        DATA_AREA_OBJECT,
+        META_AREA_BEDROOMS,
+        META_AREA_INTERIOR,
+        MODULE_DATA,
+        OPTIONS_AREA,
+        OPTIONS_AREA_META,
+    )
+    from custom_components.simply_magic_areas.switch import (
+        async_setup_entry as switch_setup_entry,
+    )
+
+    # 1. Verify sleep_entity is removed from OPTIONS_AREA and OPTIONS_AREA_META
+    option_keys = [opt[0] for opt in OPTIONS_AREA] + [
+        opt[0] for opt in OPTIONS_AREA_META
+    ]
+    assert "sleep_entity" not in option_keys
+
+    # 2. Setup areas:
+    # - Master Bedroom & Master Ensuite inside Bedrooms Meta-Area
+    # - Kitchen inside Interior Meta-Area (and Bedrooms Meta-Area added inside Interior Meta-Area!)
+    # - Standalone Shed NOT inside any Meta-Area collection
+    def _make_area(
+        name: str,
+        slug: str,
+        area_type: str,
+        is_meta: bool = False,
+        extra_conf: dict | None = None,
+    ) -> MagicArea:
+        cls = MagicMetaArea if is_meta else MagicArea
+        a = cls.__new__(cls)
+        a.hass = hass
+        a.name = name
+        a.slug = slug
+        a.id = slug
+        a.state = AreaState.AREA_STATE_OCCUPIED
+        a.lighting_profile = LightingProfile.STANDARD
+        a.sleep_mode_enabled = False
+        a.system_control_enabled = True
+        a.config = {
+            CONF_NAME: name,
+            CONF_ID: slug,
+            CONF_TYPE: area_type,
+            **(extra_conf or {}),
+        }
+        a.entities = {
+            LIGHT_DOMAIN: [{ATTR_ENTITY_ID: f"light.{slug}_light"}],
+        }
+        a._state_config = {}
+        a.initialized = True
+        return a
+
+    master_bedroom = _make_area(
+        "Master Bedroom", "master_bedroom", AREA_TYPE_BEDROOM
+    )
+    master_ensuite = _make_area(
+        "Master Ensuite", "master_ensuite", AREA_TYPE_INTERIOR
+    )
+    kitchen = _make_area(
+        "Kitchen",
+        "kitchen",
+        AREA_TYPE_INTERIOR,
+        extra_conf={CONF_LEARN_DAYLIGHT_LUX: True},
+    )
+    standalone_studio = _make_area(
+        "Detached Studio", "detached_studio", AREA_TYPE_INTERIOR
+    )
+    bedrooms_meta = _make_area(
+        META_AREA_BEDROOMS,
+        "bedrooms",
+        AREA_TYPE_META,
+        is_meta=True,
+        extra_conf={CONF_CHILD_AREAS: ["master_bedroom", "master_ensuite"]},
+    )
+    interior_meta = _make_area(
+        META_AREA_INTERIOR,
+        "interior",
+        AREA_TYPE_META,
+        is_meta=True,
+        extra_conf={CONF_CHILD_AREAS: ["kitchen", "bedrooms"]},
+    )
+
+    hass.data[MODULE_DATA] = {
+        "e_mb": {DATA_AREA_OBJECT: master_bedroom},
+        "e_me": {DATA_AREA_OBJECT: master_ensuite},
+        "e_kit": {DATA_AREA_OBJECT: kitchen},
+        "e_studio": {DATA_AREA_OBJECT: standalone_studio},
+        "e_bed_meta": {DATA_AREA_OBJECT: bedrooms_meta},
+        "e_int_meta": {DATA_AREA_OBJECT: interior_meta},
+    }
+
+    # 3. Verify Interior Meta-Area allows Bedrooms Meta-Area in child_areas and expands all its elements!
+    int_other_slugs = [d["slug"] for d in interior_meta.get_other_magic_area_devices()]
+    assert "bedrooms" in int_other_slugs
+    assert set(interior_meta.get_child_areas()) == {
+        "kitchen",
+        "master_bedroom",
+        "master_ensuite",
+    }
+    await interior_meta._load_entities()
+    loaded_lights = [
+        e[ATTR_ENTITY_ID] for e in interior_meta.entities.get(LIGHT_DOMAIN, [])
+    ]
+    assert set(loaded_lights) == {
+        "light.kitchen_light",
+        "light.master_bedroom_light",
+        "light.master_ensuite_light",
+    }
+
+    # 4. Verify top-level sleep switch rules:
+    # - Meta-Areas (bedrooms_meta, interior_meta) have their own sleep control
+    # - Rooms inside a meta collection (master_bedroom, master_ensuite, kitchen) do NOT have their own sleep switch
+    # - Standalone rooms not in any meta collection (standalone_studio, since interior_meta has explicit child_areas=["kitchen", "bedrooms"]) DO have their own sleep switch
+    assert bedrooms_meta.is_top_level_sleep_target() is True
+    assert interior_meta.is_top_level_sleep_target() is True
+    assert master_bedroom.is_top_level_sleep_target() is False
+    assert master_bedroom.get_parent_sleep_meta_area() is bedrooms_meta
+    assert master_ensuite.is_top_level_sleep_target() is False
+    assert master_ensuite.get_parent_sleep_meta_area() is bedrooms_meta
+    assert kitchen.is_top_level_sleep_target() is False
+    assert kitchen.get_parent_sleep_meta_area() is interior_meta
+    assert standalone_studio.is_top_level_sleep_target() is True
+    assert standalone_studio.get_parent_sleep_meta_area() is None
+
+    added_mb_switches: list = []
+    await switch_setup_entry(
+        hass,
+        MagicMock(entry_id="e_mb"),
+        lambda ents: added_mb_switches.extend(ents),
+    )
+    assert len(added_mb_switches) == 1  # Only SystemControlSwitch, no SleepModeSwitch!
+
+    added_bed_meta_switches: list = []
+    await switch_setup_entry(
+        hass,
+        MagicMock(entry_id="e_bed_meta"),
+        lambda ents: added_bed_meta_switches.extend(ents),
+    )
+    assert len(added_bed_meta_switches) == 2  # Both SystemControlSwitch and SleepModeSwitch!
+
+    added_studio_switches: list = []
+    await switch_setup_entry(
+        hass,
+        MagicMock(entry_id="e_studio"),
+        lambda ents: added_studio_switches.extend(ents),
+    )
+    assert len(added_studio_switches) == 2  # Standalone room gets its own SleepModeSwitch!
+
+    # 5. Room with NO lux sensor (standalone_studio) turns lights on FULL (255) when awake, or DIMMED (30% -> 76) when in sleep mode
+    turn_on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
+    hass.states.async_set("sun.sun", "above_horizon", {"elevation": 35.0})
+    hass.states.async_set("light.detached_studio_light", STATE_OFF)
+
+    occ_conf = StateConfigData(
+        name="occupied",
+        entity=None,
+        entity_state_on=STATE_ON,
+        dim_level=100,
+        for_state=AreaState.AREA_STATE_OCCUPIED,
+        icon="mdi:lightbulb",
+        control_entity="switch.simply_magic_areas_light_control_detached_studio",
+        lights=["light.detached_studio_light"],
+    )
+    sleep_conf = StateConfigData(
+        name="sleep",
+        entity=None,
+        entity_state_on=STATE_ON,
+        dim_level=30,
+        for_state=AreaState.AREA_STATE_SLEEP,
+        icon="mdi:sleep",
+        control_entity="switch.simply_magic_areas_light_control_detached_studio",
+        lights=["light.detached_studio_light"],
+    )
+    standalone_studio._state_config = {
+        AreaState.AREA_STATE_OCCUPIED: occ_conf,
+        LightingProfile.STANDARD: occ_conf,
+        AreaState.AREA_STATE_SLEEP: sleep_conf,
+        LightingProfile.SLEEP: sleep_conf,
+    }
+
+    studio_lg = AreaLightGroup(standalone_studio, ["light.detached_studio_light"])
+    studio_lg.hass = hass
+    studio_lg._attr_name = "Detached Studio Lights"
+    studio_lg.entity_id = "light.simply_magic_areas_light_detached_studio"
+    studio_lg.schedule_update_ha_state = MagicMock()
+    studio_lg.async_update_group_state = MagicMock()
+    # Even if ML learner had previously learned a low sample, no-lux room must turn on FULL (255)!
+    studio_lg._lighting_learner._sample_count = 10
+    studio_lg._lighting_learner._weights = [38.0, 0.0, 0.0, 0.0]
+
+    studio_lg._turn_on_light(occ_conf, force=True)
+    await hass.async_block_till_done()
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == 255
+
+    turn_on_calls.clear()
+    standalone_studio.lighting_profile = LightingProfile.SLEEP
+    studio_lg._turn_on_light(sleep_conf, force=True)
+    await hass.async_block_till_done()
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == int(30 * 255 / 100)
+    studio_lg.stop_all_active_control()
+
+    # 6. Multi-day historical daylight learning + 30-second settled lux-per-dim gain tracking & single-shot recalculation
+    kitchen.entities[SENSOR_DOMAIN] = [
+        {
+            ATTR_ENTITY_ID: "sensor.kitchen_lux",
+            "device_class": "illuminance",
+            "unit_of_measurement": "lx",
+        }
+    ]
+    ps_kit = AreaLightingProfileSensor(kitchen)
+    ps_kit.hass = hass
+    ps_kit.entity_id = "sensor.simply_magic_areas_lighting_profile_kitchen"
+    ps_kit.schedule_update_ha_state = MagicMock()
+
+    # Record multi-day history (10 days of ~300 lx sunny peaks, and 1 cloudy day of 90 lx)
+    for d in range(1, 10):
+        ps_kit.record_daily_daylight_sample(f"2026-11-{d:02d}", 300.0)
+    ps_kit.record_daily_daylight_sample("2026-11-10", 90.0)
+    # Multi-day target stays at 300.0 lx despite the single cloudy day!
+    assert kitchen.historical_daylight_lux == 300.0
+
+    # Now during the day, ambient lux in Kitchen is 100 lx (needs +200 lx to reach 300 lx full daylight)
+    hass.states.async_set(
+        "sensor.kitchen_lux",
+        "100",
+        {"device_class": "illuminance", "unit_of_measurement": "lx"},
+    )
+    hass.states.async_set("light.kitchen_light", STATE_OFF)
+    kit_occ_conf = StateConfigData(
+        name="occupied",
+        entity=None,
+        entity_state_on=STATE_ON,
+        dim_level=100,
+        for_state=AreaState.AREA_STATE_OCCUPIED,
+        icon="mdi:lightbulb",
+        control_entity="switch.simply_magic_areas_light_control_kitchen",
+        lights=["light.kitchen_light"],
+    )
+    kitchen._state_config = {
+        AreaState.AREA_STATE_OCCUPIED: kit_occ_conf,
+        LightingProfile.STANDARD: kit_occ_conf,
+    }
+
+    kit_lg = AreaLightGroup(kitchen, ["light.kitchen_light"])
+    kit_lg.hass = hass
+    kit_lg._attr_name = "Kitchen Lights"
+    kit_lg.entity_id = "light.simply_magic_areas_light_kitchen"
+    kit_lg.schedule_update_ha_state = MagicMock()
+    kit_lg.async_update_group_state = MagicMock()
+
+    turn_on_calls.clear()
+    kit_lg._turn_on_light(kit_occ_conf, force=True)
+    await hass.async_block_till_done()
+    assert len(turn_on_calls) == 1
+    initial_brightness = turn_on_calls[-1].data[ATTR_BRIGHTNESS]
+    initial_dim_pct = round(initial_brightness * 100.0 / 255.0, 1)
+    assert kit_lg._lux_settle_timer_cb is not None
+
+    # Simulate light turning on at initial_brightness and after 30 seconds the lux sensor settles at 220 lx
+    # (Suppose each 1% of dim adds 2.5 lx: +initial_dim_pct% added +120 lx, so settled_lux = 220 lx, still 80 lx short of 300 lx)
+    hass.states.async_set(
+        "light.kitchen_light", STATE_ON, {ATTR_BRIGHTNESS: initial_brightness}
+    )
+    settled_lux = 100.0 + initial_dim_pct * 2.5
+    hass.states.async_set(
+        "sensor.kitchen_lux",
+        str(round(settled_lux, 1)),
+        {"device_class": "illuminance", "unit_of_measurement": "lx"},
+    )
+
+    turn_on_calls.clear()
+    kit_lg._lux_settle_timer_expired()
+    await hass.async_block_till_done()
+
+    # Learned gain should be 2.5 lx/%!
+    assert kit_lg._lighting_learner.lux_per_dim_pct == 2.5
+    assert kit_lg.extra_state_attributes[ATTR_LUX_PER_DIM_PCT] == 2.5
+    # And to reach 300 lx from 100 lx ambient with gain 2.5 lx/%, it needs (300 - 100) / 2.5 = 80% dim (brightness 204) in one single adjustment!
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == round(80 * 255 / 100)
+
+    # Next time the light turns on from OFF (with ambient lux = 150 lx and target = 300 lx):
+    # Using learned gain 2.5 lx/%, it needs (300 - 150) / 2.5 = 60% dim (brightness 153) immediately on the first command!
+    kit_lg.stop_all_active_control()
+    kit_lg._attr_is_on = False
+    hass.states.async_set("light.kitchen_light", STATE_OFF)
+    hass.states.async_set(
+        "sensor.kitchen_lux",
+        "150",
+        {"device_class": "illuminance", "unit_of_measurement": "lx"},
+    )
+    turn_on_calls.clear()
+    kit_lg._turn_on_light(kit_occ_conf, force=True)
+    await hass.async_block_till_done()
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == round(60 * 255 / 100)
+    kit_lg.stop_all_active_control()
+
+
+async def test_manual_dim_via_switch_or_ui_holds_until_sleep_wake_or_turn_off(
+    hass: HomeAssistant,
+) -> None:
+    """Test that manually adjusting dim level via switch or UI holds until going into sleep mode, out of sleep mode, or turning off completely."""
+    from unittest.mock import MagicMock
+
+    from custom_components.simply_magic_areas.base.magic import (
+        MagicArea,
+        StateConfigData,
+    )
+    from custom_components.simply_magic_areas.const import (
+        AREA_TYPE_INTERIOR,
+        CONF_ID,
+        CONF_NAME,
+        CONF_TYPE,
+    )
+
+    turn_on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
+    turn_off_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
+
+    area = MagicArea.__new__(MagicArea)
+    area.hass = hass
+    area.name = "Study"
+    area.slug = "study"
+    area.id = "study"
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    area.lighting_profile = LightingProfile.STANDARD
+    area.sleep_mode_enabled = False
+    area.system_control_enabled = True
+    area.config = {
+        CONF_NAME: "Study",
+        CONF_ID: "study",
+        CONF_TYPE: AREA_TYPE_INTERIOR,
+    }
+    area.entities = {
+        LIGHT_DOMAIN: [
+            {ATTR_ENTITY_ID: "light.study_1"},
+            {ATTR_ENTITY_ID: "light.study_2"},
+        ],
+        BINARY_SENSOR_DOMAIN: [
+            {ATTR_ENTITY_ID: "binary_sensor.study_motion", "device_class": "motion"}
+        ],
+    }
+    occ_conf = StateConfigData(
+        name="occupied",
+        entity=None,
+        entity_state_on=STATE_ON,
+        dim_level=100,
+        for_state=AreaState.AREA_STATE_OCCUPIED,
+        icon="mdi:lightbulb",
+        control_entity="switch.simply_magic_areas_light_control_study",
+        lights=["light.study_1", "light.study_2"],
+    )
+    sleep_conf = StateConfigData(
+        name="sleep",
+        entity=None,
+        entity_state_on=STATE_ON,
+        dim_level=30,
+        for_state=AreaState.AREA_STATE_SLEEP,
+        icon="mdi:sleep",
+        control_entity="switch.simply_magic_areas_light_control_study",
+        lights=["light.study_1", "light.study_2"],
+    )
+    area._state_config = {
+        AreaState.AREA_STATE_OCCUPIED: occ_conf,
+        LightingProfile.STANDARD: occ_conf,
+        AreaState.AREA_STATE_SLEEP: sleep_conf,
+        LightingProfile.SLEEP: sleep_conf,
+    }
+    area.initialized = True
+
+    hass.states.async_set("light.study_1", STATE_ON, {ATTR_BRIGHTNESS: 255})
+    hass.states.async_set("light.study_2", STATE_ON, {ATTR_BRIGHTNESS: 255})
+
+    lg = AreaLightGroup(area, ["light.study_1", "light.study_2"])
+    lg.hass = hass
+    lg._attr_name = "Study Lights"
+    lg.entity_id = "light.simply_magic_areas_light_study"
+    lg.schedule_update_ha_state = MagicMock()
+    lg.async_update_group_state = MagicMock()
+    lg._attr_is_on = True
+    lg._expected_state = STATE_ON
+    lg._expected_brightness = 255
+
+    # 1. User adjusts dim level via UI control (async_turn_on with brightness=110)
+    await lg.async_turn_on(brightness=110)
+    await hass.async_block_till_done()
+    assert lg._manual_brightness_override is True
+    assert lg._is_controlled_by_this_entity() is False
+    assert lg._expected_brightness == 110
+    hass.states.async_set("light.study_1", STATE_ON, {ATTR_BRIGHTNESS: 110})
+    hass.states.async_set("light.study_2", STATE_ON, {ATTR_BRIGHTNESS: 110})
+
+    # 2. Area transitions OCCUPIED -> EXTENDED -> OCCUPIED while light is ON:
+    #    Manual dim level (110) must be held!
+    turn_on_calls.clear()
+    area.state = AreaState.AREA_STATE_EXTENDED
+    lg._area_state_change(
+        MagicMock(
+            event_type="state_changed",
+            data={
+                "old_state": MagicMock(state=AreaState.AREA_STATE_OCCUPIED),
+                "new_state": MagicMock(state=AreaState.AREA_STATE_EXTENDED),
+            },
+        )
+    )
+    area.state = AreaState.AREA_STATE_OCCUPIED
+    lg._area_state_change(
+        MagicMock(
+            event_type="state_changed",
+            data={
+                "old_state": MagicMock(state=AreaState.AREA_STATE_EXTENDED),
+                "new_state": MagicMock(state=AreaState.AREA_STATE_OCCUPIED),
+            },
+        )
+    )
+    # Non-sleep profile change (STANDARD -> BRIGHT -> STANDARD) also holds manual dim level
+    area.lighting_profile = LightingProfile.BRIGHT
+    lg._profile_change(
+        MagicMock(
+            data={
+                "old_state": MagicMock(state=LightingProfile.STANDARD),
+                "new_state": MagicMock(state=LightingProfile.BRIGHT),
+            }
+        )
+    )
+    area.lighting_profile = LightingProfile.STANDARD
+    lg._profile_change(
+        MagicMock(
+            data={
+                "old_state": MagicMock(state=LightingProfile.BRIGHT),
+                "new_state": MagicMock(state=LightingProfile.STANDARD),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(turn_on_calls) == 0
+    assert lg._manual_brightness_override is True
+    assert lg._expected_brightness == 110
+
+    # 3. Area goes INTO sleep mode -> manual dim hold ends and light dims to sleep level (30% -> 76)
+    turn_on_calls.clear()
+    area.lighting_profile = LightingProfile.SLEEP
+    lg._profile_change(
+        MagicMock(
+            data={
+                "old_state": MagicMock(state=LightingProfile.STANDARD),
+                "new_state": MagicMock(state=LightingProfile.SLEEP),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert lg._manual_brightness_override is False
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == int(30 * 255 / 100)
+    hass.states.async_set("light.study_1", STATE_ON, {ATTR_BRIGHTNESS: 76})
+    hass.states.async_set("light.study_2", STATE_ON, {ATTR_BRIGHTNESS: 76})
+
+    # 4. User manually adjusts dim level via wall switch while in sleep mode (to 40) -> holds until leaving sleep mode!
+    turn_on_calls.clear()
+    hass.states.async_set("light.study_1", STATE_ON, {ATTR_BRIGHTNESS: 40})
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.study_1",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 76}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 40}
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert lg._manual_brightness_override is True
+    assert lg._expected_brightness == 40
+    hass.states.async_set("light.study_2", STATE_ON, {ATTR_BRIGHTNESS: 40})
+
+    # Area goes OUT OF sleep mode (SLEEP -> STANDARD) -> manual dim hold ends and light updates to standard (255)!
+    turn_on_calls.clear()
+    area.lighting_profile = LightingProfile.STANDARD
+    lg._profile_change(
+        MagicMock(
+            data={
+                "old_state": MagicMock(state=LightingProfile.SLEEP),
+                "new_state": MagicMock(state=LightingProfile.STANDARD),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert lg._manual_brightness_override is False
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == 255
+    hass.states.async_set("light.study_1", STATE_ON, {ATTR_BRIGHTNESS: 255})
+    hass.states.async_set("light.study_2", STATE_ON, {ATTR_BRIGHTNESS: 255})
+
+    # 5. User manually dims via switch to 130, then light turns OFF completely when area clears -> manual dim hold is cleared
+    hass.states.async_set("light.study_1", STATE_ON, {ATTR_BRIGHTNESS: 130})
+    lg._member_light_state_change(
+        MagicMock(
+            data={
+                "entity_id": "light.study_1",
+                "old_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 255}
+                ),
+                "new_state": MagicMock(
+                    state=STATE_ON, attributes={ATTR_BRIGHTNESS: 130}
+                ),
+            }
+        )
+    )
+    await hass.async_block_till_done()
+    assert lg._manual_brightness_override is True
+
+    area.state = AreaState.AREA_STATE_CLEAR
+    lg._area_state_change(
+        MagicMock(
+            event_type="state_changed",
+            data={
+                "old_state": MagicMock(state=AreaState.AREA_STATE_OCCUPIED),
+                "new_state": MagicMock(state=AreaState.AREA_STATE_CLEAR),
+            },
+        )
+    )
+    await hass.async_block_till_done()
+    assert len(turn_off_calls) >= 1
+    assert lg._manual_brightness_override is False
+    assert lg._is_controlled_by_this_entity() is True
+    lg.stop_all_active_control()
+
+
+
+

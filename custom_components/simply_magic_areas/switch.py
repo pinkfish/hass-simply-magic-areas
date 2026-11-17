@@ -50,8 +50,9 @@ async def async_setup_entry(
 
     switches: list[Entity] = [
         AreaSystemControlSwitch(area),
-        AreaSleepModeSwitch(area),
     ]
+    if not hasattr(area, "is_top_level_sleep_target") or area.is_top_level_sleep_target():
+        switches.append(AreaSleepModeSwitch(area))
     cleanup_magic_entities(hass, switches, existing_switch_entities)
     async_add_entities(switches)
 

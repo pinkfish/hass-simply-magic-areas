@@ -139,6 +139,8 @@ CONTACT_SENSOR_DEVICE_CLASSES = {
 DEFAULT_ACTUATOR_RETRY_DELAYS: tuple[float, ...] = (3.5, 7.0, 15.0)
 DEFAULT_LIGHT_SETTLE_TIME: float = 0.25
 DEFAULT_BRIGHTNESS_SMOOTHING_DEADBAND: int = 8
+DEFAULT_DAYLIGHT_HISTORY_DAYS: int = 14
+DEFAULT_LUX_SETTLE_DELAY: float = 30.0
 
 ENTRY_AREA_KEYWORDS: tuple[str, ...] = (
     "front_room",
@@ -365,8 +367,11 @@ CONF_EXTERIOR_ARRIVAL_TRIGGER, DEFAULT_EXTERIOR_ARRIVAL_TRIGGER = (
 # State attributes for lux and daylight calibration
 ATTR_DARK_LUX_FLOOR = "dark_lux_floor"
 ATTR_HISTORICAL_DAYLIGHT_LUX = "historical_daylight_lux"
+ATTR_DAILY_DAYLIGHT_PEAKS = "daily_daylight_peaks"
 ATTR_IS_WINDOWLESS = "is_windowless"
 ATTR_DARKNESS_RATIO = "darkness_ratio"
+ATTR_LUX_PER_DIM_PCT = "lux_per_dim_pct"
+ATTR_TARGET_DAYLIGHT_LUX = "target_daylight_lux"
 
 # State attributes for exterior lighting
 ATTR_EXTERIOR_LIGHTING_ACTIVE = "exterior_lighting_active"
@@ -470,7 +475,7 @@ sleep_lights = LightEntityConf(
     default_dim_level=30.0,
     enable_state=AreaState.AREA_STATE_SLEEP,
     icon="mdi:sleep",
-    has_entity=True,
+    has_entity=False,
     is_advanced=False,
 )
 occupied_lights = LightEntityConf(
@@ -778,6 +783,7 @@ REGULAR_AREA_SCHEMA = vol.Schema(
         vol.Optional(CONF_LINKED_CLIMATE_ENTITY): vol.Any(cv.entity_id, None, ""),
         vol.Optional(CONF_MQTT_ROOM_PRESENCE): bool,
         vol.Optional(bright_lights.entity_name()): vol.Any(cv.entity_id, ""),
+        vol.Optional(sleep_lights.entity_name()): vol.Any(cv.entity_id, ""),
         vol.Optional(CONF_MIN_BRIGHTNESS_LEVEL, default=DEFAULT_MIN_BRIGHTNESS_LEVEL): cv.positive_int,
         vol.Optional(CONF_MAX_BRIGHTNESS_LEVEL, default=DEFAULT_MAX_BRIGHTNESS_LEVEL): cv.positive_int,
         vol.Optional(CONF_DARK_LUX_FLOOR, default=DEFAULT_DARK_LUX_FLOOR): cv.positive_int,
@@ -809,7 +815,7 @@ META_AREA_SCHEMA = vol.Schema(
             CONF_EXTENDED_TIMEOUT, default=DEFAULT_EXTENDED_TIMEOUT
         ): cv.positive_int,
         vol.Optional(CONF_ICON, default=DEFAULT_ICON): cv.string,
-        vol.Optional(sleep_lights.entity_name(), default=""): vol.Any(cv.entity_id, ""),
+        vol.Optional(sleep_lights.entity_name()): vol.Any(cv.entity_id, ""),
         vol.Optional(
             sleep_lights.state_dim_level(), default=sleep_lights.default_dim_level
         ): vol.Range(min=0, max=100),
@@ -872,7 +878,6 @@ OPTIONS_AREA_META = [
     (CONF_CLEAR_TIMEOUT, DEFAULT_CLEAR_TIMEOUT, int),
     (CONF_EXTENDED_TIMEOUT, DEFAULT_EXTENDED_TIMEOUT, int),
     (CONF_ICON, DEFAULT_ICON, str),
-    (sleep_lights.entity_name(), "", cv.entity_id),
     (sleep_lights.state_dim_level(), sleep_lights.default_dim_level, float),
     (accented_lights.entity_name(), "", cv.entity_id),
     (accented_lights.state_dim_level(), accented_lights.default_dim_level, float),

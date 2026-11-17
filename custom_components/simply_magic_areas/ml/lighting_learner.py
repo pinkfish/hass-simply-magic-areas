@@ -79,7 +79,19 @@ class OnlineBayesianLightingLearner:
 
         self._sample_count: int = 0
         self._last_predicted_brightness: int | None = None
+        self._lux_per_dim_pct: float | None = None
+        self._lux_gain_samples: int = 0
         self._is_loaded: bool = False
+
+    @property
+    def lux_per_dim_pct(self) -> float | None:
+        """Return learned lux change per 1% of light dim level."""
+        return self._lux_per_dim_pct
+
+    @property
+    def lux_gain_samples(self) -> int:
+        """Return number of settled lux-vs-dim observations recorded."""
+        return self._lux_gain_samples
 
     @property
     def sample_count(self) -> int:
@@ -114,6 +126,9 @@ class OnlineBayesianLightingLearner:
                         self.area_slug,
                         self._sample_count,
                     )
+                if data.get("lux_per_dim_pct") is not None:
+                    self._lux_per_dim_pct = float(data["lux_per_dim_pct"])
+                    self._lux_gain_samples = int(data.get("lux_gain_samples", 1))
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
                 "%s: Could not load ML lighting preferences from storage: %s",
@@ -130,6 +145,8 @@ class OnlineBayesianLightingLearner:
                 "weights": self._weights,
                 "cov": self._cov,
                 "sample_count": self._sample_count,
+                "lux_per_dim_pct": self._lux_per_dim_pct,
+                "lux_gain_samples": self._lux_gain_samples,
             }
             await self._store.async_save(payload)
         except Exception as err:  # noqa: BLE001
@@ -238,11 +255,66 @@ class OnlineBayesianLightingLearner:
         self._last_predicted_brightness = result
         return result
 
+    def record_lux_dim_response(
+        self, delta_dim_pct: float, delta_lux: float
+    ) -> float | None:
+        """Record observed lux change after a light dim level change settles (e.g. after 30s)."""
+        if abs(delta_dim_pct) < 5.0:
+            return self._lux_per_dim_pct
+        observed_gain = float(delta_lux) / float(delta_dim_pct)
+        if not math.isfinite(observed_gain) or observed_gain <= 0.02:
+            return self._lux_per_dim_pct
+
+        if self._lux_per_dim_pct is None or self._lux_per_dim_pct <= 0.0:
+            self._lux_per_dim_pct = round(observed_gain, 4)
+        else:
+            self._lux_per_dim_pct = round(
+                0.35 * observed_gain + 0.65 * self._lux_per_dim_pct, 4
+            )
+        self._lux_gain_samples += 1
+
+        _LOGGER.debug(
+            "%s: Learned lux-per-dim gain %.3f lx/%% (delta_dim=%.1f%%, delta_lux=%.1f lx, samples=%d)",
+            self.area_slug,
+            self._lux_per_dim_pct,
+            delta_dim_pct,
+            delta_lux,
+            self._lux_gain_samples,
+        )
+
+        if self.hass.loop.is_running():
+            self.hass.loop.call_soon_threadsafe(
+                lambda: self.hass.async_create_task(self.async_save())
+            )
+        return self._lux_per_dim_pct
+
+    def calculate_dim_pct_for_target_lux(
+        self,
+        current_lux: float,
+        current_dim_pct: float,
+        target_daylight_lux: float,
+    ) -> int | None:
+        """Calculate the exact dim percentage (0-100) needed in one single change to hit target_daylight_lux."""
+        if self._lux_per_dim_pct is None or self._lux_per_dim_pct <= 0.02:
+            return None
+        gain = float(self._lux_per_dim_pct)
+        ambient_lux = max(0.0, float(current_lux) - float(current_dim_pct) * gain)
+        if ambient_lux >= float(target_daylight_lux):
+            return 0
+        needed_dim_pct = float(current_dim_pct) + (
+            (float(target_daylight_lux) - float(current_lux)) / gain
+        )
+        return max(1, min(100, round(needed_dim_pct)))
+
     def get_attributes(self) -> dict[str, Any]:
         """Return state attributes for diagnostic and UI visibility."""
-        return {
+        attrs: dict[str, Any] = {
             "ml_adaptive_lighting_active": True,
             "ml_preference_samples": self._sample_count,
             "ml_confidence": round(self.confidence, 2),
             "ml_predicted_brightness": self._last_predicted_brightness,
         }
+        if self._lux_per_dim_pct is not None:
+            attrs["lux_per_dim_pct"] = round(self._lux_per_dim_pct, 3)
+            attrs["lux_gain_samples"] = self._lux_gain_samples
+        return attrs

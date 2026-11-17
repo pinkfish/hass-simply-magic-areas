@@ -93,7 +93,15 @@
           "accented_entity": "Entity used to put area into accented when occupied",
           "accented_state_dim": "Dim level to use when the area is accented (0 for off)",
           "clear_state_dim": "Dim level to use when the area is clear (0 for off)",
-          "extended_state_dim": "Dim level to use when the area is extended (0 for off)"
+          "extended_state_dim": "Dim level to use when the area is extended (0 for off)",
+          "exterior_auto_lights": "Automatically control outside lights on sunset, motion, and arrival",
+          "exterior_lighting_timeout": "How long after sunset or motion outside lights stay on (seconds)",
+          "exterior_sunset_offset": "How many seconds before sunset outside lights turn on",
+          "exterior_sunset_trigger": "Turn outside lights on automatically 1 hour before sunset (or when very dark)",
+          "exterior_arrival_trigger": "Turn outside lights on when a person arrives home",
+          "exterior_override_until_sleep": "Keep outside lights on until the house goes to sleep",
+          "exterior_late_night_lights": "Outside lights to keep on after the 2-hour post-sunset cutoff until sleep",
+          "exterior_manual_only_lights": "Outside lights that should not turn on automatically"
         }
       },
       "feature_conf_humidity": {
@@ -197,6 +205,9 @@
       },
       "sleep_mode": {
         "name": "{area_name} Sleep Mode (Simply Magic Areas)"
+      },
+      "exterior_sleep_override": {
+        "name": "{area_name} Exterior Override Until Sleep (Simply Magic Areas)"
       }
     }
   }

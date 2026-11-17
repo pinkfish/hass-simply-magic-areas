@@ -36,6 +36,8 @@ from pytest_homeassistant_custom_component.common import (
 from ..const import (
     AREA_TYPE_EXTERIOR,
     ATTR_EXTERIOR_LIGHTING_ACTIVE,
+    ATTR_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+    ATTR_EXTERIOR_POST_TIMER_ACTIVE,
     ATTR_EXTERIOR_TIMER_TS,
     ATTR_EXTERIOR_TRIGGER_REASON,
     CAMERA_DOMAIN,
@@ -43,7 +45,10 @@ from ..const import (
     CONF_ENABLED_FEATURES,
     CONF_EXTENDED_TIMEOUT,
     CONF_EXTERIOR_ARRIVAL_TRIGGER,
+    CONF_EXTERIOR_AUTO_LIGHTS,
+    CONF_EXTERIOR_LATE_NIGHT_LIGHTS,
     CONF_EXTERIOR_LIGHTING_TIMEOUT,
+    CONF_EXTERIOR_MANUAL_ONLY_LIGHTS,
     CONF_EXTERIOR_SUNSET_TRIGGER,
     CONF_FAN_CONTROL,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
@@ -56,7 +61,9 @@ from ..const import (
     CONF_PRESENCE_SENSOR_DEVICE_CLASS,
     CONF_TYPE,
     CONF_UPDATE_INTERVAL,
+    DATA_AREA_OBJECT,
     DOMAIN,
+    MODULE_DATA,
 )
 from .common import async_mock_service, setup_test_component_platform
 from .mocks import MockBinarySensor
@@ -506,6 +513,223 @@ async def test_exterior_lighting_pre_sunset_low_lux_house_sleep_and_motion_full(
         hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_TRIGGER_REASON)
         == "arrival"
     )
+
+
+async def test_exterior_2h_post_sunset_most_lights_door_override_until_sleep_and_non_auto(
+    hass: HomeAssistant,
+) -> None:
+    """Test 2h post-sunset partial shutoff, door sensors, override until sleep (switch & manual on), and non-auto config."""
+    hass.states.async_set("sun.sun", "below_horizon", {"elevation": -5.0})
+
+    entity_registry = async_get_er(hass)
+    for lid in ("flood_1", "flood_2", "pathway", "party_manual"):
+        entity_registry.async_get_or_create(LIGHT_DOMAIN, "test", lid)
+        entity_registry.async_update_entity(f"light.test_{lid}", area_id="yard")
+        hass.states.async_set(
+            f"light.test_{lid}",
+            STATE_OFF,
+            {ATTR_SUPPORTED_COLOR_MODES: [ColorMode.BRIGHTNESS]},
+        )
+
+    entity_registry.async_get_or_create(BINARY_SENSOR_DOMAIN, "test", "yard_door")
+    entity_registry.async_update_entity(
+        "binary_sensor.test_yard_door", area_id="yard"
+    )
+    hass.states.async_set(
+        "binary_sensor.test_yard_door",
+        STATE_OFF,
+        {"device_class": BinarySensorDeviceClass.DOOR},
+    )
+
+    ar = async_get_ar(hass)
+    ar.async_get_or_create("yard")
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_NAME: "yard",
+            CONF_ID: "yard",
+            CONF_CLEAR_TIMEOUT: 5,
+            CONF_EXTENDED_TIMEOUT: 5,
+            CONF_TYPE: AREA_TYPE_EXTERIOR,
+            CONF_LIGHT_CONTROL: True,
+            CONF_FAN_CONTROL: False,
+            CONF_ENABLED_FEATURES: {
+                CONF_FEATURE_ADVANCED_LIGHT_GROUPS: {
+                    CONF_INCLUDE_ENTITIES: ["binary_sensor.test_yard_door"],
+                    CONF_ON_STATES: [STATE_ON],
+                    CONF_UPDATE_INTERVAL: 60,
+                    CONF_PRESENCE_DEVICE_PLATFORMS: [BINARY_SENSOR_DOMAIN],
+                    CONF_PRESENCE_SENSOR_DEVICE_CLASS: [BinarySensorDeviceClass.MOTION],
+                    CONF_EXTERIOR_LIGHTING_TIMEOUT: 7200,
+                    CONF_EXTERIOR_SUNSET_TRIGGER: True,
+                    CONF_EXTERIOR_ARRIVAL_TRIGGER: True,
+                    CONF_EXTERIOR_LATE_NIGHT_LIGHTS: ["light.test_pathway"],
+                    CONF_EXTERIOR_MANUAL_ONLY_LIGHTS: ["light.test_party_manual"],
+                }
+            },
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await async_setup_component(hass, DOMAIN, {})
+    await hass.async_block_till_done()
+
+    area_obj = hass.data[MODULE_DATA][entry.entry_id][DATA_AREA_OBJECT]
+    light_group = area_obj._light_group
+    assert light_group is not None
+    light_entity = "light.simply_magic_areas_light_yard"
+
+    turn_on_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_on")
+    turn_off_calls = async_mock_service(hass, LIGHT_DOMAIN, "turn_off")
+
+    # 1. Trigger 1h before sunset -> timer is scheduled for (seconds_to_sunset + 7200s = 2h after sunset)
+    #    and manual-only light (light.test_party_manual) is excluded from automatic lights
+    hass.states.async_set(
+        "sun.sun",
+        "above_horizon",
+        {"elevation": 6.0, "seconds_to_sunset": 1800},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert "light.test_party_manual" not in light_group._entity_ids
+    assert set(light_group._entity_ids) == {
+        "light.test_flood_1",
+        "light.test_flood_2",
+        "light.test_pathway",
+    }
+    timer_ts = hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_TIMER_TS)
+    now_ts = datetime.now(UTC).timestamp()
+    assert abs((timer_ts - now_ts) - (7200 + 1800)) < 15
+
+    # 2. When 2h post-sunset timer expires (before house sleep), turns off MOST lights (flood_1, flood_2)
+    #    while keeping late-night light (pathway) on
+    turn_off_calls.clear()
+    light_group._exterior_timer_expired()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+
+    assert len(turn_off_calls) >= 1
+    turned_off_entities = turn_off_calls[-1].data.get("entity_id")
+    assert "light.test_flood_1" in turned_off_entities
+    assert "light.test_flood_2" in turned_off_entities
+    assert "light.test_pathway" not in turned_off_entities
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_POST_TIMER_ACTIVE)
+        is True
+    )
+
+    # 3. Door sensor opening or closing trips outside presence and turns automatic lights back on to FULL (255)
+    turn_on_calls.clear()
+    hass.states.async_set(
+        "binary_sensor.test_yard_door",
+        STATE_ON,
+        {"device_class": BinarySensorDeviceClass.DOOR},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_on_calls) >= 1
+    assert turn_on_calls[-1].data.get("brightness") == 255
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_TRIGGER_REASON)
+        == "motion"
+    )
+
+    # 4. House goes to sleep BEFORE the 2-hour timer expires -> turns off ALL outside lights
+    turn_off_calls.clear()
+    hass.states.async_set(
+        "sensor.simply_magic_areas_lighting_profile_interior",
+        "sleep",
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_off_calls) >= 1
+    assert (
+        hass.states.get(light_entity).attributes.get(ATTR_EXTERIOR_LIGHTING_ACTIVE)
+        is False
+    )
+
+    # Reset sleep mode back to standard
+    hass.states.async_set(
+        "sensor.simply_magic_areas_lighting_profile_interior",
+        "standard",
+    )
+    await hass.async_block_till_done()
+
+    # 5. Manually turning on outside lights (or toggling override switch) activates override-until-sleep;
+    #    timer expiration will NOT turn them off until the house goes to sleep!
+    light_group.last_update_from_entity = False
+    light_group._command_in_flight_until = 0.0
+    light_group._expected_state = STATE_OFF
+    await light_group.async_turn_on(brightness=255)
+    await hass.async_block_till_done()
+
+    assert light_group._exterior_override_until_sleep is True
+    assert (
+        hass.states.get(light_entity).attributes.get(
+            ATTR_EXTERIOR_OVERRIDE_UNTIL_SLEEP
+        )
+        is True
+    )
+    override_sw = hass.states.get(
+        "switch.simply_magic_areas_exterior_sleep_override_yard"
+    )
+    assert override_sw is not None and override_sw.state == STATE_ON
+
+    # Even if 2-hour timer expires while override-until-sleep is active, lights do NOT turn off
+    turn_off_calls.clear()
+    light_group._exterior_timer_expired()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_off_calls) == 0
+
+    # When house goes to sleep, override-until-sleep clears and outside lights turn off
+    hass.states.async_set(
+        "sensor.simply_magic_areas_lighting_profile_interior",
+        "sleep",
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_off_calls) >= 1
+    assert light_group._exterior_override_until_sleep is False
+    assert (
+        hass.states.get(
+            "switch.simply_magic_areas_exterior_sleep_override_yard"
+        ).state
+        == STATE_OFF
+    )
+
+    # 6. Configure outside lights to NOT be automatic (exterior_auto_lights = False):
+    #    door/motion/arrival do not turn lights on automatically, but manual turn-on still overrides until sleep!
+    hass.states.async_set(
+        "sensor.simply_magic_areas_lighting_profile_interior",
+        "standard",
+    )
+    await hass.async_block_till_done()
+    area_obj.config[CONF_EXTERIOR_AUTO_LIGHTS] = False
+    area_obj.config[CONF_ENABLED_FEATURES][CONF_FEATURE_ADVANCED_LIGHT_GROUPS][
+        CONF_EXTERIOR_AUTO_LIGHTS
+    ] = False
+
+    turn_on_calls.clear()
+    hass.states.async_set(
+        "binary_sensor.test_yard_door",
+        STATE_OFF,
+        {"device_class": BinarySensorDeviceClass.DOOR},
+    )
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert len(turn_on_calls) == 0
+
+    # Toggling the override-until-sleep switch turns on the lights and holds until sleep
+    sw_obj = area_obj._exterior_sleep_override_switch
+    assert sw_obj is not None
+    await sw_obj.async_turn_on()
+    await hass.async_block_till_done()
+    await asyncio.sleep(0.05)
+    assert light_group._exterior_override_until_sleep is True
+    assert len(turn_on_calls) >= 1
+
 
 
 

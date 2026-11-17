@@ -830,6 +830,37 @@ class MagicArea(object):  # noqa: UP004
             if other.is_bedroom_or_ensuite() or other.is_bedroom_meta():
                 other.set_sleep_mode(enabled_bool, propagate=False)
 
+    def set_exterior_sleep_override(self, enabled: bool, propagate: bool = True) -> None:
+        """Enable or disable the exterior override that keeps outside lights on until the house goes to sleep."""
+        enabled_bool = bool(enabled)
+        self.exterior_override_until_sleep = enabled_bool
+
+        override_switch = getattr(self, "_exterior_sleep_override_switch", None)
+        if override_switch is not None and hasattr(
+            override_switch, "set_synced_state"
+        ):
+            override_switch.set_synced_state(enabled_bool)
+
+        light_group = getattr(self, "_light_group", None)
+        if light_group is not None and hasattr(
+            light_group, "set_exterior_override_until_sleep"
+        ):
+            light_group.set_exterior_override_until_sleep(
+                enabled_bool, turn_on_if_enabled=True
+            )
+
+        if propagate and self.is_meta() and self.hass and MODULE_DATA in self.hass.data:
+            for entry_info in self.hass.data[MODULE_DATA].values():
+                if not isinstance(entry_info, dict):
+                    continue
+                other = entry_info.get(DATA_AREA_OBJECT)
+                if other is None or other is self or other.is_meta():
+                    continue
+                if other.is_exterior() and hasattr(
+                    other, "set_exterior_sleep_override"
+                ):
+                    other.set_exterior_sleep_override(enabled_bool, propagate=False)
+
     def _is_magic_area_entity(self, entity: RegistryEntry) -> bool:
         """Return if entity belongs to this integration instance."""
         return entity.config_entry_id == self.hass_config.entry_id

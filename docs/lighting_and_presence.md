@@ -96,15 +96,20 @@ For areas classified as `type: exterior` (Driveways, Patios, Porches, Gardens, a
 
 | Setting | Parameter Key | Default | Description |
 | :--- | :--- | :--- | :--- |
-| **Exterior Lighting Timeout** | `exterior_lighting_timeout` | `7200s` (2 hours) | Minimum duration exterior lights stay illuminated after a trigger event before turning off. |
+| **Automatic Outside Lights** | `exterior_auto_lights` | `true` | Automatically control outside lights on sunset, motion, door sensors, and arrival (`false` for manual-only outside lights that still turn off when the house goes to sleep). |
+| **Exterior Lighting Timeout** | `exterior_lighting_timeout` | `7200s` (2 hours) | Duration after sunset (or after motion/arrival) that outside lights stay illuminated before turning off most/all lights. |
 | **Pre-Sunset Offset** | `exterior_sunset_offset` | `3600s` (1 hour) | How long before sunset (`next_setting`) exterior areas begin allowing and triggering outdoor lights. |
 | **Sunset Dusk Trigger** | `exterior_sunset_trigger` | `true` | Automatically turns exterior lights ON 1 hour before sunset (or at sunset / when outdoor light level drops to or below `dark_lux_floor`). |
-| **Resident Arrival Trigger** | `exterior_arrival_trigger` | `true` | Automatically illuminates exterior lights when any household member returns home (`person.*` transitions to `home`) within 1 hour before sunset, at night, or when outdoor light level is very low. |
+| **Resident Arrival Trigger** | `exterior_arrival_trigger` | `true` | Automatically illuminates exterior lights when any household member returns home (`person.*` / `device_tracker.*` transitions to `home` or `proximity.*` approaches) within 1 hour before sunset, at night, or when outdoor light level is very low. |
+| **Override Until House Sleep** | `exterior_override_until_sleep` | `false` | Keeps outside lights ON past the 2-hour post-sunset cutoff until the house goes to sleep (also exposed via `switch.simply_magic_areas_exterior_sleep_override_<area>` and automatically triggered whenever someone manually turns on outside lights). |
+| **Late-Night Stay-On Lights** | `exterior_late_night_lights` | `[]` | Optional subset of outside lights to keep ON after the 2-hour post-sunset cutoff turns off most of the lights, until the house goes to sleep. |
+| **Manual-Only Outside Lights** | `exterior_manual_only_lights` | `[]` | Specific outside lights excluded from automatic turn-on (only turned on manually, and automatically turned off when the house goes to sleep). |
 
 ### Exterior Lifecycle Invariants
 - **1-Hour Pre-Sunset & Very Low Outdoor Lux Activation**: Outside areas track sunset and default to turning lights ON starting 1 hour before sunset (`3600s`), or whenever the outdoor illuminance sensor reports a very low light level ($\le \text{dark\_lux\_floor}$, default `10 lx`).
-- **Always Full Brightness (`100%` / `255`)**: Outside lights always turn ON to full brightness (`255`) when activated.
-- **House Sleep Mode Shutoff & Motion Re-Triggering**: When the house enters `sleep` mode, outside lights turn OFF automatically and cancel any active stay-on countdown. If any motion or camera detection subsequently occurs outside while dark, the outside lights turn back ON to full brightness (`255`).
+- **2 Hours After Sunset Shutoff (Most or All Lights) & Sleep Shutoff**: At 2 hours after sunset (`7200s` post-sunset), most or all outside lights turn OFF (keeping only `exterior_late_night_lights` / `clear_lights` if configured). If the house enters `sleep` mode before (or after) the 2-hour cutoff, **all** outside lights immediately turn OFF.
+- **Movement, Door Sensors, Presence & Arrival Re-Triggering (Always Full `255`)**: Any movement, occupancy/presence sensor, door/garage/gate/window contact sensor opening or closing, camera motion/person detection, or person coming home trips outside presence and turns automatic outside lights back ON to full brightness (`255`).
+- **Override Until Sleep (Switch & Manual Turn-On)**: Toggling `switch.simply_magic_areas_exterior_sleep_override_<area>` ON or manually turning on any outside light sets `exterior_override_until_sleep: true`, holding the outside lights ON until the house enters `sleep` mode (or sunrise).
 - **Motion & Camera Reactivity**: Movement detected by outdoor PIR sensors, gates, or vision cameras (`camera.*`) restarts the 2-hour stay-on clock from the moment motion clears.
 - **Sunrise Clearance Guarantee**: At sunrise (`sun.sun` transitions to `above_horizon`), any running exterior timer is cancelled and lights are unconditionally extinguished (`force=True`).
 - **Decoupled Clearance Invariant**: Physical area clearance does not extinguish exterior lights while the 2-hour stay-on timer is running, ensuring outdoor spaces remain safely illuminated without misrepresenting empty yards as occupied on Home Assistant dashboards.

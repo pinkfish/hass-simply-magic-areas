@@ -20,12 +20,16 @@ from .base.entities import MagicEntity
 from .base.magic import MagicArea
 from .config.entity_names import EntityNames
 from .const import (
+    CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
     CONF_SLEEP_MODE,
     DATA_AREA_OBJECT,
+    DEFAULT_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
     DEFAULT_SLEEP_MODE,
     DOMAIN,
+    ICON_EXTERIOR_SLEEP_OVERRIDE,
     ICON_SLEEP_MODE,
     ICON_SYSTEM_CONTROL,
+    META_AREA_EXTERIOR,
     MODULE_DATA,
 )
 from .util import cleanup_magic_entities
@@ -53,6 +57,11 @@ async def async_setup_entry(
     ]
     if not hasattr(area, "is_top_level_sleep_target") or area.is_top_level_sleep_target():
         switches.append(AreaSleepModeSwitch(area))
+    if (
+        (hasattr(area, "is_exterior") and area.is_exterior())
+        or str(getattr(area, "id", "")).lower() == META_AREA_EXTERIOR.lower()
+    ):
+        switches.append(AreaExteriorSleepOverrideSwitch(area))
     cleanup_magic_entities(hass, switches, existing_switch_entities)
     async_add_entities(switches)
 
@@ -226,3 +235,76 @@ class AreaSleepModeSwitch(SwitchBase):
     def icon(self):
         """Return the icon to be used for this entity."""
         return ICON_SLEEP_MODE
+
+
+class AreaExteriorSleepOverrideSwitch(SwitchBase):
+    """Controls the exterior lighting override that keeps outside lights on until the house goes to sleep."""
+
+    def __init__(self, area: MagicArea) -> None:
+        """Initialize the exterior override-until-sleep switch."""
+        super().__init__(area, translation_key=EntityNames.EXTERIOR_SLEEP_OVERRIDE)
+        self._attr_is_on = bool(
+            getattr(area, "exterior_override_until_sleep", False)
+            or area.config.get(
+                CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+                DEFAULT_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+            )
+        )
+        self._expected_synced_state: bool | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Call when entity is added to hass."""
+        self.area._exterior_sleep_override_switch = self  # type: ignore[attr-defined]
+        await super().async_added_to_hass()
+        if self._attr_is_on and hasattr(self.area, "set_exterior_sleep_override"):
+            self.area.set_exterior_sleep_override(True)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up reference when removed from hass."""
+        if getattr(self.area, "_exterior_sleep_override_switch", None) is self:
+            self.area._exterior_sleep_override_switch = None  # type: ignore[attr-defined]
+        await super().async_will_remove_from_hass()
+
+    def _write_or_schedule_ha_state(self) -> None:
+        """Write state immediately when on the event loop, or schedule thread-safely."""
+        if (
+            self.hass is not None
+            and self.entity_id
+            and getattr(self, "platform", None) is not None
+        ):
+            with suppress(RuntimeError):
+                self.async_write_ha_state()
+                return
+        self.schedule_update_ha_state()
+
+    async def async_turn_on(self, **kwargs) -> None:
+        """Turn on exterior override until sleep for this area."""
+        self._expected_synced_state = True
+        self._attr_is_on = True
+        self._write_or_schedule_ha_state()
+        if hasattr(self.area, "set_exterior_sleep_override"):
+            self.area.set_exterior_sleep_override(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        """Turn off exterior override until sleep for this area."""
+        self._expected_synced_state = False
+        self._attr_is_on = False
+        self._write_or_schedule_ha_state()
+        if hasattr(self.area, "set_exterior_sleep_override"):
+            self.area.set_exterior_sleep_override(False)
+
+    def set_synced_state(self, is_on: bool) -> None:
+        """Update the switch state from internal exterior override changes without re-triggering propagation."""
+        target = bool(is_on)
+        if self._attr_is_on == target:
+            return
+        self._expected_synced_state = target
+        self._attr_is_on = target
+        if self.hass is not None and self.entity_id:
+            self._write_or_schedule_ha_state()
+
+    @property
+    def icon(self):
+        """Return the icon to be used for this entity."""
+        return ICON_EXTERIOR_SLEEP_OVERRIDE
+

@@ -82,6 +82,7 @@ DEFAULT_LIGHTING_PROFILE = LightingProfile.STANDARD
 # Icons
 ICON_SYSTEM_CONTROL = "mdi:head-cog"
 ICON_SLEEP_MODE = "mdi:sleep"
+ICON_EXTERIOR_SLEEP_OVERRIDE = "mdi:weather-night"
 
 # MagicAreas Components
 MAGIC_AREAS_COMPONENTS = [
@@ -367,6 +368,16 @@ CONF_EXTERIOR_ARRIVAL_TRIGGER, DEFAULT_EXTERIOR_ARRIVAL_TRIGGER = (
     "exterior_arrival_trigger",
     True,
 )
+CONF_EXTERIOR_AUTO_LIGHTS, DEFAULT_EXTERIOR_AUTO_LIGHTS = (
+    "exterior_auto_lights",
+    True,
+)
+CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP, DEFAULT_EXTERIOR_OVERRIDE_UNTIL_SLEEP = (
+    "exterior_override_until_sleep",
+    False,
+)
+CONF_EXTERIOR_LATE_NIGHT_LIGHTS = "exterior_late_night_lights"
+CONF_EXTERIOR_MANUAL_ONLY_LIGHTS = "exterior_manual_only_lights"
 
 # State attributes for lux and daylight calibration
 ATTR_DARK_LUX_FLOOR = "dark_lux_floor"
@@ -381,6 +392,8 @@ ATTR_TARGET_DAYLIGHT_LUX = "target_daylight_lux"
 ATTR_EXTERIOR_LIGHTING_ACTIVE = "exterior_lighting_active"
 ATTR_EXTERIOR_TIMER_TS = "exterior_timer_ts"
 ATTR_EXTERIOR_TRIGGER_REASON = "exterior_trigger_reason"
+ATTR_EXTERIOR_OVERRIDE_UNTIL_SLEEP = "exterior_override_until_sleep"
+ATTR_EXTERIOR_POST_TIMER_ACTIVE = "exterior_post_timer_active"
 
 # State attributes for ML and sensor filtering
 ATTR_FILTERED_FAN_SENSORS = "filtered_fan_sensors"
@@ -698,6 +711,10 @@ ADVANCED_LIGHT_GROUP_FEATURE_SCHEMA: vol.Schema = vol.Schema(
         vol.Optional(
             CONF_EXTERIOR_ARRIVAL_TRIGGER, default=DEFAULT_EXTERIOR_ARRIVAL_TRIGGER
         ): bool,
+        vol.Optional(CONF_EXTERIOR_AUTO_LIGHTS): bool,
+        vol.Optional(CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP): bool,
+        vol.Optional(CONF_EXTERIOR_LATE_NIGHT_LIGHTS): cv.entity_ids,
+        vol.Optional(CONF_EXTERIOR_MANUAL_ONLY_LIGHTS): cv.entity_ids,
         vol.Optional(
             CONF_LEARN_LIGHTING_PREFERENCES,
             default=DEFAULT_LEARN_LIGHTING_PREFERENCES,
@@ -794,6 +811,10 @@ REGULAR_AREA_SCHEMA = vol.Schema(
         vol.Optional(CONF_DARK_LUX_FLOOR, default=DEFAULT_DARK_LUX_FLOOR): cv.positive_int,
         vol.Optional(CONF_LEARN_DAYLIGHT_LUX, default=DEFAULT_LEARN_DAYLIGHT_LUX): bool,
         vol.Optional(CONF_DAYLIGHT_LUX_LEVEL, default=DEFAULT_DAYLIGHT_LUX_LEVEL): cv.positive_int,
+        vol.Optional(CONF_EXTERIOR_AUTO_LIGHTS): cv.boolean,
+        vol.Optional(CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP): cv.boolean,
+        vol.Optional(CONF_EXTERIOR_LATE_NIGHT_LIGHTS): cv.entity_ids,
+        vol.Optional(CONF_EXTERIOR_MANUAL_ONLY_LIGHTS): cv.entity_ids,
     }
 ).extend(
     {k: v for lg in ALL_LIGHT_ENTITIES for k, v in lg.config_flow_schema().items()}

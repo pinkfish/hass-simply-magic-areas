@@ -36,7 +36,12 @@ from .const import (
     CONF_EXCLUDE_ENTITIES,
     CONF_EXTENDED_TIMEOUT,
     CONF_EXTERIOR_ARRIVAL_TRIGGER,
+    CONF_EXTERIOR_AUTO_LIGHTS,
+    CONF_EXTERIOR_LATE_NIGHT_LIGHTS,
     CONF_EXTERIOR_LIGHTING_TIMEOUT,
+    CONF_EXTERIOR_MANUAL_ONLY_LIGHTS,
+    CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+    CONF_EXTERIOR_SUNSET_OFFSET,
     CONF_EXTERIOR_SUNSET_TRIGGER,
     CONF_FAN_CONTROL,
     CONF_FAN_SUPPRESS_IN_SLEEP,
@@ -78,6 +83,12 @@ from .const import (
     CONFIG_FLOW_ENTITY_FILTER_EXT,
     CONFIGURABLE_FEATURES,
     DATA_AREA_OBJECT,
+    DEFAULT_EXTERIOR_ARRIVAL_TRIGGER,
+    DEFAULT_EXTERIOR_AUTO_LIGHTS,
+    DEFAULT_EXTERIOR_LIGHTING_TIMEOUT,
+    DEFAULT_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+    DEFAULT_EXTERIOR_SUNSET_OFFSET,
+    DEFAULT_EXTERIOR_SUNSET_TRIGGER,
     DEFAULT_ICON,
     DOMAIN,
     META_AREA_GLOBAL,
@@ -625,10 +636,57 @@ class OptionsFlowHandler(config_entries.OptionsFlow, ConfigBase):
             CONF_EXTERIOR_LIGHTING_TIMEOUT: self._build_selector_number(
                 unit_of_measurement="seconds"
             ),
+            CONF_EXTERIOR_SUNSET_OFFSET: self._build_selector_number(
+                unit_of_measurement="seconds"
+            ),
+            CONF_EXTERIOR_AUTO_LIGHTS: selector({"boolean": {}}),
             CONF_EXTERIOR_SUNSET_TRIGGER: selector({"boolean": {}}),
             CONF_EXTERIOR_ARRIVAL_TRIGGER: selector({"boolean": {}}),
+            CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP: selector({"boolean": {}}),
+            CONF_EXTERIOR_LATE_NIGHT_LIGHTS: self._build_selector_entity_simple(
+                self.all_lights, multiple=True
+            ),
+            CONF_EXTERIOR_MANUAL_ONLY_LIGHTS: self._build_selector_entity_simple(
+                self.all_lights, multiple=True
+            ),
             CONF_MQTT_ROOM_PRESENCE: selector({"boolean": {}}),
         }
+        if (
+            self.area.is_exterior()
+            or self.area_options.get(CONF_TYPE) == "exterior"
+        ):
+            options.extend(
+                [
+                    (CONF_EXTERIOR_AUTO_LIGHTS, DEFAULT_EXTERIOR_AUTO_LIGHTS, bool),
+                    (
+                        CONF_EXTERIOR_LIGHTING_TIMEOUT,
+                        DEFAULT_EXTERIOR_LIGHTING_TIMEOUT,
+                        int,
+                    ),
+                    (
+                        CONF_EXTERIOR_SUNSET_OFFSET,
+                        DEFAULT_EXTERIOR_SUNSET_OFFSET,
+                        int,
+                    ),
+                    (
+                        CONF_EXTERIOR_SUNSET_TRIGGER,
+                        DEFAULT_EXTERIOR_SUNSET_TRIGGER,
+                        bool,
+                    ),
+                    (
+                        CONF_EXTERIOR_ARRIVAL_TRIGGER,
+                        DEFAULT_EXTERIOR_ARRIVAL_TRIGGER,
+                        bool,
+                    ),
+                    (
+                        CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+                        DEFAULT_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+                        bool,
+                    ),
+                    (CONF_EXTERIOR_LATE_NIGHT_LIGHTS, [], cv.entity_ids),
+                    (CONF_EXTERIOR_MANUAL_ONLY_LIGHTS, [], cv.entity_ids),
+                ]
+            )
         for lg in ALL_LIGHT_ENTITIES:
             options.extend(lg.advanced_config_flow_options())
             selectors.update(

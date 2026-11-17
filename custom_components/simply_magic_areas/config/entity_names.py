@@ -18,3 +18,4 @@ class EntityNames(StrEnum):
     HUMIDITY_STATISTICS = "humidity_statistics"
     LIGHTING_PROFILE = "lighting_profile"
     SLEEP_MODE = "sleep_mode"
+    EXTERIOR_SLEEP_OVERRIDE = "exterior_sleep_override"

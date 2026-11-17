@@ -58,6 +58,8 @@ from .const import (
     ATTR_DARK_LUX_FLOOR,
     ATTR_DARKNESS_RATIO,
     ATTR_EXTERIOR_LIGHTING_ACTIVE,
+    ATTR_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+    ATTR_EXTERIOR_POST_TIMER_ACTIVE,
     ATTR_EXTERIOR_TIMER_TS,
     ATTR_EXTERIOR_TRIGGER_REASON,
     ATTR_HAS_PRESENCE_SENSORS,
@@ -81,10 +83,15 @@ from .const import (
     CONF_DAYLIGHT_LUX_LEVEL,
     CONF_EXTENDED_WARNING_DIM,
     CONF_EXTERIOR_ARRIVAL_TRIGGER,
+    CONF_EXTERIOR_AUTO_LIGHTS,
+    CONF_EXTERIOR_LATE_NIGHT_LIGHTS,
     CONF_EXTERIOR_LIGHTING_TIMEOUT,
+    CONF_EXTERIOR_MANUAL_ONLY_LIGHTS,
+    CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
     CONF_EXTERIOR_SUNSET_OFFSET,
     CONF_EXTERIOR_SUNSET_TRIGGER,
     CONF_FEATURE_ADVANCED_LIGHT_GROUPS,
+    CONF_INCLUDE_ENTITIES,
     CONF_LEARN_DAYLIGHT_LUX,
     CONF_LEARN_LIGHTING_PREFERENCES,
     CONF_MANUAL_TIMEOUT,
@@ -92,6 +99,7 @@ from .const import (
     CONF_MIN_BRIGHTNESS_LEVEL,
     CONF_REFERENCE_ILLUMINANCE_SENSOR,
     CONF_SLEEP_WAKEUP_DELAY,
+    CONTACT_SENSOR_DEVICE_CLASSES,
     DATA_AREA_OBJECT,
     DEFAULT_ACTUATOR_RETRY_DELAYS,
     DEFAULT_ALL_AWAY_SWEEP,
@@ -100,7 +108,9 @@ from .const import (
     DEFAULT_DARK_LUX_FLOOR,
     DEFAULT_EXTENDED_WARNING_DIM,
     DEFAULT_EXTERIOR_ARRIVAL_TRIGGER,
+    DEFAULT_EXTERIOR_AUTO_LIGHTS,
     DEFAULT_EXTERIOR_LIGHTING_TIMEOUT,
+    DEFAULT_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
     DEFAULT_EXTERIOR_SUNSET_OFFSET,
     DEFAULT_EXTERIOR_SUNSET_TRIGGER,
     DEFAULT_LEARN_LIGHTING_PREFERENCES,
@@ -288,6 +298,17 @@ class AreaLightGroup(MagicEntity, LightGroup):
         self._exterior_trigger_reason: str | None = None
         self._pre_sunset_timer_cb: CALLBACK_TYPE | None = None
         self._pre_sunset_triggered: bool = False
+        adv_init = area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        self._exterior_override_until_sleep: bool = bool(
+            getattr(area, "exterior_override_until_sleep", False)
+            or adv_init.get(
+                CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+                area.config.get(
+                    CONF_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+                    DEFAULT_EXTERIOR_OVERRIDE_UNTIL_SLEEP,
+                ),
+            )
+        )
 
         # Interior arrival pre-warming and sustained sleep wake-up state
         self._arrival_prewarm_timer_cb: CALLBACK_TYPE | None = None
@@ -319,6 +340,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._attr_extra_state_attributes[ATTR_EXTERIOR_LIGHTING_ACTIVE] = False
             self._attr_extra_state_attributes[ATTR_EXTERIOR_TIMER_TS] = None
             self._attr_extra_state_attributes[ATTR_EXTERIOR_TRIGGER_REASON] = None
+            self._attr_extra_state_attributes[ATTR_EXTERIOR_OVERRIDE_UNTIL_SLEEP] = (
+                self._exterior_override_until_sleep
+            )
 
     async def async_added_to_hass(self) -> None:
         """Run when this is added into hass."""
@@ -378,6 +402,16 @@ class AreaLightGroup(MagicEntity, LightGroup):
                             self.hass, manual_timeout, self._reset_manual_timeout
                         )
 
+            if (
+                self.is_exterior
+                and ATTR_EXTERIOR_OVERRIDE_UNTIL_SLEEP in last_state.attributes
+            ):
+                self._exterior_override_until_sleep = bool(
+                    last_state.attributes[ATTR_EXTERIOR_OVERRIDE_UNTIL_SLEEP]
+                )
+                self._attr_extra_state_attributes[
+                    ATTR_EXTERIOR_OVERRIDE_UNTIL_SLEEP
+                ] = self._exterior_override_until_sleep
             if self.is_exterior and ATTR_EXTERIOR_LIGHTING_ACTIVE in last_state.attributes:
                 ext_active = bool(last_state.attributes[ATTR_EXTERIOR_LIGHTING_ACTIVE])
                 target_ts = last_state.attributes.get(ATTR_EXTERIOR_TIMER_TS)
@@ -537,6 +571,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._expected_state = STATE_ON
             self._attr_is_on = True
             self._set_controlled_by_this_entity(False)
+            if self.is_exterior:
+                self.set_exterior_override_until_sleep(
+                    True, turn_on_if_enabled=False
+                )
             if req_b is not None:
                 self._expected_brightness = int(req_b)
                 self._attr_brightness = int(req_b)
@@ -576,6 +614,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._manual_brightness_override = False
             self._attr_is_on = False
             if self.is_exterior:
+                self.set_exterior_override_until_sleep(False)
                 self._clear_exterior_lighting()
             if not self._has_presence_sensors():
                 self._reset_control()
@@ -601,7 +640,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
             )
         )
         local_room_lights = self._get_local_room_lights()
-        if len(local_room_lights) > 1:
+        if len(local_room_lights) > 1 or self.is_exterior:
             self.async_on_remove(
                 async_track_state_change_event(
                     self.hass,
@@ -693,6 +732,23 @@ class AreaLightGroup(MagicEntity, LightGroup):
                     self.hass,
                     house_sleep_entities,
                     self._exterior_house_sleep_change,
+                )
+            )
+            override_switch_entities = [
+                self.area.simply_magic_entity_id(
+                    SWITCH_DOMAIN, EntityNames.EXTERIOR_SLEEP_OVERRIDE
+                ),
+                self.area.simply_magic_entity_id(
+                    SWITCH_DOMAIN,
+                    EntityNames.EXTERIOR_SLEEP_OVERRIDE,
+                    area_name=META_AREA_EXTERIOR.lower(),
+                ),
+            ]
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass,
+                    override_switch_entities,
+                    self._exterior_sleep_override_switch_change,
                 )
             )
             lux_entities = self._get_exterior_illuminance_entities()
@@ -879,13 +935,23 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         if occupancy_changed:
             if not self._is_controlled_by_this_entity():
-                _LOGGER.info(
-                    "%s: Occupancy state changed from %s to %s; resetting manual override",
-                    self.name,
-                    from_state,
-                    to_state,
-                )
-                self._reset_control()
+                if self.is_exterior and getattr(
+                    self, "_exterior_override_until_sleep", False
+                ):
+                    _LOGGER.debug(
+                        "%s: Exterior override until sleep is active; preserving override across occupancy change (%s -> %s)",
+                        self.name,
+                        from_state,
+                        to_state,
+                    )
+                else:
+                    _LOGGER.info(
+                        "%s: Occupancy state changed from %s to %s; resetting manual override",
+                        self.name,
+                        from_state,
+                        to_state,
+                    )
+                    self._reset_control()
         elif not self._is_controlled_by_this_entity():
             _LOGGER.debug(
                 "%s: In manual override and occupancy status did not change (%s -> %s); holding state",
@@ -898,6 +964,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if to_state == AreaState.AREA_STATE_CLEAR:
             self._cancel_sleep_wakeup_timer()
             if self.is_exterior:
+                if getattr(self, "_exterior_override_until_sleep", False):
+                    return
                 if (
                     from_state in occupied_states
                     and self._attr_extra_state_attributes.get(
@@ -937,6 +1005,8 @@ class AreaLightGroup(MagicEntity, LightGroup):
             AreaState.AREA_STATE_ACCENTED,
         ):
             if self.is_exterior:
+                if not self._is_exterior_auto_lights_enabled():
+                    return
                 if not self._is_exterior_dark():
                     _LOGGER.debug(
                         "%s: Exterior area occupied during daytime; lights suppressed",
@@ -962,6 +1032,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
             if left_occupied_while_manually_off:
                 return
             if self.is_exterior:
+                if getattr(self, "_exterior_override_until_sleep", False):
+                    return
+                if not self._is_exterior_auto_lights_enabled():
+                    return
                 if not self._is_exterior_dark():
                     self._turn_off_light()
                     return
@@ -1628,6 +1702,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
                 self._record_manual_brightness_preference(int(new_brightness))
                 self._manual_brightness_override = True
                 self._set_controlled_by_this_entity(False)
+                if self.is_exterior:
+                    self.set_exterior_override_until_sleep(
+                        True, turn_on_if_enabled=False
+                    )
                 self._sync_room_lights(
                     STATE_ON,
                     target_brightness=int(new_brightness),
@@ -1692,6 +1770,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         if not self._has_presence_sensors() and new_state.state == STATE_OFF:
             if self.is_exterior:
+                self.set_exterior_override_until_sleep(False)
                 self._clear_exterior_lighting()
             self._reset_control()
             self._sync_room_lights(STATE_OFF, source_entity_id=self.entity_id)
@@ -1704,11 +1783,14 @@ class AreaLightGroup(MagicEntity, LightGroup):
             new_state.state,
         )
 
-        if (
-            self.is_exterior
-            and new_state.state == STATE_OFF
-        ):
-            self._clear_exterior_lighting()
+        if self.is_exterior:
+            if new_state.state == STATE_OFF:
+                self.set_exterior_override_until_sleep(False)
+                self._clear_exterior_lighting()
+            else:
+                self.set_exterior_override_until_sleep(
+                    True, turn_on_if_enabled=False
+                )
 
         self._set_controlled_by_this_entity(False)
         if self._manual_timeout_cb is not None:
@@ -2048,6 +2130,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._record_manual_brightness_preference(int(new_b))
             self._manual_brightness_override = True
             self._set_controlled_by_this_entity(False)
+            if self.is_exterior:
+                self.set_exterior_override_until_sleep(
+                    True, turn_on_if_enabled=False
+                )
             self._sync_room_lights(
                 STATE_ON,
                 target_brightness=int(new_b),
@@ -2145,10 +2231,12 @@ class AreaLightGroup(MagicEntity, LightGroup):
         if new_state.state == STATE_OFF:
             if not self._has_presence_sensors():
                 if self.is_exterior:
+                    self.set_exterior_override_until_sleep(False)
                     self._clear_exterior_lighting()
                 self._reset_control()
             else:
                 if self.is_exterior:
+                    self.set_exterior_override_until_sleep(False)
                     self._clear_exterior_lighting()
                 self._set_controlled_by_this_entity(False)
                 if self._manual_timeout_cb is not None:
@@ -2162,6 +2250,10 @@ class AreaLightGroup(MagicEntity, LightGroup):
         # Member light turned ON manually
         self._cancel_manual_off_unoccupied_timer()
         self._set_controlled_by_this_entity(False)
+        if self.is_exterior:
+            self.set_exterior_override_until_sleep(
+                True, turn_on_if_enabled=False
+            )
         if self._manual_timeout_cb is not None:
             self._manual_timeout_cb()
             self._manual_timeout_cb = None
@@ -3084,9 +3176,16 @@ class AreaLightGroup(MagicEntity, LightGroup):
             )
             return
 
-        # Exterior safety check: Never turn off if exterior timer is active unless forced
-        if not force and self.is_exterior and self._attr_extra_state_attributes.get(
-            ATTR_EXTERIOR_LIGHTING_ACTIVE, False
+        # Exterior safety check: Never turn off if exterior timer or override-until-sleep is active unless forced
+        if (
+            not force
+            and self.is_exterior
+            and (
+                self._attr_extra_state_attributes.get(
+                    ATTR_EXTERIOR_LIGHTING_ACTIVE, False
+                )
+                or getattr(self, "_exterior_override_until_sleep", False)
+            )
         ):
             _LOGGER.debug(
                 "%s: Exterior lighting timer is active, aborting turn off",
@@ -3310,20 +3409,42 @@ class AreaLightGroup(MagicEntity, LightGroup):
         return entities
 
     def _get_exterior_motion_entities(self) -> list[str]:
-        """Return binary_sensor presence/motion entity IDs in this exterior area."""
+        """Return binary_sensor and included presence/motion/door entity IDs in this exterior area."""
         entities: list[str] = []
         for ent in self.area.entities.get(BINARY_SENSOR_DOMAIN, []):
             if isinstance(ent, dict):
                 eid = ent.get(ATTR_ENTITY_ID)
                 if eid and eid not in entities:
                     entities.append(eid)
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        for inc in (
+            adv_conf.get(CONF_INCLUDE_ENTITIES)
+            or self.area.config.get(CONF_INCLUDE_ENTITIES)
+            or []
+        ):
+            if inc and str(inc) not in entities:
+                entities.append(str(inc))
         return entities
+
+    def _is_contact_or_door_sensor(self, entity_id: str, state_obj: State | None = None) -> bool:
+        """Return True if entity_id is a door, garage_door, window, or opening contact sensor."""
+        for ent in self.area.entities.get(BINARY_SENSOR_DOMAIN, []):
+            if (
+                isinstance(ent, dict)
+                and ent.get(ATTR_ENTITY_ID) == entity_id
+                and ent.get(ATTR_DEVICE_CLASS) in CONTACT_SENSOR_DEVICE_CLASSES
+            ):
+                return True
+        if state_obj is not None and state_obj.attributes.get(ATTR_DEVICE_CLASS) in CONTACT_SENSOR_DEVICE_CLASSES:
+            return True
+        eid_lower = entity_id.lower()
+        return any(kw in eid_lower for kw in ("door", "garage", "gate", "window"))
 
     @callback
     def _exterior_motion_sensor_change(
         self, event: Event[EventStateChangedData]
     ) -> None:
-        """Handle direct motion/presence sensor transitions in exterior areas."""
+        """Handle direct motion/presence/door sensor transitions in exterior areas."""
         if not self.is_exterior:
             return
         if (
@@ -3331,17 +3452,150 @@ class AreaLightGroup(MagicEntity, LightGroup):
             or self.area.state == AreaState.AREA_STATE_MANUAL
         ):
             return
+        if not self._is_exterior_auto_lights_enabled():
+            return
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
-        if new_state is None:
+        if new_state is None or new_state.state in INVALID_STATES:
             return
         if old_state is not None and old_state.state == new_state.state:
             return
-        if new_state.state in (STATE_ON, "open"):
+        entity_id = str(event.data.get("entity_id", ""))
+        is_contact = self._is_contact_or_door_sensor(entity_id, new_state)
+        tripped = (
+            (
+                is_contact
+                and old_state is not None
+                and old_state.state not in INVALID_STATES
+                and new_state.state in (STATE_ON, STATE_OFF, "open", "closed")
+            )
+            or new_state.state in (STATE_ON, "open", "detected", STATE_HOME, "playing")
+        )
+        if tripped:
             if not self._is_exterior_dark():
                 return
             self._reset_control()
             self._trigger_exterior_lighting(reason="motion")
+
+    def _is_exterior_auto_lights_enabled(self) -> bool:
+        """Return True if automatic exterior lighting is enabled for this area."""
+        if not self.area.is_control_enabled(ControlType.Light):
+            return False
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        val = adv_conf.get(
+            CONF_EXTERIOR_AUTO_LIGHTS,
+            self.area.config.get(
+                CONF_EXTERIOR_AUTO_LIGHTS, DEFAULT_EXTERIOR_AUTO_LIGHTS
+            ),
+        )
+        return bool(val)
+
+    def _get_exterior_automatic_lights(
+        self, base_lights: list[str] | None = None
+    ) -> list[str]:
+        """Return the exterior lights eligible for automatic activation (excluding manual-only lights)."""
+        candidates = list(base_lights if base_lights is not None else self._all_lights)
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        manual_only = set(
+            adv_conf.get(CONF_EXTERIOR_MANUAL_ONLY_LIGHTS)
+            or self.area.config.get(CONF_EXTERIOR_MANUAL_ONLY_LIGHTS)
+            or []
+        )
+        if not manual_only:
+            return candidates
+        return [eid for eid in candidates if eid not in manual_only]
+
+    def _get_exterior_late_night_lights(self) -> list[str]:
+        """Return the subset of exterior lights configured to remain on after the 2-hour post-sunset cutoff until sleep."""
+        adv_conf = self.area.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS)
+        explicit = (
+            adv_conf.get(CONF_EXTERIOR_LATE_NIGHT_LIGHTS)
+            or self.area.config.get(CONF_EXTERIOR_LATE_NIGHT_LIGHTS)
+            or adv_conf.get("clear_lights")
+            or self.area.config.get("clear_lights")
+            or []
+        )
+        if not explicit or not isinstance(explicit, (list, tuple, set)):
+            return []
+        return [str(eid) for eid in explicit if eid in self._all_lights]
+
+    def set_exterior_override_until_sleep(
+        self, enabled: bool, turn_on_if_enabled: bool = False
+    ) -> None:
+        """Set or clear the override that keeps outside lights on until the house goes to sleep."""
+        if not self.is_exterior:
+            return
+        enabled_bool = bool(enabled)
+        self._exterior_override_until_sleep = enabled_bool
+        self.area.exterior_override_until_sleep = enabled_bool  # type: ignore[attr-defined]
+        self._attr_extra_state_attributes[ATTR_EXTERIOR_OVERRIDE_UNTIL_SLEEP] = (
+            enabled_bool
+        )
+
+        override_switch = getattr(self.area, "_exterior_sleep_override_switch", None)
+        if override_switch is not None and hasattr(
+            override_switch, "set_synced_state"
+        ):
+            override_switch.set_synced_state(enabled_bool)
+        elif self.hass is not None:
+            sw_id = self.area.simply_magic_entity_id(
+                SWITCH_DOMAIN, EntityNames.EXTERIOR_SLEEP_OVERRIDE
+            )
+            st = self.hass.states.get(sw_id)
+            target_st = STATE_ON if enabled_bool else STATE_OFF
+            if st is not None and st.state != target_st:
+                self.hass.states.async_set(sw_id, target_st)
+
+        if (
+            enabled_bool
+            and turn_on_if_enabled
+            and self.area.is_control_enabled(ControlType.System)
+            and self.area.state != AreaState.AREA_STATE_MANUAL
+        ):
+            self._set_controlled_by_this_entity(False)
+            self._entity_ids = list(self._all_lights)
+            now_ts = datetime.now(UTC).timestamp()
+            self._last_turn_on_ts = now_ts
+            self.last_update_from_entity = True
+            self._attr_is_on = True
+            self._attr_brightness = 255
+            self._expected_state = STATE_ON
+            self._expected_brightness = 255
+            self._command_in_flight_until = now_ts + 2.5
+            self._automation_transition_until = now_ts + 6.0
+            self._dispatch_light_command(
+                SERVICE_TURN_ON,
+                {ATTR_ENTITY_ID: self.entity_id, ATTR_BRIGHTNESS: 255},
+            )
+            self._schedule_actuator_retry(STATE_ON, 255, allow_manual=True)
+
+        self.schedule_update_ha_state()
+
+    @callback
+    def _exterior_sleep_override_switch_change(
+        self, event: Event[EventStateChangedData]
+    ) -> None:
+        """Handle changes to the exterior override-until-sleep switch entity."""
+        if not self.is_exterior:
+            return
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        if new_state is None or new_state.state in INVALID_STATES:
+            return
+        if old_state is not None and old_state.state == new_state.state:
+            return
+        override_switch = getattr(self.area, "_exterior_sleep_override_switch", None)
+        expected = getattr(override_switch, "_expected_synced_state", None)
+        is_on = new_state.state == STATE_ON
+        if expected is not None and expected == is_on:
+            override_switch._expected_synced_state = None
+            return
+        self.set_exterior_override_until_sleep(is_on, turn_on_if_enabled=is_on)
+        if not is_on and not self._attr_extra_state_attributes.get(
+            ATTR_EXTERIOR_LIGHTING_ACTIVE, False
+        ):
+            self._reset_control()
+            self._turn_off_light(force=True)
 
     def _cancel_pre_sunset_timer(self) -> None:
         """Cancel any scheduled 1-hour pre-sunset activation timer."""
@@ -3437,7 +3691,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
         return False
 
     def _handle_exterior_sleep_entry(self) -> None:
-        """Turn off outside lights and clear active exterior timer when the house enters sleep mode."""
+        """Turn off outside lights and clear active exterior timer and override when the house enters sleep mode."""
         if not self.is_exterior:
             return
         _LOGGER.info(
@@ -3445,8 +3699,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self.name,
         )
         self._manual_brightness_override = False
+        self.set_exterior_override_until_sleep(False)
+        self._attr_extra_state_attributes.pop(
+            ATTR_EXTERIOR_POST_TIMER_ACTIVE, None
+        )
         self._clear_exterior_lighting()
         self._reset_control()
+        self._entity_ids = list(self._all_lights)
         self._turn_off_light(force=True)
 
     @callback
@@ -3560,16 +3819,35 @@ class AreaLightGroup(MagicEntity, LightGroup):
             or self.area.state == AreaState.AREA_STATE_MANUAL
         ):
             return
+        if not self._is_exterior_auto_lights_enabled():
+            return
+
+        auto_lights = self._get_exterior_automatic_lights()
+        if not auto_lights:
+            return
 
         if self._exterior_timer_cb is not None:
             self._exterior_timer_cb()
             self._exterior_timer_cb = None
 
-        timeout = self._get_exterior_timeout()
+        base_timeout = self._get_exterior_timeout()
+        if reason == "sunset":
+            sec_to_sunset = self._get_seconds_until_sunset()
+            timeout = (
+                base_timeout + sec_to_sunset
+                if sec_to_sunset is not None and sec_to_sunset > 0
+                else base_timeout
+            )
+        else:
+            timeout = base_timeout
+
         now_ts = datetime.now(UTC).timestamp()
         self._exterior_timer_ts = now_ts + timeout
         self._exterior_trigger_reason = reason
 
+        self._attr_extra_state_attributes.pop(
+            ATTR_EXTERIOR_POST_TIMER_ACTIVE, None
+        )
         self._attr_extra_state_attributes[ATTR_EXTERIOR_LIGHTING_ACTIVE] = True
         self._attr_extra_state_attributes[ATTR_EXTERIOR_TIMER_TS] = (
             self._exterior_timer_ts
@@ -3585,9 +3863,23 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         conf = self._get_active_profile_config()
         if conf is not None:
-            self._turn_on_light(conf, force=True)
+            filtered_lights = self._get_exterior_automatic_lights(conf.lights)
+            if not filtered_lights:
+                return
+            ext_conf = StateConfigData(
+                name=conf.name,
+                entity=conf.entity,
+                entity_state_on=conf.entity_state_on,
+                dim_level=100,
+                for_state=conf.for_state,
+                icon=conf.icon,
+                control_entity=conf.control_entity,
+                lights=filtered_lights,
+            )
+            self._turn_on_light(ext_conf, force=True)
         else:
             if not self.is_on or self.brightness != 255:
+                self._entity_ids = auto_lights
                 self.last_update_from_entity = True
                 self._attr_is_on = True
                 self._attr_brightness = 255
@@ -3603,7 +3895,7 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
     @callback
     def _exterior_timer_expired(self, now: datetime | None = None) -> None:
-        """Handle expiration of the exterior stay-on timer."""
+        """Handle expiration of the exterior stay-on timer (2 hours after sunset or motion)."""
         self._exterior_timer_cb = None
         if not self.is_exterior:
             return
@@ -3611,6 +3903,13 @@ class AreaLightGroup(MagicEntity, LightGroup):
             not self.area.is_control_enabled(ControlType.System)
             or self.area.state == AreaState.AREA_STATE_MANUAL
         ):
+            return
+
+        if getattr(self, "_exterior_override_until_sleep", False):
+            _LOGGER.info(
+                "%s: Exterior timer expired, but override-until-sleep is active; keeping lights on until house goes to sleep",
+                self.name,
+            )
             return
 
         if self._has_active_motion() and self._is_exterior_dark():
@@ -3621,11 +3920,46 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._trigger_exterior_lighting(reason="motion")
             return
 
+        late_night_lights = self._get_exterior_late_night_lights()
+        lights_to_turn_off = [
+            eid for eid in self._all_lights if eid not in late_night_lights
+        ]
+        self._clear_exterior_lighting()
+
+        if (
+            late_night_lights
+            and lights_to_turn_off
+            and not self._is_house_in_sleep_mode()
+        ):
+            _LOGGER.info(
+                "%s: 2-hour exterior timer expired; turning off most lights %s and keeping late-night lights %s on until sleep",
+                self.name,
+                lights_to_turn_off,
+                late_night_lights,
+            )
+            self._attr_extra_state_attributes[
+                ATTR_EXTERIOR_POST_TIMER_ACTIVE
+            ] = True
+            self._entity_ids = list(late_night_lights)
+            now_ts = datetime.now(UTC).timestamp()
+            self._last_turn_off_ts = now_ts
+            self.last_update_from_entity = True
+            self._command_in_flight_until = now_ts + 2.5
+            self._automation_transition_until = now_ts + 6.0
+            call_service_non_blocking(
+                self.hass,
+                LIGHT_DOMAIN,
+                SERVICE_TURN_OFF,
+                {ATTR_ENTITY_ID: lights_to_turn_off},
+            )
+            self.schedule_update_ha_state()
+            return
+
         _LOGGER.info(
             "%s: Exterior timer expired with no active motion; turning off lights",
             self.name,
         )
-        self._clear_exterior_lighting()
+        self._entity_ids = list(self._all_lights)
         self._turn_off_light(force=True)
 
     def _clear_exterior_lighting(self) -> None:
@@ -3639,6 +3973,9 @@ class AreaLightGroup(MagicEntity, LightGroup):
             self._attr_extra_state_attributes[ATTR_EXTERIOR_LIGHTING_ACTIVE] = False
             self._attr_extra_state_attributes[ATTR_EXTERIOR_TIMER_TS] = None
             self._attr_extra_state_attributes[ATTR_EXTERIOR_TRIGGER_REASON] = None
+            self._attr_extra_state_attributes[ATTR_EXTERIOR_OVERRIDE_UNTIL_SLEEP] = (
+                self._exterior_override_until_sleep
+            )
             self.schedule_update_ha_state()
 
     def _has_active_motion(self) -> bool:
@@ -3695,15 +4032,50 @@ class AreaLightGroup(MagicEntity, LightGroup):
             if self._is_exterior_lux_very_low():
                 return
             _LOGGER.info("%s: Sunrise detected, clearing exterior lighting", self.name)
+            self.set_exterior_override_until_sleep(False)
+            self._attr_extra_state_attributes.pop(
+                ATTR_EXTERIOR_POST_TIMER_ACTIVE, None
+            )
             self._clear_exterior_lighting()
+            self._reset_control()
+            self._entity_ids = list(self._all_lights)
             self._turn_off_light(force=True)
+            return
+
+        # When sun crosses below_horizon after pre-sunset trigger, ensure timer runs for 2 hours after sunset
+        if (
+            new_state.state == "below_horizon"
+            and (old_state is None or old_state.state != "below_horizon")
+            and self._pre_sunset_triggered
+            and self._attr_extra_state_attributes.get(
+                ATTR_EXTERIOR_LIGHTING_ACTIVE, False
+            )
+            and self._exterior_trigger_reason == "sunset"
+            and not self._is_house_in_sleep_mode()
+        ):
+            if self._exterior_timer_cb is not None:
+                self._exterior_timer_cb()
+                self._exterior_timer_cb = None
+            timeout = self._get_exterior_timeout()
+            self._exterior_timer_ts = datetime.now(UTC).timestamp() + timeout
+            self._attr_extra_state_attributes[ATTR_EXTERIOR_TIMER_TS] = (
+                self._exterior_timer_ts
+            )
+            self._ensure_hass_stop_listener()
+            self._exterior_timer_cb = async_call_later(
+                self.hass, timeout, self._exterior_timer_expired
+            )
+            self.schedule_update_ha_state()
             return
 
         # Within 1 hour before sunset or below_horizon
         if self._is_within_pre_sunset_or_night():
             if self._pre_sunset_triggered:
                 return
-            if not self._is_exterior_sunset_trigger_enabled():
+            if (
+                not self._is_exterior_sunset_trigger_enabled()
+                or not self._is_exterior_auto_lights_enabled()
+            ):
                 return
             self._pre_sunset_triggered = True
             if self._is_house_in_sleep_mode():

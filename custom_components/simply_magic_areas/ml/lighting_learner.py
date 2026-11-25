@@ -81,7 +81,13 @@ class OnlineBayesianLightingLearner:
         self._last_predicted_brightness: int | None = None
         self._lux_per_dim_pct: float | None = None
         self._lux_gain_samples: int = 0
+        self._saved_daylight_dim_levels: dict[str, int] = {}
         self._is_loaded: bool = False
+
+    @property
+    def saved_daylight_dim_levels(self) -> dict[str, int]:
+        """Return saved worked-out daylight dim percentages keyed by 25-lx ambient bucket."""
+        return dict(self._saved_daylight_dim_levels)
 
     @property
     def lux_per_dim_pct(self) -> float | None:
@@ -129,6 +135,13 @@ class OnlineBayesianLightingLearner:
                 if data.get("lux_per_dim_pct") is not None:
                     self._lux_per_dim_pct = float(data["lux_per_dim_pct"])
                     self._lux_gain_samples = int(data.get("lux_gain_samples", 1))
+                raw_saved = data.get("saved_daylight_dim_levels")
+                if isinstance(raw_saved, dict):
+                    self._saved_daylight_dim_levels = {
+                        str(k): max(1, min(100, int(v)))
+                        for k, v in raw_saved.items()
+                        if isinstance(v, (int, float))
+                    }
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
                 "%s: Could not load ML lighting preferences from storage: %s",
@@ -147,6 +160,7 @@ class OnlineBayesianLightingLearner:
                 "sample_count": self._sample_count,
                 "lux_per_dim_pct": self._lux_per_dim_pct,
                 "lux_gain_samples": self._lux_gain_samples,
+                "saved_daylight_dim_levels": self._saved_daylight_dim_levels,
             }
             await self._store.async_save(payload)
         except Exception as err:  # noqa: BLE001
@@ -306,6 +320,71 @@ class OnlineBayesianLightingLearner:
         )
         return max(1, min(100, round(needed_dim_pct)))
 
+    @staticmethod
+    def _ambient_lux_bucket_key(ambient_lux: float) -> str:
+        """Bucket ambient lux into 25-lx intervals for persistent lookup."""
+        clamped = max(0.0, float(ambient_lux))
+        return str(int(round(clamped / 25.0) * 25))
+
+    def save_worked_out_dim_level(
+        self,
+        ambient_lux: float,
+        target_daylight_lux: float | None,
+        dim_pct: int,
+    ) -> None:
+        """Save a worked-out dim percentage for an ambient lux level so future turn-ons use it directly."""
+        clamped_dim = max(1, min(100, int(dim_pct)))
+        bucket_key = self._ambient_lux_bucket_key(ambient_lux)
+        self._saved_daylight_dim_levels[bucket_key] = clamped_dim
+        if (
+            target_daylight_lux is not None
+            and float(target_daylight_lux) > float(ambient_lux)
+            and clamped_dim > 0
+            and (self._lux_per_dim_pct is None or self._lux_per_dim_pct <= 0.0)
+        ):
+            implied_gain = (float(target_daylight_lux) - float(ambient_lux)) / float(
+                clamped_dim
+            )
+            if math.isfinite(implied_gain) and implied_gain > 0.02:
+                self._lux_per_dim_pct = round(implied_gain, 4)
+                self._lux_gain_samples = max(1, self._lux_gain_samples)
+
+        if self.hass.loop.is_running():
+            self.hass.loop.call_soon_threadsafe(
+                lambda: self.hass.async_create_task(self.async_save())
+            )
+
+    def has_saved_dim_level_for_lux(self, ambient_lux: float) -> bool:
+        """Return True if a worked-out dim level has already been saved for this ambient lux bucket."""
+        bucket_key = self._ambient_lux_bucket_key(ambient_lux)
+        return bucket_key in self._saved_daylight_dim_levels
+
+    def get_saved_dim_level(
+        self,
+        ambient_lux: float,
+        target_daylight_lux: float | None = None,
+    ) -> int | None:
+        """Return the saved worked-out dim percentage for ambient_lux, or compute from learned gain."""
+        if (
+            target_daylight_lux is not None
+            and float(ambient_lux) >= float(target_daylight_lux)
+        ):
+            return 0
+        bucket_key = self._ambient_lux_bucket_key(ambient_lux)
+        if bucket_key in self._saved_daylight_dim_levels:
+            return int(self._saved_daylight_dim_levels[bucket_key])
+        if (
+            target_daylight_lux is not None
+            and self._lux_per_dim_pct is not None
+            and self._lux_per_dim_pct > 0.02
+        ):
+            return self.calculate_dim_pct_for_target_lux(
+                current_lux=float(ambient_lux),
+                current_dim_pct=0.0,
+                target_daylight_lux=float(target_daylight_lux),
+            )
+        return None
+
     def get_attributes(self) -> dict[str, Any]:
         """Return state attributes for diagnostic and UI visibility."""
         attrs: dict[str, Any] = {
@@ -317,4 +396,8 @@ class OnlineBayesianLightingLearner:
         if self._lux_per_dim_pct is not None:
             attrs["lux_per_dim_pct"] = round(self._lux_per_dim_pct, 3)
             attrs["lux_gain_samples"] = self._lux_gain_samples
+        if self._saved_daylight_dim_levels:
+            attrs["saved_daylight_dim_levels"] = dict(
+                self._saved_daylight_dim_levels
+            )
         return attrs

@@ -74,6 +74,7 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
             domain=SENSOR_DOMAIN,
             translation_key=EntityNames.LIGHTING_PROFILE,
         )
+        self.area._lighting_profile_sensor = self  # type: ignore[attr-defined]
 
         self._attr_options = [p.value for p in LightingProfile]
         self._attr_native_value = LightingProfile.STANDARD
@@ -821,7 +822,16 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
         ):
             return
         new_profile = self._calculate_lighting_profile()
-        if new_profile != self._attr_native_value:
+        cur_ha_state = (
+            self.hass.states.get(self.entity_id)
+            if self.hass is not None and self.entity_id
+            else None
+        )
+        if (
+            new_profile != self._attr_native_value
+            or getattr(self.area, "lighting_profile", None) != new_profile
+            or (cur_ha_state is not None and cur_ha_state.state != str(new_profile))
+        ):
             _LOGGER.debug(
                 "%s: Lighting profile refreshed from %s to %s",
                 self.area.name,
@@ -830,6 +840,12 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
             )
             self._attr_native_value = new_profile
             self.area.lighting_profile = new_profile
+            if cur_ha_state is not None and cur_ha_state.state != str(new_profile):
+                self.hass.states.async_set(
+                    self.entity_id,
+                    str(new_profile),
+                    dict(cur_ha_state.attributes),
+                )
             self._update_extra_state_attributes()
             self._write_or_schedule_ha_state()
 
@@ -1004,6 +1020,12 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
 
     def _is_any_bedroom_light_on(self) -> bool:
         """Return True if at least one tracked light in this area/suite is currently ON."""
+        lg = getattr(self.area, "_light_group", None)
+        if lg is not None and (
+            getattr(lg, "_attr_is_on", False) is True
+            or getattr(lg, "_expected_state", None) == STATE_ON
+        ):
+            return True
         for eid in self._get_bedroom_light_entities():
             st = self.hass.states.get(eid)
             if st is not None and st.state == STATE_ON:

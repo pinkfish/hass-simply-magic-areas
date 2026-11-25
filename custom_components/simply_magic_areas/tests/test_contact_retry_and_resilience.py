@@ -3533,11 +3533,38 @@ async def test_no_lux_sensor_full_or_sleep_dim_top_level_sleep_nested_meta_and_3
     # Learned gain should be 2.5 lx/%!
     assert kit_lg._lighting_learner.lux_per_dim_pct == 2.5
     assert kit_lg.extra_state_attributes[ATTR_LUX_PER_DIM_PCT] == 2.5
-    # And to reach 300 lx from 100 lx ambient with gain 2.5 lx/%, it needs (300 - 100) / 2.5 = 80% dim (brightness 204) in one single adjustment!
+    # With initial_dim_pct = 69% and target = 80% (+11% needed, within 10%+3% snap window),
+    # it steps smoothly to 80% (brightness 204) and saves the worked-out 80% dim level!
     assert len(turn_on_calls) == 1
     assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == round(80 * 255 / 100)
+    # Worked-out dim level is now saved and no further settle timer is scheduled!
+    assert kit_lg._lux_settle_timer_cb is None
+    assert kit_lg._lighting_learner.has_saved_dim_level_for_lux(100.0) is True
+    assert (
+        kit_lg._lighting_learner.get_saved_dim_level(
+            ambient_lux=100.0, target_daylight_lux=300.0
+        )
+        == 80
+    )
 
-    # Next time the light turns on from OFF (with ambient lux = 150 lx and target = 300 lx):
+    # Next time the Kitchen light turns on at ~100 lx ambient, it immediately uses the saved 80% dim level
+    # and does NOT schedule any settle/search timer!
+    kit_lg.stop_all_active_control()
+    kit_lg._attr_is_on = False
+    hass.states.async_set("light.kitchen_light", STATE_OFF)
+    hass.states.async_set(
+        "sensor.kitchen_lux",
+        "102",
+        {"device_class": "illuminance", "unit_of_measurement": "lx"},
+    )
+    turn_on_calls.clear()
+    kit_lg._turn_on_light(kit_occ_conf, force=True)
+    await hass.async_block_till_done()
+    assert len(turn_on_calls) == 1
+    assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == round(80 * 255 / 100)
+    assert kit_lg._lux_settle_timer_cb is None
+
+    # Next time the light turns on from OFF at a new ambient lux (150 lx, target = 300 lx):
     # Using learned gain 2.5 lx/%, it needs (300 - 150) / 2.5 = 60% dim (brightness 153) immediately on the first command!
     kit_lg.stop_all_active_control()
     kit_lg._attr_is_on = False
@@ -3552,6 +3579,44 @@ async def test_no_lux_sensor_full_or_sleep_dim_top_level_sleep_nested_meta_and_3
     await hass.async_block_till_done()
     assert len(turn_on_calls) == 1
     assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == round(60 * 255 / 100)
+
+    # Also test a large difference (e.g. light turns on at 30% in a room needing 75% to reach 300 lx):
+    # It must step slowly at most 10% every 30s (30% -> 40% -> 50% -> 60% -> 70% -> 75%) and save 75%!
+    kit_lg._schedule_lux_settle_check(
+        pre_lux=75.0,
+        pre_dim_pct=0.0,
+        commanded_dim_pct=30.0,
+        target_daylight_lux=300.0,
+        ambient_lux=75.0,
+        reset_steps=True,
+    )
+    for expected_pct in (40, 50, 60, 70, 75):
+        cur_pct = kit_lg._lux_settle_commanded_dim_pct
+        hass.states.async_set(
+            "light.kitchen_light",
+            STATE_ON,
+            {ATTR_BRIGHTNESS: round(cur_pct * 255 / 100)},
+        )
+        hass.states.async_set(
+            "sensor.kitchen_lux",
+            str(round(75.0 + cur_pct * 3.0, 1)),
+            {"device_class": "illuminance", "unit_of_measurement": "lx"},
+        )
+        turn_on_calls.clear()
+        kit_lg._lux_settle_timer_expired()
+        await hass.async_block_till_done()
+        assert len(turn_on_calls) == 1
+        assert turn_on_calls[-1].data[ATTR_BRIGHTNESS] == round(
+            expected_pct * 255 / 100
+        )
+    assert kit_lg._lux_settle_timer_cb is None
+    assert kit_lg._lighting_learner.has_saved_dim_level_for_lux(75.0) is True
+    assert (
+        kit_lg._lighting_learner.get_saved_dim_level(
+            ambient_lux=75.0, target_daylight_lux=300.0
+        )
+        == 75
+    )
     kit_lg.stop_all_active_control()
 
 
@@ -3785,6 +3850,123 @@ async def test_manual_dim_via_switch_or_ui_holds_until_sleep_wake_or_turn_off(
     assert lg._manual_brightness_override is False
     assert lg._is_controlled_by_this_entity() is True
     lg.stop_all_active_control()
+
+
+async def test_pool_room_without_lux_sensor_never_dims_and_returns_to_100_on_morning_turn_on(
+    hass: HomeAssistant,
+) -> None:
+    """Test that a room without a light sensor (Pool Room) never goes 100% -> 30% -> 100% when turned on in the morning after overnight sleep."""
+    from unittest.mock import MagicMock, patch
+
+    from custom_components.simply_magic_areas.base.area_lighting_profile_sensor import (
+        AreaLightingProfileSensor,
+    )
+    from custom_components.simply_magic_areas.base.magic import (
+        MagicArea,
+        StateConfigData,
+    )
+    from custom_components.simply_magic_areas.const import (
+        AREA_TYPE_INTERIOR,
+        CONF_ID,
+        CONF_NAME,
+        CONF_TYPE,
+    )
+
+    turn_on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
+
+    pool_room = MagicArea.__new__(MagicArea)
+    pool_room.hass = hass
+    pool_room.name = "Pool Room"
+    pool_room.slug = "pool_room"
+    pool_room.id = "pool_room"
+    pool_room.state = AreaState.AREA_STATE_OCCUPIED
+    # Simulate stale overnight sleep profile because no sensor in Pool Room fired since sunrise
+    pool_room.lighting_profile = LightingProfile.SLEEP
+    pool_room.sleep_mode_enabled = False
+    pool_room.system_control_enabled = True
+    pool_room.config = {
+        CONF_NAME: "Pool Room",
+        CONF_ID: "pool_room",
+        CONF_TYPE: AREA_TYPE_INTERIOR,
+    }
+    pool_room.entities = {
+        LIGHT_DOMAIN: [
+            {ATTR_ENTITY_ID: "light.pool_room_1"},
+            {ATTR_ENTITY_ID: "light.pool_room_2"},
+        ],
+    }
+    occ_conf = StateConfigData(
+        name="occupied",
+        entity=None,
+        entity_state_on=STATE_ON,
+        dim_level=100,
+        for_state=AreaState.AREA_STATE_OCCUPIED,
+        icon="mdi:lightbulb",
+        control_entity="switch.simply_magic_areas_light_control_pool_room",
+        lights=["light.pool_room_1", "light.pool_room_2"],
+    )
+    sleep_conf = StateConfigData(
+        name="sleep",
+        entity=None,
+        entity_state_on=STATE_ON,
+        dim_level=30,
+        for_state=AreaState.AREA_STATE_SLEEP,
+        icon="mdi:sleep",
+        control_entity="switch.simply_magic_areas_light_control_pool_room",
+        lights=["light.pool_room_1", "light.pool_room_2"],
+    )
+    pool_room._state_config = {
+        AreaState.AREA_STATE_OCCUPIED: occ_conf,
+        LightingProfile.STANDARD: occ_conf,
+        AreaState.AREA_STATE_SLEEP: sleep_conf,
+        LightingProfile.SLEEP: sleep_conf,
+    }
+    pool_room.initialized = True
+
+    ps = AreaLightingProfileSensor(pool_room)
+    ps.hass = hass
+    ps.entity_id = "sensor.simply_magic_areas_lighting_profile_pool_room"
+    ps.schedule_update_ha_state = MagicMock()
+    hass.states.async_set(
+        "sensor.simply_magic_areas_lighting_profile_pool_room", LightingProfile.SLEEP
+    )
+
+    hass.states.async_set("light.pool_room_1", STATE_OFF)
+    hass.states.async_set("light.pool_room_2", STATE_OFF)
+
+    lg = AreaLightGroup(pool_room, ["light.pool_room_1", "light.pool_room_2"])
+    lg.hass = hass
+    lg._attr_name = "Pool Room Lights"
+    lg.entity_id = "light.simply_magic_areas_light_pool_room"
+    lg.schedule_update_ha_state = MagicMock()
+    lg.async_update_group_state = MagicMock()
+
+    # Simulate turning on light.pool_room_1 at 8:28 AM (not after 10pm nighttime, sleep switch OFF)
+    with patch.object(ps, "_is_after_10pm_nighttime", return_value=False):
+        hass.states.async_set(
+            "light.pool_room_1", STATE_ON, {ATTR_BRIGHTNESS: 255}
+        )
+        lg._member_light_state_change(
+            MagicMock(
+                data={
+                    "entity_id": "light.pool_room_1",
+                    "old_state": MagicMock(state=STATE_OFF, attributes={}),
+                    "new_state": MagicMock(
+                        state=STATE_ON, attributes={ATTR_BRIGHTNESS: 255}
+                    ),
+                }
+            )
+        )
+        await hass.async_block_till_done()
+
+    # The stale SLEEP profile was refreshed synchronously to STANDARD before acting,
+    # so Pool Room lights NEVER dim to 30% (76) and stays at 100% (255)!
+    assert pool_room.lighting_profile == LightingProfile.STANDARD
+    for call in turn_on_calls:
+        assert call.data.get(ATTR_BRIGHTNESS, 255) == 255
+    assert lg._expected_brightness == 255
+    lg.stop_all_active_control()
+
 
 
 

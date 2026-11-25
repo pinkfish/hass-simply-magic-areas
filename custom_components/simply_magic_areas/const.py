@@ -142,6 +142,8 @@ DEFAULT_LIGHT_SETTLE_TIME: float = 0.25
 DEFAULT_BRIGHTNESS_SMOOTHING_DEADBAND: int = 8
 DEFAULT_DAYLIGHT_HISTORY_DAYS: int = 14
 DEFAULT_LUX_SETTLE_DELAY: float = 30.0
+DEFAULT_LUX_MAX_STEP_DIM_PCT: int = 10
+DEFAULT_LUX_MAX_SETTLE_STEPS: int = 6
 
 ENTRY_AREA_KEYWORDS: tuple[str, ...] = (
     "front_room",
@@ -387,6 +389,7 @@ ATTR_IS_WINDOWLESS = "is_windowless"
 ATTR_DARKNESS_RATIO = "darkness_ratio"
 ATTR_LUX_PER_DIM_PCT = "lux_per_dim_pct"
 ATTR_TARGET_DAYLIGHT_LUX = "target_daylight_lux"
+ATTR_SAVED_DAYLIGHT_DIM_LEVELS = "saved_daylight_dim_levels"
 
 # State attributes for exterior lighting
 ATTR_EXTERIOR_LIGHTING_ACTIVE = "exterior_lighting_active"

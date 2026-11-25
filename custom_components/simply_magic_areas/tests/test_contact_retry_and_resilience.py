@@ -4137,6 +4137,130 @@ async def test_sensorless_room_never_suddenly_dims_from_restored_or_orphaned_sle
     lg.stop_all_active_control()
 
 
+async def test_auto_night_sleep_always_leaves_sleep_in_morning_and_on_reload(
+    hass: HomeAssistant,
+) -> None:
+    """Test that Interior with child_areas is not a bedroom meta-area and auto night sleep never gets stuck in sleep mode."""
+    from unittest.mock import MagicMock, patch
+
+    from ..base.area_lighting_profile_sensor import AreaLightingProfileSensor
+    from ..base.magic import MagicArea, MagicMetaArea
+    from ..const import (
+        AREA_TYPE_INTERIOR,
+        AREA_TYPE_META,
+        CONF_CHILD_AREAS,
+        CONF_ID,
+        CONF_NAME,
+        CONF_TYPE,
+        DATA_AREA_OBJECT,
+        META_AREA_INTERIOR,
+        MODULE_DATA,
+    )
+    from ..switch import AreaSleepModeSwitch
+
+    interior = MagicMetaArea.__new__(MagicMetaArea)
+    interior.hass = hass
+    interior.name = META_AREA_INTERIOR
+    interior.slug = "interior"
+    interior.id = "interior"
+    interior.state = AreaState.AREA_STATE_CLEAR
+    interior.lighting_profile = LightingProfile.STANDARD
+    interior.sleep_mode_enabled = False
+    interior.system_control_enabled = True
+    interior.config = {
+        CONF_NAME: META_AREA_INTERIOR,
+        CONF_ID: "interior",
+        CONF_TYPE: AREA_TYPE_META,
+        CONF_CHILD_AREAS: ["pool_room"],
+    }
+    interior.entities = {}
+    interior._state_config = {}
+    interior.initialized = True
+
+    # Interior with CONF_CHILD_AREAS must NEVER be misclassified as a bedroom meta-area
+    assert interior.is_bedroom_meta() is False
+
+    pool_room = MagicArea.__new__(MagicArea)
+    pool_room.hass = hass
+    pool_room.name = "Pool Room"
+    pool_room.slug = "pool_room"
+    pool_room.id = "pool_room"
+    pool_room.state = AreaState.AREA_STATE_CLEAR
+    pool_room.lighting_profile = LightingProfile.STANDARD
+    pool_room.sleep_mode_enabled = False
+    pool_room.system_control_enabled = True
+    pool_room.config = {
+        CONF_NAME: "Pool Room",
+        CONF_ID: "pool_room",
+        CONF_TYPE: AREA_TYPE_INTERIOR,
+    }
+    pool_room.entities = {}
+    pool_room._state_config = {}
+    pool_room.initialized = True
+
+    hass.data[MODULE_DATA] = {
+        "entry_interior": {DATA_AREA_OBJECT: interior},
+        "entry_pool": {DATA_AREA_OBJECT: pool_room},
+    }
+
+    interior_sw = AreaSleepModeSwitch(interior)
+    interior_sw.hass = hass
+    interior_sw.entity_id = "switch.simply_magic_areas_sleep_mode_interior"
+    interior_sw.schedule_update_ha_state = MagicMock(
+        side_effect=lambda s=interior_sw: hass.states.async_set(
+            s.entity_id, STATE_ON if s.is_on else STATE_OFF
+        )
+    )
+    interior._sleep_mode_switch = interior_sw
+    hass.states.async_set(interior_sw.entity_id, STATE_OFF)
+
+    interior_ps = AreaLightingProfileSensor(interior)
+    interior_ps.hass = hass
+    interior_ps.entity_id = "sensor.simply_magic_areas_lighting_profile_interior"
+    interior_ps.schedule_update_ha_state = MagicMock()
+    await interior_ps._setup_listeners()
+
+    assert interior_ps._is_bedroom_area() is False
+
+    pool_ps = AreaLightingProfileSensor(pool_room)
+    pool_ps.hass = hass
+    pool_ps.entity_id = "sensor.simply_magic_areas_lighting_profile_pool_room"
+    pool_ps.schedule_update_ha_state = MagicMock()
+    await pool_ps._setup_listeners()
+
+    # 1. At night (after 10 PM), Interior auto-latches sleep mode and syncs its sleep switch ON
+    with (
+        patch.object(interior_ps, "_is_after_10pm_nighttime", return_value=True),
+        patch.object(pool_ps, "_is_after_10pm_nighttime", return_value=True),
+    ):
+        interior_ps.refresh_profile()
+        await hass.async_block_till_done()
+        assert interior.lighting_profile == LightingProfile.SLEEP
+        assert hass.states.get(interior_sw.entity_id).state == STATE_ON
+        # Child room must NOT have latched _manual_sleep_mode from parent's auto-sleep sync
+        assert pool_ps._manual_sleep_mode is False
+        assert pool_room.sleep_mode_enabled is False
+        assert pool_room.lighting_profile == LightingProfile.SLEEP
+
+    # 2. Morning arrives (even if _was_nighttime_when_sleep_active was lost due to a reload)
+    interior_ps._was_nighttime_when_sleep_active = False
+    pool_ps._was_nighttime_when_sleep_active = False
+
+    with (
+        patch.object(interior_ps, "_is_after_10pm_nighttime", return_value=False),
+        patch.object(pool_ps, "_is_after_10pm_nighttime", return_value=False),
+    ):
+        pool_ps._periodic_profile_check()
+        await hass.async_block_till_done()
+        assert interior.lighting_profile == LightingProfile.STANDARD
+        assert pool_room.lighting_profile == LightingProfile.STANDARD
+        assert hass.states.get(interior_sw.entity_id).state == STATE_OFF
+
+    await interior_ps.async_will_remove_from_hass()
+    await pool_ps.async_will_remove_from_hass()
+
+
+
 
 
 

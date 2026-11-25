@@ -328,7 +328,7 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         if CONF_UNOCCUPIED_WHEN_LIGHTS_OFF in self.area.config:
             return bool(self.area.config.get(CONF_UNOCCUPIED_WHEN_LIGHTS_OFF))
         if self.area.is_bedroom_meta() or (
-            self.area.is_meta() and bool(self.area.config.get(CONF_CHILD_AREAS))
+            not self.area.is_meta() and bool(self.area.config.get(CONF_CHILD_AREAS))
         ):
             return DEFAULT_UNOCCUPIED_WHEN_LIGHTS_OFF
         return False

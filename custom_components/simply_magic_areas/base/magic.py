@@ -513,7 +513,6 @@ class MagicArea(object):  # noqa: UP004
         return (
             area_id in (META_AREA_BEDROOMS.lower(), "bedroom")
             or "bedroom" in slug
-            or bool(self.config.get(CONF_CHILD_AREAS))
         )
 
     def is_bedroom_or_ensuite(self) -> bool:

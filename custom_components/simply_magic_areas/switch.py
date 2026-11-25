@@ -186,6 +186,12 @@ class AreaSleepModeSwitch(SwitchBase):
         await super().async_added_to_hass()
         if self._attr_is_on and hasattr(self.area, "set_sleep_mode"):
             self.area.set_sleep_mode(True)
+        else:
+            profile_sensor = getattr(self.area, "_lighting_profile_sensor", None)
+            if profile_sensor is not None and callable(
+                getattr(profile_sensor, "refresh_profile", None)
+            ):
+                profile_sensor.refresh_profile()
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up reference when removed from hass."""

@@ -141,6 +141,19 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
         if last_state:
             if last_state.state in self._attr_options:
                 restored = LightingProfile(last_state.state)
+                if restored == LightingProfile.SLEEP:
+                    if self._is_after_10pm_nighttime():
+                        self._was_nighttime_when_sleep_active = True
+                    elif not self._manual_sleep_mode:
+                        # Do not restore overnight sleep mode during the daytime on reload/restart
+                        restored = LightingProfile.STANDARD
+                        local_sw, inherited_sws = (
+                            self._get_applicable_sleep_switch_entities()
+                        )
+                        for sw_id in [local_sw, *inherited_sws]:
+                            st = self.hass.states.get(sw_id)
+                            if st is not None and st.state == STATE_ON:
+                                self.hass.states.async_set(sw_id, STATE_OFF)
                 self._attr_native_value = restored
                 self.area.lighting_profile = restored
             attrs = last_state.attributes
@@ -676,13 +689,17 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
             return True
 
         local_switch, inherited_switches = self._get_applicable_sleep_switch_entities()
+        is_top_level = (
+            not hasattr(self.area, "is_top_level_sleep_target")
+            or self.area.is_top_level_sleep_target()
+        )
         local_st = self.hass.states.get(local_switch)
-        if (
-            local_st is not None
-            and local_st.state == STATE_ON
-            and getattr(self.area, "_sleep_mode_switch", None) is None
-        ):
-            return True
+        if local_st is not None and local_st.state == STATE_ON:
+            if not is_top_level:
+                # Non-top-level child rooms do not own a sleep mode switch; clear any lingering state
+                self.hass.states.async_set(local_switch, STATE_OFF)
+            elif getattr(self.area, "_sleep_mode_switch", None) is None:
+                return True
 
         if self._local_sleep_override_off:
             return False
@@ -1197,6 +1214,17 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
                     and not parent.config.get("sleep_entity")
                 ):
                     continue
+                parent_sensor = getattr(parent, "_lighting_profile_sensor", None)
+                if (
+                    not is_nighttime
+                    and parent_sensor is not None
+                    and parent_sensor is not self
+                    and getattr(parent, "lighting_profile", None)
+                    == LightingProfile.SLEEP
+                    and callable(getattr(parent_sensor, "refresh_profile", None))
+                ):
+                    with suppress(Exception):
+                        parent_sensor.refresh_profile()
                 if getattr(parent, "lighting_profile", None) == LightingProfile.SLEEP:
                     return LightingProfile.SLEEP
                 parent_profile_sensor = self.area.simply_magic_entity_id(
@@ -1205,7 +1233,11 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
                     area_name=parent.slug,
                 )
                 state_obj = self.hass.states.get(parent_profile_sensor)
-                if state_obj and state_obj.state == LightingProfile.SLEEP:
+                if (
+                    state_obj
+                    and state_obj.state == LightingProfile.SLEEP
+                    and (parent_sensor is None or getattr(parent, "lighting_profile", None) == LightingProfile.SLEEP)
+                ):
                     return LightingProfile.SLEEP
             if self.area.is_exterior():
                 for meta_slug in (
@@ -1231,7 +1263,13 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
                 if self._is_bedroom_area():
                     if self._bedroom_light_turned_on_then_off:
                         self._auto_sleep_latched = True
-                elif self._is_room_or_house_unoccupied():
+                elif self._is_room_or_house_unoccupied() and (
+                    (
+                        not hasattr(self.area, "has_configured_presence_sensors")
+                        or self.area.has_configured_presence_sensors()
+                    )
+                    or not self._is_any_bedroom_light_on()
+                ):
                     self._auto_sleep_latched = True
                 if self._auto_sleep_latched:
                     self._was_nighttime_when_sleep_active = True

@@ -1589,6 +1589,28 @@ class AreaLightGroup(MagicEntity, LightGroup):
 
         # Once the location enters sleep mode, any currently-ON lights must auto-dim immediately
         if is_sleep_profile:
+            profile_sensor = getattr(self.area, "_lighting_profile_sensor", None)
+            if profile_sensor is not None and callable(
+                getattr(profile_sensor, "refresh_profile", None)
+            ):
+                with suppress(Exception):
+                    profile_sensor.refresh_profile()
+                verified_profile = getattr(
+                    self.area, "lighting_profile", new_profile
+                )
+                if verified_profile not in (
+                    LightingProfile.SLEEP,
+                    AreaState.AREA_STATE_SLEEP,
+                ):
+                    _LOGGER.debug(
+                        "%s: Stale sleep profile notification ignored after refresh (actual=%s)",
+                        self.name,
+                        verified_profile,
+                    )
+                    new_profile = str(verified_profile)
+                    is_sleep_profile = False
+
+        if is_sleep_profile:
             self._manual_brightness_override = False
             if is_currently_on:
                 conf = self._get_profile_config_for(new_profile, dim_only=True)

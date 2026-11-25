@@ -29,6 +29,8 @@ def cleanup_magic_entities(
             continue
         _LOGGER.warning("Deleting old entity %s", ent_id)
         entity_registry.async_remove(ent_id)
+        if hass.states.get(ent_id) is not None:
+            hass.states.async_remove(ent_id)
 
 
 def is_entity_list(item: Any) -> bool:

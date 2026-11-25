@@ -3968,6 +3968,176 @@ async def test_pool_room_without_lux_sensor_never_dims_and_returns_to_100_on_mor
     lg.stop_all_active_control()
 
 
+async def test_sensorless_room_never_suddenly_dims_from_restored_or_orphaned_sleep_state(
+    hass: HomeAssistant,
+) -> None:
+    """Test that a sensorless room does not enter sleep mode or dim lights during the daytime from restored sleep state, orphaned local switch, or stale parent meta-area sleep state."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.simply_magic_areas.base.area_lighting_profile_sensor import (
+        AreaLightingProfileSensor,
+    )
+    from custom_components.simply_magic_areas.base.magic import (
+        MagicArea,
+        StateConfigData,
+    )
+    from custom_components.simply_magic_areas.const import (
+        AREA_TYPE_INTERIOR,
+        AREA_TYPE_META,
+        CONF_ID,
+        CONF_NAME,
+        CONF_TYPE,
+        DATA_AREA_OBJECT,
+        MODULE_DATA,
+    )
+
+    turn_on_calls = async_mock_service(hass, LIGHT_DOMAIN, SERVICE_TURN_ON)
+
+    # 1. Parent Interior Meta-Area had overnight SLEEP profile
+    interior = MagicArea.__new__(MagicArea)
+    interior.hass = hass
+    interior.name = "Interior"
+    interior.slug = "interior"
+    interior.id = "interior"
+    interior.state = AreaState.AREA_STATE_OCCUPIED
+    interior.lighting_profile = LightingProfile.SLEEP
+    interior.sleep_mode_enabled = False
+    interior.system_control_enabled = True
+    interior.config = {
+        CONF_NAME: "Interior",
+        CONF_ID: "interior",
+        CONF_TYPE: AREA_TYPE_META,
+    }
+    interior.entities = {}
+    interior._state_config = {}
+    interior.initialized = True
+
+    interior_ps = AreaLightingProfileSensor(interior)
+    interior_ps.hass = hass
+    interior_ps.entity_id = "sensor.simply_magic_areas_lighting_profile_interior"
+    interior_ps.schedule_update_ha_state = MagicMock()
+    hass.states.async_set(
+        "sensor.simply_magic_areas_lighting_profile_interior", LightingProfile.SLEEP
+    )
+
+    # 2. Sensorless room (Pool Room) with lights already ON at 100% (255)
+    pool_room = MagicArea.__new__(MagicArea)
+    pool_room.hass = hass
+    pool_room.name = "Pool Room"
+    pool_room.slug = "pool_room"
+    pool_room.id = "pool_room"
+    pool_room.state = AreaState.AREA_STATE_CLEAR
+    pool_room.lighting_profile = LightingProfile.STANDARD
+    pool_room.sleep_mode_enabled = False
+    pool_room.system_control_enabled = True
+    pool_room.config = {
+        CONF_NAME: "Pool Room",
+        CONF_ID: "pool_room",
+        CONF_TYPE: AREA_TYPE_INTERIOR,
+    }
+    pool_room.entities = {
+        LIGHT_DOMAIN: [
+            {ATTR_ENTITY_ID: "light.pool_room_1"},
+        ],
+    }
+    occ_conf = StateConfigData(
+        name="occupied",
+        entity=None,
+        entity_state_on=STATE_ON,
+        dim_level=100,
+        for_state=AreaState.AREA_STATE_OCCUPIED,
+        icon="mdi:lightbulb",
+        control_entity="switch.simply_magic_areas_light_control_pool_room",
+        lights=["light.pool_room_1"],
+    )
+    sleep_conf = StateConfigData(
+        name="sleep",
+        entity=None,
+        entity_state_on=STATE_ON,
+        dim_level=30,
+        for_state=AreaState.AREA_STATE_SLEEP,
+        icon="mdi:sleep",
+        control_entity="switch.simply_magic_areas_light_control_pool_room",
+        lights=["light.pool_room_1"],
+    )
+    pool_room._state_config = {
+        AreaState.AREA_STATE_OCCUPIED: occ_conf,
+        LightingProfile.STANDARD: occ_conf,
+        AreaState.AREA_STATE_SLEEP: sleep_conf,
+        LightingProfile.SLEEP: sleep_conf,
+    }
+    pool_room.initialized = True
+
+    hass.data[MODULE_DATA] = {
+        "entry_interior": {DATA_AREA_OBJECT: interior},
+        "entry_pool": {DATA_AREA_OBJECT: pool_room},
+    }
+
+    # Orphaned per-room sleep mode switch state lingering in hass.states
+    hass.states.async_set(
+        "switch.simply_magic_areas_sleep_mode_pool_room", STATE_ON
+    )
+    hass.states.async_set(
+        "light.pool_room_1", STATE_ON, {ATTR_BRIGHTNESS: 255}
+    )
+
+    ps = AreaLightingProfileSensor(pool_room)
+    ps.hass = hass
+    ps.entity_id = "sensor.simply_magic_areas_lighting_profile_pool_room"
+    ps.schedule_update_ha_state = MagicMock()
+    ps.async_get_last_state = AsyncMock(
+        return_value=MagicMock(state=LightingProfile.SLEEP, attributes={})
+    )
+
+    lg = AreaLightGroup(pool_room, ["light.pool_room_1"])
+    lg.hass = hass
+    lg._attr_name = "Pool Room Lights"
+    lg.entity_id = "light.simply_magic_areas_light_pool_room"
+    lg._attr_is_on = True
+    lg.schedule_update_ha_state = MagicMock()
+    lg.async_update_group_state = MagicMock()
+
+    with (
+        patch.object(ps, "_is_after_10pm_nighttime", return_value=False),
+        patch.object(interior_ps, "_is_after_10pm_nighttime", return_value=False),
+    ):
+        await ps._restore_state()
+        assert pool_room.lighting_profile == LightingProfile.STANDARD
+
+        # Calculating lighting profile during daytime refreshes parent Interior from SLEEP -> STANDARD
+        # and clears the orphaned local switch state
+        profile = ps._calculate_lighting_profile()
+        assert profile == LightingProfile.STANDARD
+        assert interior.lighting_profile == LightingProfile.STANDARD
+        assert (
+            hass.states.get("switch.simply_magic_areas_sleep_mode_pool_room").state
+            == STATE_OFF
+        )
+
+        # Even if a stale SLEEP profile event fires on the light group, it refreshes the sensor
+        # and refuses to dim the lights during the day
+        lg._profile_change(
+            MagicMock(
+                data={
+                    "old_state": MagicMock(state=LightingProfile.STANDARD),
+                    "new_state": MagicMock(state=LightingProfile.SLEEP),
+                }
+            )
+        )
+        await hass.async_block_till_done()
+        for call in turn_on_calls:
+            assert call.data.get(ATTR_BRIGHTNESS, 255) == 255
+
+    # Also verify that even at nighttime (after 10 PM), a sensorless room whose lights are ON
+    # does NOT auto-latch sleep mode until its lights are turned OFF
+    with patch.object(ps, "_is_after_10pm_nighttime", return_value=True):
+        night_profile_while_lights_on = ps._calculate_lighting_profile()
+        assert night_profile_while_lights_on == LightingProfile.STANDARD
+
+    lg.stop_all_active_control()
+
+
+
 
 
 

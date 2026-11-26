@@ -703,7 +703,14 @@ class AreaStateSensor(MagicEntity, SensorEntity):
         new_state = self.get_current_area_state()
 
         if last_state == new_state:
+            prev_profile = self._attr_extra_state_attributes.get(ATTR_LIGHTING_PROFILE)
             self._update_attributes()
+            if (
+                prev_profile is not None
+                and self._attr_extra_state_attributes.get(ATTR_LIGHTING_PROFILE)
+                != prev_profile
+            ):
+                self._write_or_schedule_ha_state()
             self._validate_state_consistency(
                 has_active_sensors=self._last_occupied_sensor_state
             )

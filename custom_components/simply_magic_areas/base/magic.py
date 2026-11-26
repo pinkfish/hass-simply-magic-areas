@@ -1106,9 +1106,20 @@ class MagicArea(object):  # noqa: UP004
                     else:
                         continue
             elif lg.enable_state == AreaState.AREA_STATE_SLEEP:
-                entity_ob = base.get(lg.entity_name()) or self.config.get(
-                    lg.entity_name()
+                raw_local_sleep_entity = (
+                    dict.get(self.config, lg.entity_name())
+                    if isinstance(self.config, dict)
+                    else None
                 )
+                if isinstance(raw_local_sleep_entity, str) and raw_local_sleep_entity.lower() in (
+                    "none",
+                    "disabled",
+                ):
+                    entity_ob = None
+                else:
+                    entity_ob = base.get(lg.entity_name()) or self.config.get(
+                        lg.entity_name()
+                    )
                 if not entity_ob:
                     entity_ob = None
             lights = self.feature_config(CONF_FEATURE_ADVANCED_LIGHT_GROUPS).get(

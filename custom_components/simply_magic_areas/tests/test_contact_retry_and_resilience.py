@@ -4256,6 +4256,21 @@ async def test_auto_night_sleep_always_leaves_sleep_in_morning_and_on_reload(
         assert pool_room.lighting_profile == LightingProfile.STANDARD
         assert hass.states.get(interior_sw.entity_id).state == STATE_OFF
 
+    # 3. Even if _manual_sleep_mode / sleep_mode_enabled were stuck True on the child room
+    # (or if it is nighttime after 10 PM while Interior Meta-Area is NOT in sleep mode),
+    # the child room must NOT be in sleep mode when its parent Interior Meta-Area is not in sleep mode!
+    pool_ps._manual_sleep_mode = True
+    pool_room.sleep_mode_enabled = True
+    pool_room.config["sleep_mode"] = True
+    with (
+        patch.object(interior_ps, "_is_after_10pm_nighttime", return_value=True),
+        patch.object(pool_ps, "_is_after_10pm_nighttime", return_value=True),
+    ):
+        assert interior.lighting_profile == LightingProfile.STANDARD
+        assert pool_ps._calculate_lighting_profile() == LightingProfile.STANDARD
+        assert pool_ps._manual_sleep_mode is False
+        assert pool_room.sleep_mode_enabled is False
+
     await interior_ps.async_will_remove_from_hass()
     await pool_ps.async_will_remove_from_hass()
 

@@ -4271,6 +4271,31 @@ async def test_auto_night_sleep_always_leaves_sleep_in_morning_and_on_reload(
         assert pool_ps._manual_sleep_mode is False
         assert pool_room.sleep_mode_enabled is False
 
+    # 4. Even if the child room still has a legacy `sleep_entity` (`input_boolean.house_sleeping`)
+    # left over in its config/state_config from an older version while `input_boolean.house_sleeping`
+    # is ON in Home Assistant, the child room must ignore that legacy `sleep_entity` when its
+    # parent Meta-Area (`Interior`) is managed by `AreaSleepModeSwitch` (`standard` / not in sleep mode)!
+    from ..base.magic import StateConfigData
+
+    hass.states.async_set("input_boolean.house_sleeping", STATE_ON)
+    pool_room.config["sleep_entity"] = "input_boolean.house_sleeping"
+    pool_room._state_config[AreaState.AREA_STATE_SLEEP] = StateConfigData(
+        name="sleep",
+        entity="input_boolean.house_sleeping",
+        entity_state_on=STATE_ON,
+        dim_level=30,
+        for_state=AreaState.AREA_STATE_SLEEP,
+        icon="mdi:sleep",
+        control_entity="switch.simply_magic_areas_light_control_pool_room",
+        lights=[],
+    )
+    with (
+        patch.object(interior_ps, "_is_after_10pm_nighttime", return_value=False),
+        patch.object(pool_ps, "_is_after_10pm_nighttime", return_value=False),
+    ):
+        assert interior.lighting_profile == LightingProfile.STANDARD
+        assert pool_ps._calculate_lighting_profile() == LightingProfile.STANDARD
+
     await interior_ps.async_will_remove_from_hass()
     await pool_ps.async_will_remove_from_hass()
 

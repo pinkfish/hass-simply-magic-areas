@@ -196,6 +196,8 @@ class MagicArea(object):  # noqa: UP004
         area_config = dict(config.data)
         if config.options:
             area_config.update(config.options)
+            if "sleep_entity" not in config.options and "sleep_entity" in area_config:
+                area_config.pop("sleep_entity", None)
         self.config = InheritedConfig(self, area_config)
 
         self.entities: dict[str, list[dict[str, str]]] = {}
@@ -1469,6 +1471,11 @@ class MagicArea(object):  # noqa: UP004
                         merged = dict(entry.data)
                         if entry.options:
                             merged.update(entry.options)
+                            if (
+                                "sleep_entity" not in entry.options
+                                and "sleep_entity" in merged
+                            ):
+                                merged.pop("sleep_entity", None)
                         val = merged.get(key)
                         if val not in (None, ""):
                             return val

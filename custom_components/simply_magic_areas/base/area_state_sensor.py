@@ -180,6 +180,8 @@ class AreaStateSensor(MagicEntity, SensorEntity):
             self.area.state = restored_state
             self._attr_native_value = restored_state
             self._attr_extra_state_attributes = dict(last_state.attributes)  # type: ignore
+            for reserved_attr in ("options", "friendly_name", "device_class", "icon"):
+                self._attr_extra_state_attributes.pop(reserved_attr, None)
 
             # Persistent timer restoration
             if (

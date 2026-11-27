@@ -752,9 +752,31 @@ class AreaFanGroup(MagicEntity, FanGroup):
             return True
 
         sleep_conf = self.area.all_state_configs().get(AreaState.AREA_STATE_SLEEP)
-        sleep_entity = (
+        raw_sleep_entity = (
             sleep_conf.entity if sleep_conf else self.area.config.get("sleep_entity")
         )
+        parent_sleep_meta = (
+            self.area.get_parent_sleep_meta_area()
+            if hasattr(self.area, "get_parent_sleep_meta_area")
+            else None
+        )
+        is_top_level = (
+            not hasattr(self.area, "is_top_level_sleep_target")
+            or self.area.is_top_level_sleep_target()
+        )
+        if (
+            not is_top_level
+            and parent_sleep_meta is not None
+            and not parent_sleep_meta.config.get("sleep_entity")
+            and (
+                getattr(parent_sleep_meta, "_sleep_mode_switch", None) is not None
+                or getattr(parent_sleep_meta, "_lighting_profile_sensor", None)
+                is not None
+            )
+        ):
+            sleep_entity = None
+        else:
+            sleep_entity = raw_sleep_entity
         if sleep_entity:
             entity_state = self.hass.states.get(sleep_entity)
             check_state = sleep_conf.entity_state_on if sleep_conf else STATE_ON

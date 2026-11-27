@@ -1284,9 +1284,30 @@ class AreaLightingProfileSensor(MagicEntity, SensorEntity):
             return LightingProfile.SLEEP
 
         sleep_conf = self.area.all_state_configs().get(AreaState.AREA_STATE_SLEEP)
-        sleep_entity = (
+        raw_sleep_entity = (
             sleep_conf.entity if sleep_conf else self.area.config.get("sleep_entity")
         )
+        parent_sleep_meta = (
+            self.area.get_parent_sleep_meta_area()
+            if hasattr(self.area, "get_parent_sleep_meta_area")
+            else None
+        )
+        if (
+            not is_top_level
+            and parent_sleep_meta is not None
+            and not parent_sleep_meta.config.get("sleep_entity")
+            and (
+                getattr(parent_sleep_meta, "_sleep_mode_switch", None) is not None
+                or getattr(parent_sleep_meta, "_lighting_profile_sensor", None) is not None
+            )
+        ):
+            # When the room belongs to a configured top-level Meta-Area with a sleep mode switch
+            # (e.g. Interior or Bedrooms) that has no sleep_entity configured, ignore any legacy
+            # per-room sleep_entity left over from older configurations so child rooms always follow
+            # their parent Meta-Area's sleep mode switch.
+            sleep_entity = None
+        else:
+            sleep_entity = raw_sleep_entity
         if sleep_entity:
             entity_state = self.hass.states.get(sleep_entity)
             check_state = sleep_conf.entity_state_on if sleep_conf else STATE_ON
